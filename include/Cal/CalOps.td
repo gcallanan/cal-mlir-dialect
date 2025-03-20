@@ -15,17 +15,25 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 
+// This operation is declared with the folloing interfaces:
+//    - [Symbol]: This actor needs to have a name and this name needs to be part
+//                of the symbol table so that it can be accessed from other
+//                locations.
+//    - [NoTerminator]: A terminator operation is signifies the end of a control
+//                      flow region. This does not make sense for an actor
+//                      operation as there is no single controle flow defined
+//                      yet. When we transform it for execution, then we will
+//                      need to decide how action regions are connected.
+//    - [IsolatedFromAbove]: The actor does not have side effects or dependences
+//                           on the operations above or around it, so it can
+//                           be marked as isolated.
+//
 
-def Cal_ActorOp : Cal_Op<"actor", [Symbol]> {
+def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   let summary = "CAL actor operation";
   let description = [{
     Represents an actor that contains one or more action regions. Each region
     must contain exactly one cal.action operation.
-
-    This operation is declared with the folloing interfaces:
-    - [Symbol]: This actor needs to have a name and this name needs to be part
-                of the symbol table so that it can be accessed from other
-                locations.
   }];
 
   let arguments = (ins
