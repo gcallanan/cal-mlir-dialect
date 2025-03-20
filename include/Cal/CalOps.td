@@ -27,9 +27,16 @@ include "mlir/IR/SymbolInterfaces.td"
 //    - [IsolatedFromAbove]: The actor does not have side effects or dependences
 //                           on the operations above or around it, so it can
 //                           be marked as isolated.
+//    - [AttrSizedOperandSegments]: We have multiple variadic arguments
+//                                  (The $output_ports and $input_ports). MLIR
+//                                  requires that we specify something about the
+//                                  size of these arguments. This trait specifies
+//                                  that there is no relationship between these
+//                                  arguments and that they can be of any size.
+//
 //
 
-def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
+def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator, AttrSizedOperandSegments]> {
   let summary = "CAL actor operation";
   let description = [{
     Represents an actor that contains one or more action regions. Each region
@@ -37,10 +44,12 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   }];
 
   let arguments = (ins
-    SymbolNameAttr:$sym_name // Actor Name: Required by the Symbol interface
+    SymbolNameAttr:$sym_name, // Actor Name: Required by the Symbol interface
+    Variadic<I64>:$input_ports,
+    Variadic<I64>:$output_ports
   );
 
-  let assemblyFormat = "$sym_name`{` attr-dict `}` ";
+  let assemblyFormat = "$sym_name `input_ports``(` $input_ports `)` `output_ports` `(` $output_ports `)` `{` attr-dict `}` ";
 }
 
 def Cal_ActionOp : Cal_Op<"action"> {
