@@ -19,11 +19,11 @@ include "mlir/IR/SymbolInterfaces.td"
 def Cal_ActorOp : Cal_Op<"actor", [Symbol]> {
   let summary = "CAL actor operation";
   let description = [{
-    Represents an actor that contains one or more action regions. Each region 
+    Represents an actor that contains one or more action regions. Each region
     must contain exactly one cal.action operation.
-    
-    This operation has the folloing interfaces:
-    - [Symbol]: This actor needs to have a name and this name needs to be part 
+
+    This operation is declared with the folloing interfaces:
+    - [Symbol]: This actor needs to have a name and this name needs to be part
                 of the symbol table so that it can be accessed from other
                 locations.
   }];
