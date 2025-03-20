@@ -10,9 +10,44 @@
 #define CAL_OPS
 
 include "Cal/CalTypes.td"
+include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/IR/SymbolInterfaces.td"
 
+
+def Cal_ActorOp : Cal_Op<"actor", [Symbol]> {
+  let summary = "CAL actor operation";
+  let description = [{
+    Represents an actor that contains one or more action regions. Each region 
+    must contain exactly one cal.action operation.
+    
+    This operation has the folloing interfaces:
+    - [Symbol]: This actor needs to have a name and this name needs to be part 
+                of the symbol table so that it can be accessed from other
+                locations.
+  }];
+
+  let arguments = (ins
+    SymbolNameAttr:$sym_name // Actor Name: Required by the Symbol interface
+  );
+
+  let assemblyFormat = "$sym_name`{` attr-dict `}` ";
+}
+
+def Cal_ActionOp : Cal_Op<"action"> {
+  let summary = "CAL action operation";
+  let description = [{
+    Represents an individual action within a cal.actor.
+  }];
+
+  let assemblyFormat = "`{` attr-dict `}` ";  // Adjust as needed.
+}
+
+
+// I need to get rid of this. Its just here from the original template, but it
+// requires that I modify some things in the MLIR codebase that I have not yet
+// done:
 def Cal_FooOp : Cal_Op<"foo", [Pure,
                                              SameOperandsAndResultType]> {
     let summary = "Illustrates how to define an operation.";

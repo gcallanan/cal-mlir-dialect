@@ -19,9 +19,11 @@ def Cal_Dialect : Dialect {
     let name = "cal";
     let summary = "A cal out-of-tree MLIR dialect.";
     let description = [{
-        This dialect is an example of an out-of-tree MLIR dialect designed to
-        illustrate the basic setup required to develop MLIR-based tools without
-        working inside of the LLVM source tree.
+        This dialect defines the an IR intended for use with CAL compilers. The
+        CAL actor language is used to specify applications as a network of actors
+        that communicate through FIFO channels (A formal model known as
+        Dataflow-with-Firing). The CAL dialect is used to represent the actor
+        network in MLIR.
     }];
     let cppNamespace = "::mlir::cal";
 
