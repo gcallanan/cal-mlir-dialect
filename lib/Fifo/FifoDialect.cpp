@@ -9,6 +9,7 @@
 #include "Fifo/FifoDialect.h"
 #include "Fifo/FifoOps.h"
 #include "Fifo/FifoTypes.h"
+#include "mlir/IR/Operation.h"
 
 using namespace mlir;
 using namespace mlir::fifo;
@@ -26,3 +27,5 @@ void FifoDialect::initialize() {
       >();
   registerTypes();
 }
+
+

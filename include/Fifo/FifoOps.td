@@ -15,34 +15,34 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 
-// I need to get rid of this. Its just here from the original template, but it
-// requires that I modify some things in the MLIR codebase that I have not yet
-// done:
-def Fifo_FooOp : Fifo_Op<"foo", [Pure,
-                                             SameOperandsAndResultType]> {
-    let summary = "Illustrates how to define an operation.";
-    let description = [{
-        The `cal.foo` operation illustrates how to define a new
-        operation in a dialect. It uses an operation trait to declare that it
-        has no side effects.
 
-        This operation takes an integer argument and returns an integer.
+// TODO: Need to update this description with an example
+// TODO: What traits should this function have?
+def Fifo_CreateOp : Fifo_Op<"create", []> {
+  let summary = "Creates a FIFO buffer of a given size and element type";
+  let description = [{
+    The `fifo.create` operation creates a FIFO buffer with a specified size 
+    and element type. The size is provided as an integer attribute, and the 
+    element type is specified as a type parameter. 
 
-        Example:
+    Outputs:
 
-        ```mlir
-        %0 = arith.constant 2 : i32
-        // Apply the foo operation to %0
-        %1 = cal.foo %0 : i32
-        ```
-    }];
+    Example:
+  }];
 
-    let arguments = (ins I32:$input);
-    let results = (outs I32:$res);
+  let arguments = (ins 
+    TypeAttr:$elementType, // The type of the elements in the FIFO buffer
+    I64Attr:$size // The size of the FIFO buffer
+  );
 
-    let assemblyFormat = [{
-        $input attr-dict `:` type($input)
-    }];
+  let results = (outs 
+    AnyType:$inputPort,   // Input port result
+    AnyType:$outputPort  // Output port result
+  );
+
+  let assemblyFormat = "`<` $elementType `>` `(` $size `)` attr-dict `:` type($inputPort) `,` type($outputPort)";
+
+  //let hasVerifier = 1; // Enables verification logic in C++.
 }
 
 #endif // FIFO_OPS
