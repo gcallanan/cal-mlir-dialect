@@ -11,20 +11,4 @@
 
 include "mlir/Pass/PassBase.td"
 
-def FifoSwitchBarFoo: Pass<"fifo-switch-bar-foo", "::mlir::ModuleOp"> {
-  let summary = "Switches the name of a FuncOp named `bar` to `foo` and folds.";
-  let description = [{
-    Switches the name of a FuncOp named `bar` to `foo` and folds.
-    ```
-    func.func @bar() {
-      return
-    }
-    // Gets transformed to:
-    func.func @foo() {
-      return
-    }
-    ```
-  }];
-}
-
 #endif // FIFO_PASS

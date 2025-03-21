@@ -17,31 +17,6 @@ namespace mlir::fifo {
 #include "Fifo/FifoPasses.h.inc"
 
 namespace {
-class FifoSwitchBarFooRewriter : public OpRewritePattern<func::FuncOp> {
-public:
-  using OpRewritePattern<func::FuncOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(func::FuncOp op,
-                                PatternRewriter &rewriter) const final {
-    if (op.getSymName() == "bar") {
-      rewriter.modifyOpInPlace(op, [&op]() { op.setSymName("foo"); });
-      return success();
-    }
-    return failure();
-  }
-};
 
-class FifoSwitchBarFoo
-    : public impl::FifoSwitchBarFooBase<FifoSwitchBarFoo> {
-public:
-  using impl::FifoSwitchBarFooBase<
-      FifoSwitchBarFoo>::FifoSwitchBarFooBase;
-  void runOnOperation() final {
-    RewritePatternSet patterns(&getContext());
-    patterns.add<FifoSwitchBarFooRewriter>(&getContext());
-    FrozenRewritePatternSet patternSet(std::move(patterns));
-    if (failed(applyPatternsGreedily(getOperation(), patternSet)))
-      signalPassFailure();
-  }
-};
 } // namespace
 } // namespace mlir::fifo
