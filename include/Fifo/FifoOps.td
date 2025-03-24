@@ -32,7 +32,7 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
 
   let arguments = (ins 
     TypeAttr:$elementType, // The type of the elements in the FIFO buffer
-    I64Attr:$size // The size of the FIFO buffer
+    I64Attr:$buffer_size // The size of the FIFO buffer
   );
 
   let results = (outs 
@@ -40,9 +40,9 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
     AnyType:$outputPort  // Output port result
   );
 
-  let assemblyFormat = "`<` $elementType `>` `(` $size `)` attr-dict `:` type($inputPort) `,` type($outputPort)";
+  let assemblyFormat = "`<` $elementType `>` `(` $buffer_size `)` attr-dict `:` type($inputPort) `,` type($outputPort)";
 
-  //let hasVerifier = 1; // Enables verification logic in C++.
+  let hasVerifier = 1; // Enables verification logic in C++.
 }
 
 #endif // FIFO_OPS
