@@ -60,3 +60,42 @@ LogicalResult CreateOp::verify() {
 
   return success();
 }
+
+LogicalResult Pull::verify() {
+  Type tokenType = getOutputToken().getType();
+  Type outputPortType = getOutputPort().getType();
+
+  if (!outputPortType.isa<OutputPortType>()) {
+    return emitOpError() << "expected outputPort to be of type OutputPortType "
+                            "(!fifo.output_port<"
+                         << tokenType << ">), but got " << outputPortType;
+  }
+
+  OutputPortType outputPort = outputPortType.cast<OutputPortType>();
+  if (outputPort.getElementType() != tokenType) {
+    return emitOpError() << "expected outputPort element type to be "
+                         << tokenType << ", but got "
+                         << outputPort.getElementType();
+  }
+
+  return success();
+}
+
+LogicalResult Push::verify() {
+  Type tokenType = getInputToken().getType();
+  Type inputPortType = getInputPort().getType();
+  if (!inputPortType.isa<InputPortType>()) {
+    return emitOpError() << "expected inputPort to be of type InputPortType "
+                            "(!fifo.input_port<"
+                         << tokenType << ">), but got " << inputPortType;
+  }
+
+  InputPortType inputPort = inputPortType.cast<InputPortType>();
+  if (inputPort.getElementType() != tokenType) {
+    return emitOpError() << "expected inputPort element type to be "
+                         << tokenType << ", but got "
+                         << inputPort.getElementType();
+  }
+
+  return success();
+}

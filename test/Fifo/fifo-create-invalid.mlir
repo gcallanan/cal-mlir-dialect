@@ -1,4 +1,4 @@
-// Here we check that the command produces an expected error.
+// Here we check that the fifo.create operations produces expected errors.
 // RUN: cal-opt -split-input-file %s -verify-diagnostics
 
 // expected-error @+1 {{'fifo.create' op CreateOp buffer size is 0 but must be greater than 0}}

@@ -45,4 +45,41 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
+def Fifo_Pull : Fifo_Op<"pull", []> {
+  let summary = "Pull a token from the front of the FIFO buffer";
+  let description = [{
+    TODO
+  }];
+
+  let arguments = (ins
+    AnyType:$outputPort // The output port targeted for the pull operation
+  );
+
+  let results = (outs
+    AnyType:$outputToken   // The token we pop from the FIFO buffer
+  );
+
+  let assemblyFormat = "`(` $outputPort `:` type($outputPort) `)` attr-dict `:` type($outputToken)";
+
+  let hasVerifier = 1; // Enables verification logic in C++.
+}
+
+def Fifo_Push : Fifo_Op<"push", []> {
+  let summary = "Push a token to the back of the FIFO buffer";
+  let description = [{
+    TODO
+  }];
+
+  let arguments = (ins
+    AnyType:$inputToken, // The token to push to the FIFO buffer
+    AnyType:$inputPort // The input port targeted for the push operation
+  );
+
+
+  let assemblyFormat = "`(` $inputPort `:` type($inputPort) `,` $inputToken `:` type($inputToken)  `)` attr-dict";
+
+  let hasVerifier = 1; // Enables verification logic in C++.
+}
+
+
 #endif // FIFO_OPS
