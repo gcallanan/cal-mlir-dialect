@@ -45,10 +45,13 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_Pull : Fifo_Op<"pull", []> {
+def Fifo_Pull : Fifo_Op<"pull", [MemoryEffects<[MemRead]>]> {
   let summary = "Pull a token from the front of the FIFO buffer";
   let description = [{
     TODO
+
+    Has the trait MemoryEffects<[MemRead]> which indicates that the operation
+    reads from memory. (Not 100% sure if this is correct)
   }];
 
   let arguments = (ins
@@ -64,10 +67,11 @@ def Fifo_Pull : Fifo_Op<"pull", []> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_Push : Fifo_Op<"push", []> {
+def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
   let summary = "Push a token to the back of the FIFO buffer";
   let description = [{
-    TODO
+    Has the trait MemoryEffects<[MemWrite]> which indicates that the operation
+    writes to memory. (Not 100% sure if this is correct)
   }];
 
   let arguments = (ins
