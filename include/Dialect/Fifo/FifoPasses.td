@@ -11,4 +11,10 @@
 
 include "mlir/Pass/PassBase.td"
 
+def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
+  let summary = "Lowers to fifo dialect to memref dialect";
+  let description = [{
+  }];
+}
+
 #endif // FIFO_PASS
