@@ -10,10 +10,10 @@
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "Dialect/Fifo/FifoPasses.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoTypes.h"
-#include "Dialect/Fifo/FifoPasses.h"
 #include <iostream>
 
 namespace mlir::fifo {
@@ -27,6 +27,7 @@ class ConvertCreateOpToMemref
   LogicalResult matchAndRewrite(CreateOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     std::cout << "We got here" << std::endl;
+
     // if (op.getIsLegal())
     //   return failure();
     // rewriter.startOpModification(op);
@@ -61,3 +62,7 @@ public:
 };
 
 } // namespace mlir::fifo
+
+std::unique_ptr<mlir::Pass> mlir::fifo::createLowerFifoToMemrefPass() {
+    return std::make_unique<mlir::fifo::LowerFifoToMemrefPass>();
+}

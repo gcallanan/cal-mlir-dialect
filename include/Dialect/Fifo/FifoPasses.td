@@ -15,6 +15,7 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
   let summary = "Lowers to fifo dialect to memref dialect";
   let description = [{
   }];
+  let constructor = "mlir::fifo::createLowerFifoToMemrefPass()";
 }
 
 #endif // FIFO_PASS

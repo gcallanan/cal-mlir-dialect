@@ -15,11 +15,17 @@
 
 namespace mlir {
 namespace fifo {
+
+// This has to go before the "#define GEN_PASS_REGISTRATION" line or else
+// we get an error - I have not yet figured out why
+std::unique_ptr<mlir::Pass> createLowerFifoToMemrefPass();
+
 #define GEN_PASS_DECL
 #include "Dialect/Fifo/FifoPasses.h.inc"
 
 #define GEN_PASS_REGISTRATION
 #include "Dialect/Fifo/FifoPasses.h.inc"
+
 } // namespace fifo
 } // namespace mlir
 
