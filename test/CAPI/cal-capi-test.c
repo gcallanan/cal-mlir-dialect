@@ -11,7 +11,7 @@
 
 #include <stdio.h>
 
-#include "Cal-c/Dialects.h"
+#include "Dialect/Cal-c/Dialects.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/RegisterEverything.h"
 

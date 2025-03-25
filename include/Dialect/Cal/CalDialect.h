@@ -1,4 +1,4 @@
-//===- CalTypes.h - Cal dialect types -------------*- C++ -*-===//
+//===- CalDialect.h - Cal dialect -----------------*- C++ -*-===//
 //
 // This file is licensed under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,12 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef CAL_CALTYPES_H
-#define CAL_CALTYPES_H
+#ifndef CAL_CALDIALECT_H
+#define CAL_CALDIALECT_H
 
-#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/Bytecode/BytecodeOpInterface.h"
+#include "mlir/IR/Dialect.h"
 
-#define GET_TYPEDEF_CLASSES
-#include "Cal/CalOpsTypes.h.inc"
+#include "Dialect/Cal/CalOpsDialect.h.inc"
 
-#endif // CAL_CALTYPES_H
+#endif // CAL_CALDIALECT_H

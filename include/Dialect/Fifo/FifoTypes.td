@@ -10,7 +10,7 @@
 #define FIFO_TYPES
 
 include "mlir/IR/AttrTypeBase.td"
-include "Fifo/FifoDialect.td"
+include "Dialect/Fifo/FifoDialect.td"
 
 //===----------------------------------------------------------------------===//
 // Fifo type definitions

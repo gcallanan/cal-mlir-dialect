@@ -1,4 +1,4 @@
-//===- CalDialect.cpp - Cal dialect ---------------*- C++ -*-===//
+//===- FifoDialect.cpp - Fifo dialect ---------------*- C++ -*-===//
 //
 // This file is licensed under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,23 +6,26 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Cal/CalDialect.h"
-#include "Cal/CalOps.h"
-#include "Cal/CalTypes.h"
+#include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoOps.h"
+#include "Dialect/Fifo/FifoTypes.h"
+#include "mlir/IR/Operation.h"
 
 using namespace mlir;
-using namespace mlir::cal;
+using namespace mlir::fifo;
 
-#include "Cal/CalOpsDialect.cpp.inc"
+#include "Dialect/Fifo/FifoOpsDialect.cpp.inc"
 
 //===----------------------------------------------------------------------===//
-// Cal dialect.
+// Fifo dialect.
 //===----------------------------------------------------------------------===//
 
-void CalDialect::initialize() {
+void FifoDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
-#include "Cal/CalOps.cpp.inc"
+#include "Dialect/Fifo/FifoOps.cpp.inc"
       >();
   registerTypes();
 }
+
+

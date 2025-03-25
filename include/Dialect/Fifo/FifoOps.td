@@ -9,7 +9,7 @@
 #ifndef FIFO_OPS
 #define FIFO_OPS
 
-include "Fifo/FifoTypes.td"
+include "Dialect/Fifo/FifoTypes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -70,6 +70,8 @@ def Fifo_Pull : Fifo_Op<"pull", [MemoryEffects<[MemRead]>]> {
 def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
   let summary = "Push a token to the back of the FIFO buffer";
   let description = [{
+    TODO
+
     Has the trait MemoryEffects<[MemWrite]> which indicates that the operation
     writes to memory. (Not 100% sure if this is correct)
   }];

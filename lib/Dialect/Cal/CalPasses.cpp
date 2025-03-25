@@ -10,11 +10,11 @@
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#include "Cal/CalPasses.h"
+#include "Dialect/Cal/CalPasses.h"
 
 namespace mlir::cal {
 #define GEN_PASS_DEF_CALSWITCHBARFOO
-#include "Cal/CalPasses.h.inc"
+#include "Dialect/Cal/CalPasses.h.inc"
 
 namespace {
 class CalSwitchBarFooRewriter : public OpRewritePattern<func::FuncOp> {

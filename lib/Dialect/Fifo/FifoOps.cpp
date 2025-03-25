@@ -6,15 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Fifo/FifoOps.h"
-#include "Fifo/FifoDialect.h"
-#include "Fifo/FifoTypes.h"
+#include "Dialect/Fifo/FifoOps.h"
+#include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoTypes.h"
 
 using namespace mlir;
 using namespace mlir::fifo;
 
 #define GET_OP_CLASSES
-#include "Fifo/FifoOps.cpp.inc"
+#include "Dialect/Fifo/FifoOps.cpp.inc"
 
 LogicalResult CreateOp::verify() {
   if (getBufferSize() <= 0) {

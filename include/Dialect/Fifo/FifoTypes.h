@@ -12,6 +12,6 @@
 #include "mlir/IR/BuiltinTypes.h"
 
 #define GET_TYPEDEF_CLASSES
-#include "Fifo/FifoOpsTypes.h.inc"
+#include "Dialect/Fifo/FifoOpsTypes.h.inc"
 
 #endif // FIFO_FIFOTYPES_H

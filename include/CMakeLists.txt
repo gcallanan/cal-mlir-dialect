@@ -1,2 +1,1 @@
-add_subdirectory(Cal)
-add_subdirectory(Fifo)
+add_subdirectory(Dialect)

@@ -19,6 +19,6 @@
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 
 #define GET_OP_CLASSES
-#include "Fifo/FifoOps.h.inc"
+#include "Dialect/Fifo/FifoOps.h.inc"
 
 #endif // FIFO_FIFOOPS_H

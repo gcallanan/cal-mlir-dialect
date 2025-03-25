@@ -9,7 +9,7 @@
 #ifndef CAL_OPS
 #define CAL_OPS
 
-include "Cal/CalTypes.td"
+include "Dialect/Cal/CalTypes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"

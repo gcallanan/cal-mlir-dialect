@@ -10,11 +10,11 @@
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#include "Fifo/FifoPasses.h"
+#include "Dialect/Fifo/FifoPasses.h"
 
 namespace mlir::fifo {
 #define GEN_PASS_DEF_FIFOSWITCHBARFOO
-#include "Fifo/FifoPasses.h.inc"
+#include "Dialect/Fifo/FifoPasses.h.inc"
 
 namespace {
 

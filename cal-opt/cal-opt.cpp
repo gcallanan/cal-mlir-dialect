@@ -12,10 +12,10 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
-#include "Cal/CalDialect.h"
-#include "Cal/CalPasses.h"
-#include "Fifo/FifoDialect.h"
-#include "Fifo/FifoPasses.h"
+#include "Dialect/Cal/CalDialect.h"
+#include "Dialect/Cal/CalPasses.h"
+#include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoPasses.h"
 
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
@@ -24,12 +24,12 @@ int main(int argc, char **argv) {
   // TODO: Register cal passes here.
 
   mlir::DialectRegistry registry;
-  registry.insert<mlir::cal::CalDialect, mlir::fifo::FifoDialect,
-                  mlir::arith::ArithDialect, mlir::func::FuncDialect>();
+  registry.insert<mlir::cal::CalDialect, mlir::fifo::FifoDialect>();
+                  //mlir::arith::ArithDialect, mlir::func::FuncDialect>();
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
   // will be *parsed* by the tool, not the one generated
-  // registerAllDialects(registry);
+  registerAllDialects(registry);
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "Cal optimizer driver\n", registry));

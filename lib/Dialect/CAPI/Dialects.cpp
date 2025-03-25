@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Cal-c/Dialects.h"
+#include "Dialect/Cal-c/Dialects.h"
 
-#include "Cal/CalDialect.h"
+#include "Dialect/Cal/CalDialect.h"
 #include "mlir/CAPI/Registration.h"
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Cal, cal,

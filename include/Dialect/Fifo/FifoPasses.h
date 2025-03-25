@@ -8,18 +8,18 @@
 #ifndef FIFO_FIFOPASSES_H
 #define FIFO_FIFOPASSES_H
 
-#include "Fifo/FifoDialect.h"
-#include "Fifo/FifoOps.h"
+#include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoOps.h"
 #include "mlir/Pass/Pass.h"
 #include <memory>
 
 namespace mlir {
 namespace fifo {
 #define GEN_PASS_DECL
-#include "Fifo/FifoPasses.h.inc"
+#include "Dialect/Fifo/FifoPasses.h.inc"
 
 #define GEN_PASS_REGISTRATION
-#include "Fifo/FifoPasses.h.inc"
+#include "Dialect/Fifo/FifoPasses.h.inc"
 } // namespace fifo
 } // namespace mlir
 

@@ -1,4 +1,4 @@
-//===- CalTypes.cpp - Cal dialect types -----------*- C++ -*-===//
+//===- FifoTypes.cpp - Fifo dialect types -----------*- C++ -*-===//
 //
 // This file is licensed under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,21 +6,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Cal/CalTypes.h"
+#include "Dialect/Fifo/FifoTypes.h"
 
-#include "Cal/CalDialect.h"
+#include "Dialect/Fifo/FifoDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-using namespace mlir::cal;
+using namespace mlir::fifo;
 
 #define GET_TYPEDEF_CLASSES
-#include "Cal/CalOpsTypes.cpp.inc"
+#include "Dialect/Fifo/FifoOpsTypes.cpp.inc"
 
-void CalDialect::registerTypes() {
+void FifoDialect::registerTypes() {
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "Cal/CalOpsTypes.cpp.inc"
+#include "Dialect/Fifo/FifoOpsTypes.cpp.inc"
       >();
 }

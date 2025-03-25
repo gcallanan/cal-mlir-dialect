@@ -10,7 +10,7 @@
 #define CAL_TYPES
 
 include "mlir/IR/AttrTypeBase.td"
-include "Cal/CalDialect.td"
+include "Dialect/Cal/CalDialect.td"
 
 //===----------------------------------------------------------------------===//
 // Cal type definitions

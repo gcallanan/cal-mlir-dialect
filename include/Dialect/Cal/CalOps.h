@@ -19,6 +19,6 @@
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 
 #define GET_OP_CLASSES
-#include "Cal/CalOps.h.inc"
+#include "Dialect/Cal/CalOps.h.inc"
 
 #endif // CAL_CALOPS_H

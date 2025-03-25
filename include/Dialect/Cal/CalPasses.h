@@ -8,18 +8,18 @@
 #ifndef CAL_CALPASSES_H
 #define CAL_CALPASSES_H
 
-#include "Cal/CalDialect.h"
-#include "Cal/CalOps.h"
+#include "Dialect/Cal/CalDialect.h"
+#include "Dialect/Cal/CalOps.h"
 #include "mlir/Pass/Pass.h"
 #include <memory>
 
 namespace mlir {
 namespace cal {
 #define GEN_PASS_DECL
-#include "Cal/CalPasses.h.inc"
+#include "Dialect/Cal/CalPasses.h.inc"
 
 #define GEN_PASS_REGISTRATION
-#include "Cal/CalPasses.h.inc"
+#include "Dialect/Cal/CalPasses.h.inc"
 } // namespace cal
 } // namespace mlir
 
