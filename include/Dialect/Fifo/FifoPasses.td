@@ -16,6 +16,12 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
   let description = [{
   }];
   let constructor = "mlir::fifo::createLowerFifoToMemrefPass()";
+  let dependentDialects = [
+    "memref::MemRefDialect",
+    "index::IndexDialect",
+    "arith::ArithDialect",
+    "fifo::FifoDialect"
+  ];
 }
 
 #endif // FIFO_PASS
