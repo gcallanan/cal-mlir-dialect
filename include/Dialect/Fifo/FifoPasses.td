@@ -24,4 +24,17 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
   ];
 }
 
+def BypassFifoTuples: Pass<"bypass-fifo-tuples"> {
+  let summary = "Removes the tuples from the fifo dialect, replaces them directly with their source operands";
+  let description = [{
+  }];
+  let constructor = "mlir::fifo::bypassFifoTuples()";
+  let dependentDialects = [
+    "memref::MemRefDialect",
+    "index::IndexDialect",
+    "arith::ArithDialect",
+    "fifo::FifoDialect"
+  ];
+}
+
 #endif // FIFO_PASS
