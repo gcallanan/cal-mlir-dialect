@@ -82,10 +82,12 @@ class ConvertFifoPullToMemref : public OpConversionPattern<Pull> {
     llvm::outs() << "\tAdapter: " << adaptor.getOutputPort().getType() << "\n";
     llvm::outs() << "\tAdapter: " << adaptor.getOutputPort() << "\n";
 
-    Value index0 =
+    auto tupleType = adaptor.getOutputPort().getType().cast<TupleType>();
+    auto extract_tuple_op_data = rewriter.create<fifo::GetTupleElement>(loc, tupleType.getType(0), adaptor.getOutputPort() , 0);
+    auto extract_tuple_op_metadata = rewriter.create<fifo::GetTupleElement>(loc, tupleType.getType(1), adaptor.getOutputPort() , 1);
+    Value index1 =
         rewriter.create<arith::ConstantIndexOp>(loc, 0); // random index
-    auto memref_load_op =
-        rewriter.create<memref::LoadOp>(loc, adaptor.getOutputPort(), index0);
+    auto memref_load_op = rewriter.create<memref::LoadOp>(loc, extract_tuple_op_data, index1);
     rewriter.replaceOp(op, memref_load_op);
 
     return success();
