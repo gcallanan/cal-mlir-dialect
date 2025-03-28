@@ -23,7 +23,7 @@ namespace mlir::fifo {
 #define GEN_PASS_DEF_LOWERFIFOTOMEMREFPASS
 #include "Dialect/Fifo/FifoPasses.h.inc"
 
-class ConvertCreateOpToMemref : public OpConversionPattern<CreateOp> {
+class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
   using OpConversionPattern<CreateOp>::OpConversionPattern;
 
   LogicalResult
@@ -54,8 +54,15 @@ class ConvertCreateOpToMemref : public OpConversionPattern<CreateOp> {
     auto alloc_metadata =
         rewriter.create<memref::AllocOp>(loc, memRefType_metadata);
 
-    rewriter.replaceOp(op, {alloc_data.getResult(), alloc_data.getResult()});
-    // rewriter.eraseOp(op);
+    auto tupleType = TupleType::get(getContext(),{memRefType_data, memRefType_metadata});
+    //auto tupleType = TupleType::get(getContext(),{memRefType_data, memRefType_metadata});
+    llvm::outs() << tupleType << "\n";
+
+    auto make_tuple_op = rewriter.create<fifo::MakeTuple>(loc, tupleType, ValueRange{alloc_data.getResult(), alloc_metadata.getResult()});
+    llvm::outs() << make_tuple_op << "\n";
+
+    //rewriter.replaceOp(op, {make_tuple_op.getResult(), make_tuple_op.getResult()});
+    rewriter.replaceOp(op, {make_tuple_op.getResult(), make_tuple_op.getResult()});
 
     return success();
   }
@@ -75,10 +82,48 @@ class ConvertFifoPullToMemref : public OpConversionPattern<Pull> {
     llvm::outs() << "\tAdapter: " << adaptor.getOutputPort().getType() << "\n";
 
     Value index0 =
-        rewriter.create<arith::ConstantIndexOp>(loc, 5); // random index
+        rewriter.create<arith::ConstantIndexOp>(loc, 0); // random index
     auto memref_load_op =
         rewriter.create<memref::LoadOp>(loc, adaptor.getOutputPort(), index0);
     rewriter.replaceOp(op, memref_load_op);
+
+    return success();
+  }
+};
+
+class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
+  using OpConversionPattern<Push>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(Push op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+
+    mlir::Location loc = op.getLoc();
+
+    llvm::outs() << loc << "\n";
+    llvm::outs() << "\tInputPort: " << op.getInputPort().getType() << "\n";
+    llvm::outs() << "\tAdapter: " << adaptor.getInputPort().getType() << "\n";
+    llvm::outs() << "\tAdapter: " << adaptor.getInputToken().getType() << "\n";
+
+    auto tupleType = adaptor.getInputPort().getType().cast<TupleType>();
+    if (!tupleType) {
+      llvm::errs() << "Operand is not a tuple type\n";
+      return failure();
+    }
+
+    auto extract_tuple_op_data = rewriter.create<fifo::GetTupleElement>(loc, tupleType.getType(0), adaptor.getInputPort() , 0);
+    auto extract_tuple_op_metadata = rewriter.create<fifo::GetTupleElement>(loc, tupleType.getType(1), adaptor.getInputPort() , 1);
+    Value index1 =
+        rewriter.create<arith::ConstantIndexOp>(loc, 0); // random index
+    auto memref_load_index = rewriter.create<memref::LoadOp>(loc, extract_tuple_op_metadata, index1);
+    //auto index_value = rewriter.create<arith::IndexCastOp>(loc, memref_load_index);
+    //llvm::outs() << extract_tuple_op << "\n";
+
+    Value index0 =
+        rewriter.create<arith::ConstantIndexOp>(loc, 0); // random index
+    auto memref_store_op =
+        rewriter.create<memref::StoreOp>(loc, adaptor.getInputToken(), extract_tuple_op_data, index0);
+    rewriter.replaceOp(op, memref_store_op);
 
     return success();
   }
@@ -95,9 +140,12 @@ public:
     // Something about this being a stack
     RewritePatternSet patterns(&getContext());
     patterns.add<ConvertFifoPullToMemref>(&getContext());
-    patterns.add<ConvertCreateOpToMemref>(&getContext());
+    patterns.add<ConvertFifoPushToMemref>(&getContext());
+    patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
 
     // Set the legal and illegal dialects after this conversion
+    target.addIllegalDialect<fifo::FifoDialect>();
+    target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement>();
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
                            arith::ArithDialect>();
 

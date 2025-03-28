@@ -87,5 +87,33 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
+def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
+  let description = [{
+    Gets a value from a single element in the tuple.
+
+    TODO: Give a custom assembly form
+  }];
+
+  let arguments = (ins
+    TupleOf<[AnyType]>,
+    I32Attr:$index
+  );
+  let results = (outs AnyType);
+}
+
+def Fifo_MakeTuple: Fifo_Op<"make_tuple", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
+  let description = [{
+    Creates a tuple from a list of values.
+
+    TODO: Give a custom assembly form
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$inputs
+  );
+  let results = (outs TupleOf<[AnyType]>);
+}
+
+
 
 #endif // FIFO_OPS
