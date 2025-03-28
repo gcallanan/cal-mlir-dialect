@@ -140,10 +140,12 @@ def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", [MemoryEffects<[MemWrite]
   }];
 
   let arguments = (ins
-    TupleOf<[AnyType]>,
+    TupleOf<[AnyType]>:$tupleName,
     I32Attr:$index
   );
-  let results = (outs AnyType);
+  let results = (outs AnyType:$output);
+
+  let assemblyFormat = "$tupleName `[` $index `]` attr-dict `:` type($tupleName) `->` type($output)";
 }
 
 def Fifo_MakeTuple: Fifo_Op<"make_tuple", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
@@ -171,7 +173,9 @@ def Fifo_MakeTuple: Fifo_Op<"make_tuple", [MemoryEffects<[MemWrite]>, MemoryEffe
   let arguments = (ins
     Variadic<AnyType>:$inputs
   );
-  let results = (outs TupleOf<[AnyType]>);
+  let results = (outs TupleOf<[AnyType]>:$output);
+
+  let assemblyFormat = "`(` $inputs `)` attr-dict `:` type($inputs) `->` type($output)";
 }
 
 
