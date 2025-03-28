@@ -16,18 +16,29 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 
 
+
 // TODO: Need to update this description with an example
 // TODO: What traits should this function have?
 def Fifo_CreateOp : Fifo_Op<"create", []> {
   let summary = "Creates a FIFO buffer of a given size and element type";
   let description = [{
-    The `fifo.create` operation creates a FIFO buffer with a specified size 
-    and element type. The size is provided as an integer attribute, and the 
-    element type is specified as a type parameter. 
+    The `fifo.create` operation initializes a FIFO buffer with a given size
+    and element type. The buffer allows data to be pushed in and pulled out
+    in a first-in, first-out manner.
 
-    Outputs:
+    Arguments:
+    - `elementType`: Specifies the type of elements stored in the FIFO.
+    - `buffer_size`: Defines the maximum number of elements the FIFO can hold.
+
+    Results:
+    - `inputPort`: Used for pushing elements into the FIFO.
+    - `outputPort`: Used for pulling elements from the FIFO.
 
     Example:
+    %input_port, %output_port = fifo.create<f32>(64): !fifo.input_port<i32>, !fifo.output_port<i32>
+    This creates a FIFO buffer that stores `f32` values and has a capacity of 64 elements.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
   let arguments = (ins 
@@ -48,10 +59,21 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
 def Fifo_Pull : Fifo_Op<"pull", [MemoryEffects<[MemRead]>]> {
   let summary = "Pull a token from the front of the FIFO buffer";
   let description = [{
-    TODO
+    The `fifo.pull` operation retrieves an element from the front of the FIFO
+    buffer via the `outputPort`. This operation ensures that the FIFO maintains
+    its sequential ordering, where the first element pushed is the first one pulled.
 
-    Has the trait MemoryEffects<[MemRead]> which indicates that the operation
-    reads from memory. (Not 100% sure if this is correct)
+    Arguments:
+    - `outputPort`: A handle to the FIFO buffer's output port, from which an element will be retrieved.
+
+    Results:
+    - `outputToken`: The element removed from the FIFO buffer.
+
+    Example:
+    %token = fifo.pull(%outputPort : !fifo.output_port<i32>): i32
+    This pulls an element from the FIFO buffer associated with `%outputPort`.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
   let arguments = (ins
@@ -70,17 +92,25 @@ def Fifo_Pull : Fifo_Op<"pull", [MemoryEffects<[MemRead]>]> {
 def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
   let summary = "Push a token to the back of the FIFO buffer";
   let description = [{
-    TODO
+    The `fifo.push` operation inserts a new element into the FIFO buffer via the
+    `inputPort`. The element is stored in the buffer until it is retrieved by
+    a `fifo.pull` operation.
 
-    Has the trait MemoryEffects<[MemWrite]> which indicates that the operation
-    writes to memory. (Not 100% sure if this is correct)
+    Arguments:
+    - `inputToken`: The value being pushed into the FIFO.
+    - `inputPort`: The port associated with the FIFO buffer where the value is pushed.
+
+    Example:
+    fifo.push(%token: i32, %inputPort: !fifo.input_port<i32>)
+    This pushes `%token` into the FIFO buffer at `%inputPort`.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
   let arguments = (ins
     AnyType:$inputToken, // The token to push to the FIFO buffer
     AnyType:$inputPort // The input port targeted for the push operation
   );
-
 
   let assemblyFormat = "`(` $inputPort `:` type($inputPort) `,` $inputToken `:` type($inputToken)  `)` attr-dict";
 
@@ -89,9 +119,24 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
 
 def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
   let description = [{
-    Gets a value from a single element in the tuple.
+    The `fifo.get_tuple_element` operation extracts an element from a tuple at a
+    specified index. Typically this is used when converting the FIFO dialect to
+    to a lower dialect like memref as often multiple memrefs will represent a
+    single port and these need to be stored in a tuple. MLIR defines tuples
+    but not how to use them, so we need to have this operation here.
 
-    TODO: Give a custom assembly form
+    Arguments:
+    - A tuple containing multiple elements.
+    - `index`: An integer attribute specifying the position of the element to extract.
+
+    Results:
+    - The extracted element from the tuple.
+
+    Example:
+    %element = fifo.get_tuple_element(%tuple, 1)
+    This retrieves the second element (index `1`) from `%tuple`
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
   let arguments = (ins
@@ -103,9 +148,24 @@ def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", [MemoryEffects<[MemWrite]
 
 def Fifo_MakeTuple: Fifo_Op<"make_tuple", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
   let description = [{
-    Creates a tuple from a list of values.
+    The `fifo.make_tuple` operation constructs a tuple from multiple input values.
+    This is useful for grouping multiple related values into a single data structure.
+    Typically this is used when converting the FIFO dialect to
+    to a lower dialect like memref as often multiple memrefs will represent a
+    single port and these need to be stored in a tuple. MLIR defines tuples
+    but not how to use them, so we need to have this operation here.
 
-    TODO: Give a custom assembly form
+    Arguments:
+    - A variadic list of input values to form the tuple.
+
+    Results:
+    - A tuple containing all input values.
+
+    Example:
+    %tuple = fifo.make_tuple(%a, %b)
+    This creates a tuple containing `%a`, `%b`, and `%c`.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
   let arguments = (ins

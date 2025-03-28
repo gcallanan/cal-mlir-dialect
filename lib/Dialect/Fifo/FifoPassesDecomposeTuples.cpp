@@ -7,10 +7,11 @@
 // NOTE from @Gareth Callanan
 // This pass is copied almost exactly from:
 //    llvm-project/mlir/test/lib/Conversion/OneToNTypeConversion/TestOneToNTypeConversionPass.cpp
-// I needed 1:N argument conversions fo convert the fifo.input_port<> and fifo.output_port<>
-// types to memref types. When I looked at it, MLIR had just been updated to change the way things
-// were done and it was unclear how to make full use of this. Instead of trying to figure it out, I
-// just copied to test and modified it. 
+// I needed 1:N argument conversions fo convert the fifo.input_port<> and
+// fifo.output_port<> types to memref types. When I looked at it, MLIR had just
+// been updated to change the way things were done and it was unclear how to
+// make full use of this. Instead of trying to figure it out, I just copied to
+// test and modified it.
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Fifo/FifoDialect.h"
@@ -29,7 +30,7 @@
 #include <iostream>
 
 namespace mlir::fifo {
-#define GEN_PASS_DEF_BYPASSFIFOTUPLES
+#define GEN_PASS_DEF_DECOMPOSEFIFOTUPLES
 #include "Dialect/Fifo/FifoPasses.h.inc"
 
 class ConvertMakeTuple : public OneToNOpConversionPattern<MakeTuple> {
@@ -79,34 +80,28 @@ public:
   }
 };
 
-static void
-populateDecomposeTuplesTestPatterns(const TypeConverter &typeConverter,
-                                    RewritePatternSet &patterns) {
-  patterns.add<ConvertMakeTuple, ConvertGetTupleElement
-               // clang-format on
-               >(typeConverter, patterns.getContext());
-}
-
-class BypassFifoTuplesPass
-    : public impl::BypassFifoTuplesBase<BypassFifoTuplesPass> {
+class DecomposeFifoTuplesPass
+    : public impl::DecomposeFifoTuplesBase<DecomposeFifoTuplesPass> {
 public:
-  // using impl::BypassFifoTuplesPass<
-  // BypassFifoTuplesBase>::BypassFifoTuplesPass;
   void runOnOperation() final {
     auto *context = &getContext();
 
     // Assemble type converter.
+    //  - when a TupleType is encountered, it is converted to a list of its
+    //    internal element types
     TypeConverter typeConverter;
-    typeConverter.addConversion([](Type type) { return type; });
+    typeConverter.addConversion([](Type type) { return type; }); // Default
     typeConverter.addConversion(
         [](TupleType tupleType, SmallVectorImpl<Type> &types) {
           tupleType.getFlattenedTypes(types);
           return success();
         });
 
-    // Assemble patterns.
+    // Assemble patterns - when a MakeTuple or GetTupleElement operation is
+    // encountered, the corresponding conversion pattern is applied
     RewritePatternSet patterns(context);
-    populateDecomposeTuplesTestPatterns(typeConverter, patterns);
+    patterns.add<ConvertMakeTuple, ConvertGetTupleElement>(
+        typeConverter, patterns.getContext());
 
     // Run conversion.
     if (failed(applyPartialOneToNConversion(getOperation(), typeConverter,
@@ -117,6 +112,6 @@ public:
 
 } // namespace mlir::fifo
 
-std::unique_ptr<mlir::Pass> mlir::fifo::bypassFifoTuples() {
-  return std::make_unique<mlir::fifo::BypassFifoTuplesPass>();
+std::unique_ptr<mlir::Pass> mlir::fifo::decomposeFifoTuples() {
+  return std::make_unique<mlir::fifo::DecomposeFifoTuplesPass>();
 }

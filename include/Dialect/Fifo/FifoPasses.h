@@ -19,7 +19,7 @@ namespace fifo {
 // These have to go before the "#define GEN_PASS_REGISTRATION" line or else
 // we get an error - I have not yet figured out why
 std::unique_ptr<mlir::Pass> createLowerFifoToMemrefPass();
-std::unique_ptr<mlir::Pass> bypassFifoTuples();
+std::unique_ptr<mlir::Pass> decomposeFifoTuples();
 
 #define GEN_PASS_DECL
 #include "Dialect/Fifo/FifoPasses.h.inc"

@@ -17,13 +17,17 @@ include "mlir/IR/OpBase.td"
 
 def Fifo_Dialect : Dialect {
     let name = "fifo";
-    let summary = "A cal out-of-tree MLIR dialect.";
+    let summary = "A dialect for creating and using FIFO queues .";
     let description = [{
-        This dialect defines the an IR intended for use with CAL compilers. The
-        CAL actor language is used to specify applications as a network of actors
-        that communicate through FIFO channels (A formal model known as
-        Dataflow-with-Firing). The CAL dialect is used to represent the actor
-        network in MLIR.
+        This dialect provides operations for creating and using FIFO (First-In-First-Out) queues.
+        It is designed to model dataflow systems where actors communicate through FIFO buffers,
+        supporting both push and pull operations. The dialect enables the creation of FIFO buffers
+        with configurable sizes and element types, as well as manipulation of data within these buffers.
+
+        It is intended for use in applications where data is processed in a sequential and ordered
+        manner, such as streaming applications, hardware modeling, and other dataflow-based systems.
+
+        Description originally written by Gareth Callanan and refined using ChatGPT.
     }];
     let cppNamespace = "::mlir::fifo";
 

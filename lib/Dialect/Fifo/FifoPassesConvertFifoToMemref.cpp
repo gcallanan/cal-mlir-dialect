@@ -80,6 +80,7 @@ class ConvertFifoPullToMemref : public OpConversionPattern<Pull> {
     llvm::outs() << loc << "\n";
     llvm::outs() << "\tOutputPort: " << op.getOutputPort().getType() << "\n";
     llvm::outs() << "\tAdapter: " << adaptor.getOutputPort().getType() << "\n";
+    llvm::outs() << "\tAdapter: " << adaptor.getOutputPort() << "\n";
 
     Value index0 =
         rewriter.create<arith::ConstantIndexOp>(loc, 0); // random index

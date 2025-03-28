@@ -3,7 +3,7 @@ add_mlir_dialect_library(MLIRFifo
         FifoDialect.cpp
         FifoOps.cpp
         FifoPassesConvertFifoToMemref.cpp
-        FifoPassesBypassTuples.cpp
+        FifoPassesDecomposeTuples.cpp
 
         ADDITIONAL_HEADER_DIRS
         ${PROJECT_SOURCE_DIR}/include/Fifo
