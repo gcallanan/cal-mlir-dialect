@@ -15,4 +15,4 @@ memref.store %stored_value, %accessed_memref1[%c0] : memref<15xi32>
 // CHECK: memref.store %c15_i32, %alloc[%c0] : memref<15xi32>
 %accessed_memref2 = fifo.get_tuple_element %tuple[1] : tuple<memref<15xi32>, memref<2xi32>, i32> -> memref<2xi32>
 memref.store %stored_value, %accessed_memref2[%c0] : memref<2xi32>
-// CEHCK: memref.store %c15_i32, %alloc_0[%c0] : memref<2xi32>
+// CHECK: memref.store %c15_i32, %alloc_0[%c0] : memref<2xi32>

@@ -19,7 +19,19 @@ MLIR and LLVM have a specific way of running regression tests. I have written a 
 
 # Usage:
 
-## 1. Produce an image of a simple DAG graph
+## 1. Convert to MLIR
+
+cal-opt lower-fifo-to-llvm.mlir --lower-fifo-to-memref --decompose-fifo-tuples  --canonicalize > lowered_to_standard.mlir &&
+mlir-opt --test-lower-to-llvm lowered_to_standard.mlir > lowered_to_llvm.mlir &&
+mlir-translate --mlir-to-llvmir lowered_to_llvm.mlir > output.ll &&
+/home/gareth/software-repos/mlir-cal/cal-mlir-dialect/llvm-project/build/bin/llc output.ll -o output.s &&
+clang output.s -o a.out &&
+./a.out || echo $?
+
+cal-opt lower-fifo-to-llvm.mlir --lower-fifo-to-memref --decompose-fifo-tuples  --canonicalize | mlir-opt --test-lower-to-llvm | mlir-translate --mlir-to-llvmir | /home/gareth/software-repos/mlir-cal/cal-mlir-dialect/llvm-project/build/bin/llc | clang -x assembler -o a.out - && ./a.out || echo $?
+
+
+## 2. Produce an image of a simple DAG graph
 
 If you want a simple visualisation of the CFG of MLIR code, run the following code:
 
