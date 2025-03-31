@@ -8,7 +8,7 @@
 
 %alloc1 = memref.alloc() : memref<1xi32>
 %alloc2 = memref.alloc() : memref<1xi32>
-%tuple2 = fifo.make_tuple (%alloc1, %alloc2) : memref<1xi32>, memref<1xi32> -> tuple<memref<1xi32>, memref<1xi32>>
-// CHECK: %2 = fifo.make_tuple(%alloc, %alloc_0) : memref<1xi32>, memref<1xi32> -> tuple<memref<1xi32>, memref<1xi32>>
-%output2 = fifo.get_tuple_element %tuple2[0] : tuple<memref<1xi32>, memref<1xi32>> -> memref<1xi32>
-// CHECK: %3 = fifo.get_tuple_element %2[0] : tuple<memref<1xi32>, memref<1xi32>> -> memref<1xi32>
+%tuple2 = fifo.make_tuple (%alloc1, %alloc2, %constant5) : memref<1xi32>, memref<1xi32>, i32 -> tuple<memref<1xi32>, memref<1xi32>, i32>
+// CHECK: %2 = fifo.make_tuple(%alloc, %alloc_0, %c5_i32) : memref<1xi32>, memref<1xi32>, i32 -> tuple<memref<1xi32>, memref<1xi32>, i32>
+%output2 = fifo.get_tuple_element %tuple2[0] : tuple<memref<1xi32>, memref<1xi32>, i32> -> memref<1xi32>
+// CHECK: %3 = fifo.get_tuple_element %2[0] : tuple<memref<1xi32>, memref<1xi32>, i32> -> memref<1xi32>
