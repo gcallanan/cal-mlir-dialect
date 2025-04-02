@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
@@ -199,18 +200,20 @@ class ConvertFifoPullToMemref : public OpConversionPattern<Pull> {
   }
 };
 
-// This transformation converts a `fifo.push` operation into a series of operations
-// for interacting with a circular buffer.
+// This transformation converts a `fifo.push` operation into a series of
+// operations for interacting with a circular buffer.
 //
-// Input: A FIFO push operation with a value to be pushed to the FIFO and a reference 
-// to an output port in the form of a tuple (data, metadata, buffer size). The input 
-// consists of a data value and metadata for managing the FIFO (e.g., write index).
+// Input: A FIFO push operation with a value to be pushed to the FIFO and a
+// reference to an output port in the form of a tuple (data, metadata, buffer
+// size). The input consists of a data value and metadata for managing the FIFO
+// (e.g., write index).
 //
-// Output: A series of operations that handle the actual push operation into the 
+// Output: A series of operations that handle the actual push operation into the
 // circular buffer. This includes:
 //   1. Retrieving the current write index from the metadata.
 //   2. Storing the input data into the buffer at the current write index.
-//   3. Incrementing the write index, checking if it goes out of bounds, and wrapping it 
+//   3. Incrementing the write index, checking if it goes out of bounds, and
+//   wrapping it
 //      to zero if necessary.
 //   4. Writing the updated write index back to the metadata buffer.
 //
@@ -220,14 +223,13 @@ class ConvertFifoPullToMemref : public OpConversionPattern<Pull> {
 //
 // Example Output:
 //   %c672_i32 = arith.constant 672 : i32
-//   %1 = fifo.get_tuple_element %0[0] : tuple<memref<10xi32>, memref<2xi32>, i32> -> memref<10xi32>
-//   %2 = fifo.get_tuple_element %0[1] : tuple<memref<10xi32>, memref<2xi32>, i32> -> memref<2xi32>
-//   %3 = fifo.get_tuple_element %0[2] : tuple<memref<10xi32>, memref<2xi32>, i32> -> i32
-//   %c1_1 = arith.constant 1 : index
-//   %4 = memref.load %2[%c1_1] : memref<2xi32>
-//   %5 = arith.index_cast %4 : i32 to index
-//   memref.store %c672_i32, %1[%5] : memref<10xi32>
-//   %c0_i32_2 = arith.constant 0 : i32
+//   %1 = fifo.get_tuple_element %0[0] : tuple<memref<10xi32>, memref<2xi32>,
+//   i32> -> memref<10xi32> %2 = fifo.get_tuple_element %0[1] :
+//   tuple<memref<10xi32>, memref<2xi32>, i32> -> memref<2xi32> %3 =
+//   fifo.get_tuple_element %0[2] : tuple<memref<10xi32>, memref<2xi32>, i32> ->
+//   i32 %c1_1 = arith.constant 1 : index %4 = memref.load %2[%c1_1] :
+//   memref<2xi32> %5 = arith.index_cast %4 : i32 to index memref.store
+//   %c672_i32, %1[%5] : memref<10xi32> %c0_i32_2 = arith.constant 0 : i32
 //   %c1_i32 = arith.constant 1 : i32
 //   %6 = arith.addi %4, %c1_i32 : i32
 //   %7 = arith.remsi %6, %3 : i32
@@ -267,8 +269,8 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
     auto incrementedWriteI32 =
         rewriter.create<arith::AddIOp>(loc, writeI32, oneI32);
-    auto newWriteI32 =
-        rewriter.create<arith::RemSIOp>(loc, incrementedWriteI32, bufferSizeI32);
+    auto newWriteI32 = rewriter.create<arith::RemSIOp>(loc, incrementedWriteI32,
+                                                       bufferSizeI32);
 
     // 4. Write the new write index back to the metadata buffer
     auto storeNewReadI32 = rewriter.create<memref::StoreOp>(
@@ -280,22 +282,123 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
   }
 };
 
-// This pass converts operations from the FIFO dialect to the MemRef dialect, enabling
-// interaction with memory buffers in a more conventional MLIR representation. The pass 
-// transforms `fifo.push`, `fifo.pull`, and `fifo.create` operations into equivalent operations 
-// using the `memref` dialect, along with necessary metadata (e.g., write/read indices).
+class ConvertPrintToLLVMPrint : public OpConversionPattern<PrintOp> {
+  using OpConversionPattern<PrintOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(PrintOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+
+    mlir::Location loc = op.getLoc();
+
+    ModuleOp parentModule = op->getParentOfType<ModuleOp>();
+
+    // Get a symbol reference to the printf function, inserting it if necessary.
+    auto printfRef = getOrInsertPrintf(rewriter, parentModule);
+    Value formatSpecifierCst =
+        createGlobalString(loc, rewriter, "fmt_string",
+                           StringRef(op.getFormat().str()), parentModule);
+
+    mlir::Operation::operand_range args = op.getArgs();
+
+    // Create a SmallVector and add the format specifier.
+    llvm::SmallVector<mlir::Value, 8> combinedOperands;
+    combinedOperands.push_back(formatSpecifierCst);
+    combinedOperands.append(args.begin(), args.end());
+
+    rewriter.create<LLVM::CallOp>(loc, getPrintfType(getContext()), printfRef,
+                                  combinedOperands);
+
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+
+private:
+  /// Create a function declaration for printf, the signature is:
+  ///   * `i32 (i8*, ...)`
+  static LLVM::LLVMFunctionType getPrintfType(MLIRContext *context) {
+    auto llvmI32Ty = IntegerType::get(context, 32);
+    auto llvmPtrTy = LLVM::LLVMPointerType::get(context);
+    auto llvmFnType = LLVM::LLVMFunctionType::get(llvmI32Ty, llvmPtrTy,
+                                                  /*isVarArg=*/true);
+    return llvmFnType;
+  }
+
+  /// Return a symbol reference to the printf function, inserting it into the
+  /// module if necessary.
+  static FlatSymbolRefAttr getOrInsertPrintf(PatternRewriter &rewriter,
+                                             ModuleOp module) {
+    auto *context = module.getContext();
+    if (module.lookupSymbol<LLVM::LLVMFuncOp>("printf"))
+      return SymbolRefAttr::get(context, "printf");
+
+    // Insert the printf function into the body of the parent module.
+    PatternRewriter::InsertionGuard insertGuard(rewriter);
+    rewriter.setInsertionPointToStart(module.getBody());
+    rewriter.create<LLVM::LLVMFuncOp>(module.getLoc(), "printf",
+                                      getPrintfType(context));
+    return SymbolRefAttr::get(context, "printf");
+  }
+
+  /// Return a value representing an access into a global string with the given
+  /// name, creating the string if necessary.
+  static Value createGlobalString(Location loc, OpBuilder &builder,
+                                  StringRef name, StringRef value,
+                                  ModuleOp module) {
+    // TODO: This while loops is a bit of a hack to get a unique name, worth
+    // fixing later, just in a hurry right now
+    std::string uniqueName = name.str();
+    int counter = 0;
+    do {
+      uniqueName = uniqueName + "_1";
+    } while (module.lookupSymbol<LLVM::GlobalOp>(uniqueName));
+
+    // Create the global at the entry of the module.
+    LLVM::GlobalOp global;
+    if (!(global = module.lookupSymbol<LLVM::GlobalOp>(uniqueName))) {
+      OpBuilder::InsertionGuard insertGuard(builder);
+      builder.setInsertionPointToStart(module.getBody());
+      auto type = LLVM::LLVMArrayType::get(
+          IntegerType::get(builder.getContext(), 8), value.size());
+      global = builder.create<LLVM::GlobalOp>(
+          loc, type, /*isConstant=*/true, LLVM::Linkage::Internal, uniqueName,
+          builder.getStringAttr(value),
+          /*alignment=*/0);
+    }
+
+    // Get the pointer to the first character in the global string.
+    Value globalPtr = builder.create<LLVM::AddressOfOp>(loc, global);
+    Value cst0 = builder.create<LLVM::ConstantOp>(loc, builder.getI64Type(),
+                                                  builder.getIndexAttr(0));
+    return builder.create<LLVM::GEPOp>(
+        loc, LLVM::LLVMPointerType::get(builder.getContext()), global.getType(),
+        globalPtr, ArrayRef<Value>({cst0, cst0}));
+  }
+};
+
+// This pass converts operations from the FIFO dialect to the MemRef dialect,
+// enabling interaction with memory buffers in a more conventional MLIR
+// representation. The pass transforms `fifo.push`, `fifo.pull`, and
+// `fifo.create` operations into equivalent operations using the `memref`
+// dialect, along with necessary metadata (e.g., write/read indices).
 //
-// The conversion is performed using a set of rewrite patterns that handle each of the
-// FIFO operations, turning them into operations for circular buffers using memrefs:
-//   1. `ConvertFifoPullToMemref`: Converts `fifo.pull` to a read from a circular buffer.
-//   2. `ConvertFifoPushToMemref`: Converts `fifo.push` to a write to a circular buffer.
-//   3. `ConvertFifoCreateOpToMemref`: Converts `fifo.create` into memory allocation and tuple creation operations.
+// The conversion is performed using a set of rewrite patterns that handle each
+// of the FIFO operations, turning them into operations for circular buffers
+// using memrefs:
+//   1. `ConvertFifoPullToMemref`: Converts `fifo.pull` to a read from a
+//   circular buffer.
+//   2. `ConvertFifoPushToMemref`: Converts `fifo.push` to a write to a circular
+//   buffer.
+//   3. `ConvertFifoCreateOpToMemref`: Converts `fifo.create` into memory
+//   allocation and tuple creation operations.
 //
-// After the conversion, the pass ensures that only legal operations remain in the operation 
-// (e.g., `memref.alloc`, `memref.load`, `memref.store`, etc.) and makes the `fifo` dialect illegal.
-// The fifo make_tuple and get_tuple_element operations are kept legal to allow with the expectation
-// that the --decompose-fifo-tuples pass will be run after this pass to decompose the tuples into
-// original operands
+// After the conversion, the pass ensures that only legal operations remain in
+// the operation (e.g., `memref.alloc`, `memref.load`, `memref.store`, etc.) and
+// makes the `fifo` dialect illegal. The fifo make_tuple and get_tuple_element
+// operations are kept legal to allow with the expectation that the
+// --decompose-fifo-tuples pass will be run after this pass to decompose the
+// tuples into original operands
 class LowerFifoToMemrefPass
     : public impl::LowerFifoToMemrefPassBase<LowerFifoToMemrefPass> {
 public:
@@ -309,17 +412,17 @@ public:
     patterns.add<ConvertFifoPullToMemref>(&getContext());
     patterns.add<ConvertFifoPushToMemref>(&getContext());
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
+    patterns.add<ConvertPrintToLLVMPrint>(&getContext());
 
     // Set the legal and illegal dialects after this conversion
     target.addIllegalDialect<fifo::FifoDialect>();
     target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement>();
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
-                           arith::ArithDialect>();
+                           arith::ArithDialect, LLVM::LLVMDialect>();
 
     // Run the conversion
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns)))) {
-      std::cout << "Failed!!!" << std::endl; // TODO: Remove this
       signalPassFailure();
     }
   }

@@ -30,6 +30,7 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
     "memref::MemRefDialect",
     "index::IndexDialect",
     "arith::ArithDialect",
+    "LLVM::LLVMDialect",
     "fifo::FifoDialect"
   ];
 }

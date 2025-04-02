@@ -117,7 +117,7 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
+def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", []> {
   let description = [{
     The `fifo.get_tuple_element` operation extracts an element from a tuple at a
     specified index. Typically this is used when converting the FIFO dialect to
@@ -148,7 +148,7 @@ def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", [MemoryEffects<[MemWrite]
   let assemblyFormat = "$tupleName `[` $index `]` attr-dict `:` type($tupleName) `->` type($output)";
 }
 
-def Fifo_MakeTuple: Fifo_Op<"make_tuple", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
+def Fifo_MakeTuple: Fifo_Op<"make_tuple", []> {
   let description = [{
     The `fifo.make_tuple` operation constructs a tuple from multiple input values.
     This is useful for grouping multiple related values into a single data structure.
@@ -176,6 +176,29 @@ def Fifo_MakeTuple: Fifo_Op<"make_tuple", [MemoryEffects<[MemWrite]>, MemoryEffe
   let results = (outs TupleOf<[AnyType]>:$output);
 
   let assemblyFormat = "`(` $inputs `)` attr-dict `:` type($inputs) `->` type($output)";
+}
+
+def Fifo_PrintOp : Fifo_Op<"print", []> {
+  let summary = "Prints formatted output with variadic arguments.";
+  let description = [{
+    The `fifo.print` operation takes a format string followed by a variadic list of arguments,
+    similar to the standard `printf` function.
+
+    Example:
+      %c1 = arith.constant 1 : i32
+      %c2 = arith.constant 2 : i32
+
+      fifo.print("A simple print!\0A\00")
+      fifo.print("Value: %d\0A\00", %c1) : (i32)
+      fifo.print("Values: %d %d\0A\00", %c1, %c2) : (i32, i32)
+  }];
+
+  let arguments = (ins
+    StrAttr:$format,
+    Variadic<AnyType>:$args
+  );
+
+  let assemblyFormat = "`(` $format (`,` $args^)? `)` attr-dict (`:` `(` type($args)^ `)`)?";
 }
 
 
