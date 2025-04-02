@@ -15,6 +15,7 @@ set(CAL_TEST_DEPENDS
         cal-opt
         cal-translate
         CalPlugin
+        lli # Add lli as a dependency so that we can run llvm code during testing
         )
 if(MLIR_ENABLE_BINDINGS_PYTHON)
   list(APPEND CAL_TEST_DEPENDS CalPythonModules)

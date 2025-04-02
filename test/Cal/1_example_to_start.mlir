@@ -38,6 +38,6 @@ cal.actor @my_actor1
 {
 }
 
-//cal.actor @my_actor1 input_ports(%c10_i64, %c20_i64, %c30_i64) output_ports(%c10_i64, %c30_i64) {}
+// CHECK: cal.actor @my_actor1 input_ports(%c10_i64, %c20_i64, %c30_i64) output_ports(%c10_i64, %c30_i64) {}
 
 // CHECK: }
