@@ -136,6 +136,10 @@ def Fifo_GetTupleElement: Fifo_Op<"get_tuple_element", []> {
     %element = fifo.get_tuple_element(%tuple, 1)
     This retrieves the second element (index `1`) from `%tuple`
 
+    NOTE: It would make more sense for this operation to go into some utility
+    dialect instead of fifo as it is useful in multiple dialects, but for now
+    it stays here.
+
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
@@ -167,6 +171,10 @@ def Fifo_MakeTuple: Fifo_Op<"make_tuple", []> {
     %tuple = fifo.make_tuple(%a, %b)
     This creates a tuple containing `%a`, `%b`, and `%c`.
 
+    NOTE: It would make more sense for this operation to go into some utility
+    dialect instead of fifo as it is useful in multiple dialects, but for now
+    it stays here.
+
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
@@ -182,7 +190,7 @@ def Fifo_PrintOp : Fifo_Op<"print", []> {
   let summary = "Prints formatted output with variadic arguments.";
   let description = [{
     The `fifo.print` operation takes a format string followed by a variadic list of arguments,
-    similar to the standard `printf` function.
+    similar to the standard `printf` function in C.
 
     Example:
       %c1 = arith.constant 1 : i32
@@ -191,6 +199,15 @@ def Fifo_PrintOp : Fifo_Op<"print", []> {
       fifo.print("A simple print!\0A\00")
       fifo.print("Value: %d\0A\00", %c1) : (i32)
       fifo.print("Values: %d %d\0A\00", %c1, %c2) : (i32, i32)
+
+    NOTE: f32 values need to be explicitly cast to an f64 value as the %f
+    in the format string requires a 64-bit floating point value. The program
+    will still run if you pass an f32 into fifo print, but it will not
+    print out the expected value.
+
+    NOTE 2: It would make more sense for this operation to go into some utility
+    dialect instead of fifo as it is useful in multiple dialects, but for now
+    it stays here.
   }];
 
   let arguments = (ins

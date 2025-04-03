@@ -35,9 +35,6 @@ echo '
 // Simple example that creates a FIFO, pushes 672 to it, pops this 672 from it, adds
 // 17 to it and then prints the result.
 module {
-  llvm.func @printf(!llvm.ptr, ...) -> i32
-  llvm.mlir.global internal constant @str0("Result: %d\0A\00")
-
   func.func @main() -> i32 {
     %constant0 = arith.constant 0 : i32
 
@@ -49,8 +46,7 @@ module {
 
     %constant17 = arith.constant 17 : i32
     %newResult = arith.addi %constant17, %0: i32
-    %strPtr = llvm.mlir.addressof @str0 : !llvm.ptr
-    %21 = llvm.call @printf(%strPtr, %newResult) vararg(!llvm.func<i32 (ptr, ...)>): (!llvm.ptr, i32) -> i32
+    fifo.print("Result: %d\0A\00", %newResult) : (i32)
 
     func.return %constant0 : i32
   }
@@ -60,7 +56,7 @@ module {
 ./llvm-project/build/bin/lli llvm-ir.ll
 ```
 
-Alternativly, once you have created temp.mlir, you can generate these commands in a single command: `cal-opt --lower-cal-to-llvm temp.mlir | cal-translate --mlir-to-llvmir | ./llvm-project/build/bin/lli llvm-ir.ll`
+Alternativly, once you have created temp.mlir, you can generate these commands in a single command: `cal-opt --lower-cal-to-llvm temp.mlir | cal-translate --mlir-to-llvmir | ./llvm-project/build/bin/lli`
 
 The expected output here is "Result: 689"
 

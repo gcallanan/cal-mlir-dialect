@@ -30,7 +30,6 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
     "memref::MemRefDialect",
     "index::IndexDialect",
     "arith::ArithDialect",
-    "LLVM::LLVMDialect",
     "fifo::FifoDialect"
   ];
 }
@@ -53,6 +52,21 @@ def DecomposeFifoTuples: Pass<"decompose-fifo-tuples"> {
   let constructor = "mlir::fifo::decomposeFifoTuples()";
   let dependentDialects = [
     "fifo::FifoDialect"
+  ];
+}
+
+def LowerFifoPrintToLLVM: Pass<"lower-fifo-print-to-llvm"> {
+  let summary = "Lowers fifo.print operations to calls to printf in the LLVM dialect.";
+  let description = [{
+    This pass converts `fifo.print` operations into equivalent calls to the `printf` function
+    in the LLVM dialect for compatibility with LLVM-based backends.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
+  }];
+  let constructor = "mlir::fifo::lowerFifoPrintToLLVM()";
+  let dependentDialects = [
+    "fifo::FifoDialect",
+    "LLVM::LLVMDialect"
   ];
 }
 

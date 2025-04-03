@@ -282,101 +282,6 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
   }
 };
 
-class ConvertPrintToLLVMPrint : public OpConversionPattern<PrintOp> {
-  using OpConversionPattern<PrintOp>::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(PrintOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-
-    mlir::Location loc = op.getLoc();
-
-    ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-
-    // Get a symbol reference to the printf function, inserting it if necessary.
-    auto printfRef = getOrInsertPrintf(rewriter, parentModule);
-    Value formatSpecifierCst =
-        createGlobalString(loc, rewriter, "fmt_string",
-                           StringRef(op.getFormat().str()), parentModule);
-
-    mlir::Operation::operand_range args = op.getArgs();
-
-    // Create a SmallVector and add the format specifier.
-    llvm::SmallVector<mlir::Value, 8> combinedOperands;
-    combinedOperands.push_back(formatSpecifierCst);
-    combinedOperands.append(args.begin(), args.end());
-
-    rewriter.create<LLVM::CallOp>(loc, getPrintfType(getContext()), printfRef,
-                                  combinedOperands);
-
-    rewriter.eraseOp(op);
-
-    return success();
-  }
-
-private:
-  /// Create a function declaration for printf, the signature is:
-  ///   * `i32 (i8*, ...)`
-  static LLVM::LLVMFunctionType getPrintfType(MLIRContext *context) {
-    auto llvmI32Ty = IntegerType::get(context, 32);
-    auto llvmPtrTy = LLVM::LLVMPointerType::get(context);
-    auto llvmFnType = LLVM::LLVMFunctionType::get(llvmI32Ty, llvmPtrTy,
-                                                  /*isVarArg=*/true);
-    return llvmFnType;
-  }
-
-  /// Return a symbol reference to the printf function, inserting it into the
-  /// module if necessary.
-  static FlatSymbolRefAttr getOrInsertPrintf(PatternRewriter &rewriter,
-                                             ModuleOp module) {
-    auto *context = module.getContext();
-    if (module.lookupSymbol<LLVM::LLVMFuncOp>("printf"))
-      return SymbolRefAttr::get(context, "printf");
-
-    // Insert the printf function into the body of the parent module.
-    PatternRewriter::InsertionGuard insertGuard(rewriter);
-    rewriter.setInsertionPointToStart(module.getBody());
-    rewriter.create<LLVM::LLVMFuncOp>(module.getLoc(), "printf",
-                                      getPrintfType(context));
-    return SymbolRefAttr::get(context, "printf");
-  }
-
-  /// Return a value representing an access into a global string with the given
-  /// name, creating the string if necessary.
-  static Value createGlobalString(Location loc, OpBuilder &builder,
-                                  StringRef name, StringRef value,
-                                  ModuleOp module) {
-    // TODO: This while loops is a bit of a hack to get a unique name, worth
-    // fixing later, just in a hurry right now
-    std::string uniqueName = name.str();
-    int counter = 0;
-    do {
-      uniqueName = uniqueName + "_1";
-    } while (module.lookupSymbol<LLVM::GlobalOp>(uniqueName));
-
-    // Create the global at the entry of the module.
-    LLVM::GlobalOp global;
-    if (!(global = module.lookupSymbol<LLVM::GlobalOp>(uniqueName))) {
-      OpBuilder::InsertionGuard insertGuard(builder);
-      builder.setInsertionPointToStart(module.getBody());
-      auto type = LLVM::LLVMArrayType::get(
-          IntegerType::get(builder.getContext(), 8), value.size());
-      global = builder.create<LLVM::GlobalOp>(
-          loc, type, /*isConstant=*/true, LLVM::Linkage::Internal, uniqueName,
-          builder.getStringAttr(value),
-          /*alignment=*/0);
-    }
-
-    // Get the pointer to the first character in the global string.
-    Value globalPtr = builder.create<LLVM::AddressOfOp>(loc, global);
-    Value cst0 = builder.create<LLVM::ConstantOp>(loc, builder.getI64Type(),
-                                                  builder.getIndexAttr(0));
-    return builder.create<LLVM::GEPOp>(
-        loc, LLVM::LLVMPointerType::get(builder.getContext()), global.getType(),
-        globalPtr, ArrayRef<Value>({cst0, cst0}));
-  }
-};
-
 // This pass converts operations from the FIFO dialect to the MemRef dialect,
 // enabling interaction with memory buffers in a more conventional MLIR
 // representation. The pass transforms `fifo.push`, `fifo.pull`, and
@@ -407,18 +312,16 @@ public:
   void runOnOperation() final {
     ConversionTarget target(getContext());
 
-    // Something about this being a stack
     RewritePatternSet patterns(&getContext());
     patterns.add<ConvertFifoPullToMemref>(&getContext());
     patterns.add<ConvertFifoPushToMemref>(&getContext());
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
-    patterns.add<ConvertPrintToLLVMPrint>(&getContext());
 
     // Set the legal and illegal dialects after this conversion
     target.addIllegalDialect<fifo::FifoDialect>();
-    target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement>();
+    target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement, fifo::PrintOp>();
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
-                           arith::ArithDialect, LLVM::LLVMDialect>();
+                           arith::ArithDialect>();
 
     // Run the conversion
     if (failed(applyPartialConversion(getOperation(), target,

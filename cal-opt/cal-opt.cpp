@@ -73,6 +73,7 @@ void registerLowerFifoToLLVMPipeline() {
         //    - Lower FIFO operations to MemRef operations before decomposing FIFO tuples.
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
+        pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
 
         // 2. Standard MLIR to LLVM lowering:
         //    The following passes lower various MLIR dialects to LLVM.
