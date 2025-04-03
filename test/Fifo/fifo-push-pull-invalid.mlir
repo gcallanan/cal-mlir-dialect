@@ -1,14 +1,14 @@
-// Here we check for expect errors in the fifo.push and fifo.pull commands.
+// Here we check for expect errors in the fifo.push and fifo.pop commands.
 // RUN: cal-opt -split-input-file %s -verify-diagnostics
 
 %in0,%out0 = fifo.create<i32>(5) : !fifo.input_port<i32>, !fifo.output_port<i32>
-// expected-error @+1 {{'fifo.pull' op expected outputPort element type to be 'i33', but got 'i32'}}
-%0 = fifo.pull(%out0: !fifo.output_port<i32>) : i33
+// expected-error @+1 {{'fifo.pop' op expected outputPort element type to be 'i33', but got 'i32'}}
+%0 = fifo.pop(%out0: !fifo.output_port<i32>) : i33
 // -----
 
 %in0,%out0 = fifo.create<i32>(5) : !fifo.input_port<i32>, !fifo.output_port<i32>
-// expected-error @+1 {{'fifo.pull' op expected outputPort to be of type OutputPortType (!fifo.output_port<'i32'>), but got '!fifo.input_port<i32>'}}
-%0 = fifo.pull(%in0: !fifo.input_port<i32>) : i32
+// expected-error @+1 {{'fifo.pop' op expected outputPort to be of type OutputPortType (!fifo.output_port<'i32'>), but got '!fifo.input_port<i32>'}}
+%0 = fifo.pop(%in0: !fifo.input_port<i32>) : i32
 // -----
 
 %in0,%out0 = fifo.create<i32>(5) : !fifo.input_port<i32>, !fifo.output_port<i32>

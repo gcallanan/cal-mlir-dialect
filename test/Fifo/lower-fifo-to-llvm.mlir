@@ -12,7 +12,7 @@ module {
 
     %in0,%out0 = fifo.create<i32>(10) : !fifo.input_port<i32>, !fifo.output_port<i32>
     fifo.push(%in0: !fifo.input_port<i32>, %constant672: i32)
-    %0 = fifo.pull(%out0: !fifo.output_port<i32>) : i32
+    %0 = fifo.pop(%out0: !fifo.output_port<i32>) : i32
 
     %newResult = arith.addi %constant17, %0: i32
 

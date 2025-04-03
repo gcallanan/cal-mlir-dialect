@@ -19,7 +19,7 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
     concrete representation of this FIFO in memory.
 
     This pass works by transforming FIFO buffer operations (such as `fifo.create`, `fifo.push`,
-    and `fifo.pull`) into MemRef-based operations that represent memory buffers. The pass
+    and `fifo.pop`) into MemRef-based operations that represent memory buffers. The pass
     is not thread-safe, meaning it should be used in single-threaded execution contexts
     to avoid issues with concurrent transformations.
 

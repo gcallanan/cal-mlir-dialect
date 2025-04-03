@@ -1,5 +1,5 @@
 // Tests if the FIFO lowering pass correctly lowers to fifo.create, fifo.push
-// and fifo.pull operations to the memref dialect.
+// and fifo.pop operations to the memref dialect.
 
 // RUN: cal-opt --lower-fifo-to-memref %s | FileCheck %s
 %in0,%out0 = fifo.create<i32>(10) : !fifo.input_port<i32>, !fifo.output_port<i32>
@@ -31,7 +31,7 @@ fifo.push(%in0: !fifo.input_port<i32>, %constant672: i32)
 
 
 // Pop 672 from fifo, add 17 to it
-%0 = fifo.pull(%out0: !fifo.output_port<i32>) : i32
+%0 = fifo.pop(%out0: !fifo.output_port<i32>) : i32
 // CHECK: %8 = fifo.get_tuple_element %0[0] : tuple<memref<10xi32>, memref<2xi32>, i32> -> memref<10xi32>
 // CHECK-NEXT: %9 = fifo.get_tuple_element %0[1] : tuple<memref<10xi32>, memref<2xi32>, i32> -> memref<2xi32>
 // CHECK-NEXT: %10 = fifo.get_tuple_element %0[2] : tuple<memref<10xi32>, memref<2xi32>, i32> -> i32

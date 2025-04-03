@@ -61,7 +61,7 @@ LogicalResult CreateOp::verify() {
   return success();
 }
 
-LogicalResult Pull::verify() {
+LogicalResult Pop::verify() {
   Type tokenType = getOutputToken().getType();
   Type outputPortType = getOutputPort().getType();
 

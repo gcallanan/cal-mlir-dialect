@@ -118,8 +118,8 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
   }
 };
 
-// This class defines a conversion pattern for the `fifo.pull` operation. It
-// transforms a `fifo.pull` operation that operates on a FIFO output port into a
+// This class defines a conversion pattern for the `fifo.pop` operation. It
+// transforms a `fifo.pop` operation that operates on a FIFO output port into a
 // read operation from a circular buffer. The pattern works as follows:
 //
 // - Extracts the `dataMemref`, `metadataMemref`, and `bufferSizeI32` from the
@@ -133,7 +133,7 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
 //       the FIFO's state.
 //
 // Input example:
-//   %0 = fifo.pull(%out0: !fifo.output_port<i32>) : i32
+//   %0 = fifo.pop(%out0: !fifo.output_port<i32>) : i32
 //
 // Output example:
 //   %1 = fifo.get_tuple_element %0[0] :
@@ -152,11 +152,11 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
 //   %8 = arith.remsi %7, %3 : i32
 //   memref.store %8, %2[%c0_1] : memref<2xi32>
 //   memref.store %9, %2[%c0] : memref<2xi32>
-class ConvertFifoPullToMemref : public OpConversionPattern<Pull> {
-  using OpConversionPattern<Pull>::OpConversionPattern;
+class ConvertFifoPopToMemref : public OpConversionPattern<Pop> {
+  using OpConversionPattern<Pop>::OpConversionPattern;
 
   LogicalResult
-  matchAndRewrite(Pull op, OpAdaptor adaptor,
+  matchAndRewrite(Pop op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
 
     mlir::Location loc = op.getLoc();
@@ -284,14 +284,14 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
 
 // This pass converts operations from the FIFO dialect to the MemRef dialect,
 // enabling interaction with memory buffers in a more conventional MLIR
-// representation. The pass transforms `fifo.push`, `fifo.pull`, and
+// representation. The pass transforms `fifo.push`, `fifo.pop`, and
 // `fifo.create` operations into equivalent operations using the `memref`
 // dialect, along with necessary metadata (e.g., write/read indices).
 //
 // The conversion is performed using a set of rewrite patterns that handle each
 // of the FIFO operations, turning them into operations for circular buffers
 // using memrefs:
-//   1. `ConvertFifoPullToMemref`: Converts `fifo.pull` to a read from a
+//   1. `ConvertFifoPopToMemref`: Converts `fifo.pop` to a read from a
 //   circular buffer.
 //   2. `ConvertFifoPushToMemref`: Converts `fifo.push` to a write to a circular
 //   buffer.
@@ -313,7 +313,7 @@ public:
     ConversionTarget target(getContext());
 
     RewritePatternSet patterns(&getContext());
-    patterns.add<ConvertFifoPullToMemref>(&getContext());
+    patterns.add<ConvertFifoPopToMemref>(&getContext());
     patterns.add<ConvertFifoPushToMemref>(&getContext());
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
 

@@ -23,7 +23,7 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
   let summary = "Creates a FIFO buffer of a given size and element type";
   let description = [{
     The `fifo.create` operation initializes a FIFO buffer with a given size
-    and element type. The buffer allows data to be pushed in and pulled out
+    and element type. The buffer allows data to be pushed in and popped out
     in a first-in, first-out manner.
 
     Arguments:
@@ -32,7 +32,7 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
 
     Results:
     - `inputPort`: Used for pushing elements into the FIFO.
-    - `outputPort`: Used for pulling elements from the FIFO.
+    - `outputPort`: Used for popping elements from the FIFO.
 
     Example:
     %input_port, %output_port = fifo.create<f32>(64): !fifo.input_port<i32>, !fifo.output_port<i32>
@@ -56,12 +56,12 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_Pull : Fifo_Op<"pull", [MemoryEffects<[MemRead]>]> {
-  let summary = "Pull a token from the front of the FIFO buffer";
+def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemRead]>]> {
+  let summary = "Pop a token from the front of the FIFO buffer";
   let description = [{
-    The `fifo.pull` operation retrieves an element from the front of the FIFO
+    The `fifo.pop` operation retrieves an element from the front of the FIFO
     buffer via the `outputPort`. This operation ensures that the FIFO maintains
-    its sequential ordering, where the first element pushed is the first one pulled.
+    its sequential ordering, where the first element pushed is the first one popped.
 
     Arguments:
     - `outputPort`: A handle to the FIFO buffer's output port, from which an element will be retrieved.
@@ -70,14 +70,14 @@ def Fifo_Pull : Fifo_Op<"pull", [MemoryEffects<[MemRead]>]> {
     - `outputToken`: The element removed from the FIFO buffer.
 
     Example:
-    %token = fifo.pull(%outputPort : !fifo.output_port<i32>): i32
-    This pulls an element from the FIFO buffer associated with `%outputPort`.
+    %token = fifo.pop(%outputPort : !fifo.output_port<i32>): i32
+    This pops an element from the FIFO buffer associated with `%outputPort`.
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
 
   let arguments = (ins
-    AnyType:$outputPort // The output port targeted for the pull operation
+    AnyType:$outputPort // The output port targeted for the pop operation
   );
 
   let results = (outs
@@ -94,7 +94,7 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
   let description = [{
     The `fifo.push` operation inserts a new element into the FIFO buffer via the
     `inputPort`. The element is stored in the buffer until it is retrieved by
-    a `fifo.pull` operation.
+    a `fifo.pop` operation.
 
     Arguments:
     - `inputToken`: The value being pushed into the FIFO.
