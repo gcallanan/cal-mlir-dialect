@@ -88,6 +88,7 @@ class ConvertPrintToLLVMPrint : public OpConversionPattern<PrintOp> {
   }
 
 private:
+  static inline int global_string_counter;
   /// Create a function declaration for printf, the signature is:
   ///   * `i32 (i8*, ...)`
   static LLVM::LLVMFunctionType getPrintfType(MLIRContext *context) {
@@ -121,10 +122,9 @@ private:
                                   ModuleOp module) {
     // TODO: This while loops is a bit of a hack to get a unique name, worth
     // fixing later, just in a hurry right now
-    std::string uniqueName = name.str();
-    int counter = 0;
+    std::string uniqueName;
     do {
-      uniqueName = uniqueName + "_1";
+      uniqueName = name.str() + "_" + std::to_string(global_string_counter++);
     } while (module.lookupSymbol<LLVM::GlobalOp>(uniqueName));
 
     // Create the global at the entry of the module.
@@ -149,6 +149,8 @@ private:
         globalPtr, ArrayRef<Value>({cst0, cst0}));
   }
 };
+
+//int ConvertPrintToLLVMPrint::global_string_counter = 0;
 
 // This pass lowers the `fifo.print` operation to an equivalent `printf`
 // operation in the LLVM dialect. The `fifo.print` operation, which prints

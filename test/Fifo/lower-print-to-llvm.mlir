@@ -1,6 +1,6 @@
-//RUN: cal-opt --lower-cal-to-llvm %s | \
-//RUN: cal-translate --mlir-to-llvmir | \
-//RUN: lli | FileCheck %s
+// RUN: cal-opt --lower-cal-to-llvm %s | \
+// RUN: cal-translate --mlir-to-llvmir | \
+// RUN: lli | FileCheck %s
 
 func.func @main() -> i32 {
     %constant0 = arith.constant 0 : i32

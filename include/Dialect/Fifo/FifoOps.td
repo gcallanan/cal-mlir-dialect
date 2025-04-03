@@ -63,6 +63,9 @@ def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemRead]>]> {
     buffer via the `outputPort`. This operation ensures that the FIFO maintains
     its sequential ordering, where the first element pushed is the first one popped.
 
+    This operation does not check if the fifo is full or not. Pushing to a full
+    fifo results in undefined behaviour.
+
     Arguments:
     - `outputPort`: A handle to the FIFO buffer's output port, from which an element will be retrieved.
 
@@ -95,6 +98,9 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
     The `fifo.push` operation inserts a new element into the FIFO buffer via the
     `inputPort`. The element is stored in the buffer until it is retrieved by
     a `fifo.pop` operation.
+
+    This operation does not check if the fifo is empty or not. Pushing to an
+    empty fifo generates results in undefined behaviour.
 
     Arguments:
     - `inputToken`: The value being pushed into the FIFO.
