@@ -92,7 +92,7 @@ def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_Size : Fifo_Op<"size", [MemoryEffects<[MemRead]>]> {
+def Fifo_SizeOp : Fifo_Op<"size", [MemoryEffects<[MemRead]>]> {
   let summary = "Returns the number of elements currently stored in a FIFO buffer.";
 
   let description = [{
@@ -204,7 +204,7 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRe
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_Space : Fifo_Op<"space", [MemoryEffects<[MemRead]>]> {
+def Fifo_SpaceOp : Fifo_Op<"space", [MemoryEffects<[MemRead]>]> {
   let summary = "Returns the amount of free space available in a FIFO buffer.";
 
   let description = [{

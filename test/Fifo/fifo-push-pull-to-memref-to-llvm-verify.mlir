@@ -1,4 +1,5 @@
-// Do some more tests on the fifo 
+// Verify the fifo.create, fifo.push and fifo.pop operations report the correct
+// values when executed in LLVM.
 // RUN: cal-opt --lower-cal-to-llvm %s | \
 // RUN: cal-translate --mlir-to-llvmir | \
 // RUN: lli | FileCheck %s

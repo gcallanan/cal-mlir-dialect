@@ -277,10 +277,173 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
                                                        bufferSizeI32);
 
     // 4. Write the new write index back to the metadata buffer
-    auto storeNewReadI32 = rewriter.create<memref::StoreOp>(
+    auto storeNewWriteI32 = rewriter.create<memref::StoreOp>(
         loc, newWriteI32, metadataMemref, writeLocationIndex);
 
     rewriter.replaceOp(op, pushedData);
+
+    return success();
+  }
+};
+
+// This class defines a conversion pattern for the `fifo.size` operation.
+// It transforms a `fifo.size` operation that operates on a FIFO output port
+// into a sequence of operations that compute the number of elements present in
+// the FIFO. The transformation proceeds as follows:
+//
+// - Extracts the `dataMemref`, `metadataMemref`, and the buffer size (as an
+// i32) from the tuple representing the FIFO state.
+// - Loads the write index (stored at metadata index 1) and the read index
+// (stored at metadata index 0).
+// - Computes the FIFO size using the formula:
+//      (write - read + bufferSize) % bufferSize
+//   where `bufferSize` is the total size of the circular buffer (including an
+//   extra slot).
+// - Casts the resulting i32 value into an index type.
+//
+// Input example:
+//   %0 = fifo.size(%out0: !fifo.output_port<i32>) : index
+//
+// Transformed output:
+//   %1 = fifo.get_tuple_element %0[0] : tuple<memref<11xi32>, memref<2xi32>,
+//            i32> -> memref<11xi32>
+//   %2 = fifo.get_tuple_element %0[1] : tuple<memref<11xi32>, memref<2xi32>,
+//            i32> -> memref<2xi32>
+//   %3 = fifo.get_tuple_element %0[2] : tuple<memref<11xi32>, memref<2xi32>,
+//            i32> -> i32
+//   %c1_2 = arith.constant 1 : index
+//   %4 = memref.load %2[%c1_2] : memref<2xi32>
+//   %c0_3 = arith.constant 0 : index
+//   %5 = memref.load %2[%c0_3] : memref<2xi32>
+//   %6 = arith.subi %4, %5 : i32
+//   %7 = arith.addi %6, %3 : i32
+//   %8 = arith.remsi %7, %3 : i32
+//   %9 = arith.index_cast %8 : i32 to index
+//
+// The arithmetic operations compute the FIFO size based on the current write
+// and read indices.
+class ConvertFifoSizeOpToMemref : public OpConversionPattern<SizeOp> {
+  using OpConversionPattern<SizeOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(SizeOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+
+    mlir::Location loc = op.getLoc();
+
+    auto tupleType = adaptor.getOutputPort().getType().cast<TupleType>();
+    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
+    auto bufferSizeI32 = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
+
+    // 1. Get the write and read index and convert it to type index
+    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    auto writeI32 = rewriter.create<memref::LoadOp>(loc, metadataMemref,
+                                                    writeLocationIndex);
+
+    Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto readI32 =
+        rewriter.create<memref::LoadOp>(loc, metadataMemref, readLocationIndex);
+
+    // 2. Calculate the size of the FIFO - equal to
+    // (write-read+bufferSize)%bufferSize
+    auto step1 = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
+    auto step2 = rewriter.create<arith::AddIOp>(loc, step1, bufferSizeI32);
+    auto size = rewriter.create<arith::RemSIOp>(loc, step2, bufferSizeI32);
+    auto sizeIndex =
+        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), size);
+
+    // 3. Replace eraseOp with the new calculated size
+    rewriter.replaceOp(op, sizeIndex);
+
+    return success();
+  }
+};
+
+// This class defines a conversion pattern for the `fifo.space` operation.
+// It transforms a `fifo.space` operation that operates on a FIFO input port
+// into a sequence of operations that compute the amount of free space available
+// in the FIFO. The transformation involves the following steps:
+//
+// - Extracts the `dataMemref`, `metadataMemref`, and the buffer size (as an
+// i32) from the tuple representing the FIFO state.
+// - Loads the write index (at metadata index 1) and the read index (at metadata
+// index 0).
+// - Computes the space available using the formula:
+//      bufferSize - (write - read + bufferSize) % bufferSize - 1
+//   Here, the subtraction of 1 accounts for the extra slot used for
+//   differentiating between full and empty states in the circular buffer
+//   implementation.
+// - Casts the resulting i32 value into an index type.
+//
+// Input example:
+//   %space0 = fifo.space(%in0: !fifo.input_port<i32>) : index
+//
+// Transformed output (simplified):
+//   %1 = fifo.get_tuple_element %0[0] : tuple<memref<11xi32>, memref<2xi32>,
+//            i32> -> memref<11xi32>
+//   %2 = fifo.get_tuple_element %0[1] : tuple<memref<11xi32>, memref<2xi32>,
+//            i32> -> memref<2xi32>
+//   %3 = fifo.get_tuple_element %0[2] : tuple<memref<11xi32>, memref<2xi32>,
+//            i32> -> i32
+//   %c1_2 = arith.constant 1 : index
+//   %4 = memref.load %2[%c1_2] : memref<2xi32>
+//   %c0_3 = arith.constant 0 : index
+//   %5 = memref.load %2[%c0_3] : memref<2xi32>
+//   %c1_i32 = arith.constant 1 : i32
+//   %6 = arith.subi %4, %5 : i32
+//   %7 = arith.addi %6, %3 : i32
+//   %8 = arith.remsi %7, %3 : i32
+//   %9 = arith.subi %3, %8 : i32
+//   %10 = arith.subi %9, %c1_i32 : i32
+//   %11 = arith.index_cast %10 : i32 to index
+//
+// The arithmetic operations compute the free space in the FIFO by subtracting
+// the current FIFO size (i.e., the number of elements present) from the total
+// buffer size, then adjusting by one.
+class ConvertFifoSpaceOpToMemref : public OpConversionPattern<SpaceOp> {
+  using OpConversionPattern<SpaceOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(SpaceOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+
+    mlir::Location loc = op.getLoc();
+
+    auto tupleType = adaptor.getInputPort().getType().cast<TupleType>();
+    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(0), adaptor.getInputPort(), 0);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getInputPort(), 1);
+    auto bufferSizeI32 = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getInputPort(), 2);
+
+    // 1. Get the write and read index and convert it to type index
+    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    auto writeI32 = rewriter.create<memref::LoadOp>(loc, metadataMemref,
+                                                    writeLocationIndex);
+
+    Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto readI32 =
+        rewriter.create<memref::LoadOp>(loc, metadataMemref, readLocationIndex);
+
+    // 2. Calculate the space avaialble in theFIFO - equal to
+    // bufferSize - (write-read+bufferSize)%bufferSize - 1
+    auto oneI32 = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+    auto step1 = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
+    auto step2 = rewriter.create<arith::AddIOp>(loc, step1, bufferSizeI32);
+    auto step3 = rewriter.create<arith::RemSIOp>(loc, step2, bufferSizeI32);
+    auto step4 = rewriter.create<arith::SubIOp>(loc, bufferSizeI32, step3);
+    auto space = rewriter.create<arith::SubIOp>(loc, step4, oneI32);
+    auto spaceIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), space);
+
+    // 3. Replace eraseOp with the new calculated size
+    rewriter.replaceOp(op, spaceIndex);
 
     return success();
   }
@@ -317,6 +480,8 @@ public:
     ConversionTarget target(getContext());
 
     RewritePatternSet patterns(&getContext());
+    patterns.add<ConvertFifoSizeOpToMemref>(&getContext());
+    patterns.add<ConvertFifoSpaceOpToMemref>(&getContext());
     patterns.add<ConvertFifoPopToMemref>(&getContext());
     patterns.add<ConvertFifoPushToMemref>(&getContext());
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());

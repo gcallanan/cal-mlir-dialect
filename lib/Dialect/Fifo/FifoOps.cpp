@@ -118,7 +118,7 @@ LogicalResult Peek::verify() {
   return success();
 }
 
-LogicalResult Size::verify() {
+LogicalResult SizeOp::verify() {
   Type outputPortType = getOutputPort().getType();
 
   if (!outputPortType.isa<OutputPortType>()) {
@@ -130,7 +130,7 @@ LogicalResult Size::verify() {
   return success();
 }
 
-LogicalResult Space::verify() {
+LogicalResult SpaceOp::verify() {
   Type inputPortType = getInputPort().getType();
   if (!inputPortType.isa<InputPortType>()) {
     return emitOpError() << "expected inputPort to be of type InputPortType "
