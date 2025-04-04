@@ -56,7 +56,7 @@ def Fifo_CreateOp : Fifo_Op<"create", []> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemRead]>]> {
+def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
   let summary = "Pop a token from the front of the FIFO buffer";
   let description = [{
     The `fifo.pop` operation retrieves an element from the front of the FIFO
@@ -92,7 +92,88 @@ def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemRead]>]> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
-def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
+def Fifo_Size : Fifo_Op<"size", [MemoryEffects<[MemRead]>]> {
+  let summary = "Returns the number of elements currently stored in a FIFO buffer.";
+
+  let description = [{
+    The `fifo.size` operation queries the current number of valid elements stored in a FIFO buffer.
+
+    The operation takes one operand:
+    - `outputPort`: A handle to the FIFO's output port.
+
+    It returns a single result:
+    - `size`: An `index`-typed value representing the current number of tokens in the FIFO buffer.
+
+    Example:
+    ```
+    %sz = fifo.size(%out0: !fifo.output_port<i32>) : index
+    ```
+
+    This retrieves the current number of elements stored in the FIFO connected to `%out0`.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
+  }];
+
+  let arguments = (ins
+    AnyType:$outputPort // The output port targeted for the size operation
+  );
+
+  let results = (outs
+    Index:$size   // The number of tokens in the FIFO buffer
+  );
+
+  let assemblyFormat = "`(` $outputPort `:` type($outputPort) `)` attr-dict `:` type($size)";
+
+  let hasVerifier = 1; // Enables verification logic in C++.
+}
+
+def Fifo_Peek : Fifo_Op<"peek", [MemoryEffects<[MemRead]>]> {
+  let summary = "Peek at a specific index in a FIFO without consuming it.";
+
+  let description = [{
+    The `fifo.peek` operation allows non-destructive access to an element at a
+    specified index in a FIFO buffer.
+
+    Unlike a pop operation, which removes the element from the FIFO,
+    `peek` returns a copy of the element at the given `peekIndex` without
+    modifying the FIFO's internal state.
+
+    The operation takes two operands:
+    - `outputPort`: A handle to the FIFO's output port from which data can
+       be accessed.
+    - `peekIndex`: An index value (of type `index`) specifying the position
+    of the element to peek at. Index `0` corresponds to the front of the FIFO
+    (the next element that would be popped).
+
+    The result is a token of the same type as the elements stored in the FIFO.
+
+    Example:
+    ```
+    %index1 = arith.constant 1 : index
+    %2 = fifo.peek(%out0: !fifo.output_port<i32>, %index1: index) : i32
+    ```
+
+    This retrieves the 0-based indexed element from the FIFO connected to
+    `%out0`, without removing it from the buffer.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
+  }];
+
+  let arguments = (ins
+    AnyType:$outputPort, // The output port targeted for the pop operation
+    Index:$peekIndex // The index in the fifo to peek at
+  );
+
+  let results = (outs
+    AnyType:$outputToken   // The token peeked from the FIFO buffer
+  );
+
+  let assemblyFormat = "`(` $outputPort `:` type($outputPort) `,` $peekIndex `:` type($peekIndex) `)` attr-dict `:` type($outputToken)";
+
+  let hasVerifier = 1; // Enables verification logic in C++.
+}
+
+def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead]>]> {
   let summary = "Push a token to the back of the FIFO buffer";
   let description = [{
     The `fifo.push` operation inserts a new element into the FIFO buffer via the
@@ -119,6 +200,44 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>]> {
   );
 
   let assemblyFormat = "`(` $inputPort `:` type($inputPort) `,` $inputToken `:` type($inputToken)  `)` attr-dict";
+
+  let hasVerifier = 1; // Enables verification logic in C++.
+}
+
+def Fifo_Space : Fifo_Op<"space", [MemoryEffects<[MemRead]>]> {
+  let summary = "Returns the amount of free space available in a FIFO buffer.";
+
+  let description = [{
+    The `fifo.space` operation reports the current number of available slots in
+    a FIFO buffer — that is, how many additional elements can be inserted before
+    the buffer becomes full.
+
+    The operation takes one operand:
+    - `inputPort`: A handle to the FIFO's input port.
+
+    It returns a single result:
+    - `spaceAvailable`: An `index`-typed value indicating how many more tokens
+    can be written into the FIFO before it reaches capacity.
+
+    Example:
+    ```
+    %space = fifo.space(%in0: !fifo.input_port<i32>) : index
+    ```
+
+    This returns the number of free slots remaining in the FIFO connected to `%in0`.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
+  }];
+
+  let arguments = (ins
+    AnyType:$inputPort // The input port targeted for this operation
+  );
+
+  let results = (outs
+    Index:$spaceAvailable   // The amount of free space in the FIFO buffer
+  );
+
+  let assemblyFormat = "`(` $inputPort `:` type($inputPort) `)` attr-dict `:` type($spaceAvailable)";
 
   let hasVerifier = 1; // Enables verification logic in C++.
 }

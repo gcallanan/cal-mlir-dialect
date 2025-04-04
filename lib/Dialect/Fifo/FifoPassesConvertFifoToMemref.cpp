@@ -34,6 +34,10 @@ namespace mlir::fifo {
 // operations that allocate memory for the data and metadata and store the
 // initial values. The process involves the following steps:
 //
+// NOTE: This fifo has one element more than the specified size, this allows
+// for checking the number of elements and free space on the buffer without
+// even if the bufer size is 1.
+//
 // Input:
 // %in0, %out0 = fifo.create<i32>(10) : !fifo.input_port<i32>,
 // !fifo.output_port<i32>
@@ -46,9 +50,9 @@ namespace mlir::fifo {
 //    write index in this metadata memory buffer.
 //
 // 2. Create a tuple to hold both memory buffers (`%alloc`, `%alloc_0`) and the
-// size `10`.
+// size `11`.
 //    - The tuple is created using `fifo.make_tuple` with the following types:
-//      - `memref<10xi32>` for the data buffer.
+//      - `memref<11xi32>` for the data buffer.
 //      - `memref<2xi32>` for the metadata buffer.
 //      - `i32` for the buffer size (constant `10`).
 //
@@ -77,7 +81,7 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
 
     mlir::Location loc = op.getLoc();
 
-    auto bufferSize = op.getBufferSize();
+    auto bufferSize = op.getBufferSize() + 1; // +1 so we can get the size
     auto elementType = op.getElementType();
 
     // 1. Allocate the data memref

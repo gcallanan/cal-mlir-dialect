@@ -99,3 +99,44 @@ LogicalResult Push::verify() {
 
   return success();
 }
+
+LogicalResult Peek::verify() {
+  Type outputPortType = getOutputPort().getType();
+  if (!outputPortType.isa<OutputPortType>()) {
+    return emitOpError() << "expected outputPort to be of type OutputPortType "
+                            "(!fifo.output_port<...>), but got "
+                         << outputPortType;
+  }
+
+  Type indexType = getPeekIndex().getType();
+  if (!indexType.isa<IndexType>()) {
+    return emitOpError() << "expected peekIndex to be of type Index "
+                            "(index), but got "
+                         << indexType;
+  }
+
+  return success();
+}
+
+LogicalResult Size::verify() {
+  Type outputPortType = getOutputPort().getType();
+
+  if (!outputPortType.isa<OutputPortType>()) {
+    return emitOpError() << "expected outputPort to be of type OutputPortType "
+                            "(!fifo.output_port<...>), but got "
+                         << outputPortType;
+  }
+
+  return success();
+}
+
+LogicalResult Space::verify() {
+  Type inputPortType = getInputPort().getType();
+  if (!inputPortType.isa<InputPortType>()) {
+    return emitOpError() << "expected inputPort to be of type InputPortType "
+                            "(!fifo.input_port<...>), but got "
+                         << inputPortType;
+  }
+
+  return success();
+}
