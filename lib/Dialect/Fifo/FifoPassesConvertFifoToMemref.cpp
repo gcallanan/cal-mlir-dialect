@@ -449,6 +449,85 @@ class ConvertFifoSpaceOpToMemref : public OpConversionPattern<SpaceOp> {
   }
 };
 
+// This class defines a conversion pattern for the fifo.peek operation.
+// It transforms a fifo.peek operation, which reads a value at a specified
+// offset from the current read index of a FIFO output port, into a sequence of
+// memref operations that perform the equivalent access on a circular buffer.
+//
+// The transformation performs the following steps:
+//
+// - Extracts the dataMemref, metadataMemref, and the buffer size (as an i32)
+//   from the tuple representing the FIFO state.
+// - Loads the read index (stored in metadata index 0) and casts it to an
+//   index-typed value.
+// - Adds the peek index to the read index and wraps the resulting index using
+//   a modulo operation with the buffer size to ensure circular access.
+// - Loads the data from the data memref at the wrapped index.
+//
+// Input example:
+//   %peekVal = fifo.peek(%out0: !fifo.output_port<i32>, %idx: index) : i32
+//
+// Transformed output (simplified):
+//   %0 = fifo.get_tuple_element %out0[0] : tuple<memref<6xi32>, memref<2xi32>, i32> -> memref<6xi32>
+//   %1 = fifo.get_tuple_element %out0[1] : tuple<memref<6xi32>, memref<2xi32>, i32> -> memref<2xi32>
+//   %2 = fifo.get_tuple_element %out0[2] : tuple<memref<6xi32>, memref<2xi32>, i32> -> i32
+//   %3 = arith.index_cast %2 : i32 to index
+//   %c0 = arith.constant 0 : index
+//   %4 = memref.load %1[%c0] : memref<2xi32>
+//   %5 = arith.index_cast %4 : i32 to index
+//   %6 = arith.addi %5, %idx : index
+//   %7 = arith.remsi %6, %3 : index
+//   %8 = memref.load %0[%7] : memref<6xi32>
+//
+// This conversion allows the fifo.peek operation to be lowered into conventional
+// index arithmetic and memory access operations that operate directly on
+// memrefs, making it compatible with passes that work over standard MLIR
+// dialects like memref and arith.
+class ConvertFifoPeekToMemref : public OpConversionPattern<Peek> {
+  using OpConversionPattern<Peek>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(Peek op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+
+    mlir::Location loc = op.getLoc();
+
+    // llvm::outs() << "Peek op: " << op << "\n";
+
+    auto tupleType = adaptor.getOutputPort().getType().cast<TupleType>();
+    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
+    auto bufferSizeI32 = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
+    Value bufferSizeIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), bufferSizeI32);
+
+    // 1. Get the read index and convert it to type index
+    Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto readI32 =
+        rewriter.create<memref::LoadOp>(loc, metadataMemref, readLocationIndex);
+    Value readIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), readI32);
+
+    // 2. Increment the read index by the peek amount and wrap it to zero if
+    // it goes out of bounds
+    auto peekIndex = op.getPeekIndex();
+    auto peekIndexFromReadIndex =
+        rewriter.create<arith::AddIOp>(loc, readIndex, peekIndex);
+    auto peekIndexWrapped = rewriter.create<arith::RemSIOp>(
+        loc, peekIndexFromReadIndex, bufferSizeIndex);
+
+    // 3. Get the data to be peeked using the peekIndexWrapped
+    auto peekedData =
+        rewriter.create<memref::LoadOp>(loc, dataMemref, peekIndexWrapped.getResult());
+    rewriter.replaceOp(op, peekedData);
+
+    return success();
+  }
+};
+
 // This pass converts operations from the FIFO dialect to the MemRef dialect,
 // enabling interaction with memory buffers in a more conventional MLIR
 // representation. The pass transforms `fifo.push`, `fifo.pop`, and
@@ -485,6 +564,7 @@ public:
     patterns.add<ConvertFifoPopToMemref>(&getContext());
     patterns.add<ConvertFifoPushToMemref>(&getContext());
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
+    patterns.add<ConvertFifoPeekToMemref>(&getContext());
 
     // Set the legal and illegal dialects after this conversion
     target.addIllegalDialect<fifo::FifoDialect>();
