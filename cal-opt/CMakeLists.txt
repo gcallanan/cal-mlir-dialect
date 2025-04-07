@@ -6,6 +6,7 @@ set(LIBS
         MLIRArithDialect
         MLIROptLib
         MLIRCal
+        MLIRFifo
         )
 add_llvm_executable(cal-opt cal-opt.cpp)
 

@@ -10,6 +10,7 @@
 #define CAL_OPS
 
 include "Dialect/Cal/CalTypes.td"
+include "Dialect/Fifo/FifoTypes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -45,11 +46,11 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator, Attr
 
   let arguments = (ins
     SymbolNameAttr:$sym_name, // Actor Name: Required by the Symbol interface
-    Variadic<I64>:$input_ports,
-    Variadic<I64>:$output_ports
+    Variadic<Fifo_InputPort>:$input_ports,
+    Variadic<Fifo_OutputPort>:$output_ports
   );
 
-  let assemblyFormat = "$sym_name `input_ports``(` $input_ports `)` `output_ports` `(` $output_ports `)` `{` attr-dict `}` ";
+  let assemblyFormat = "$sym_name\n(`input_ports` `(` $input_ports^ `:` type($input_ports) `)`)?\n(`output_ports` `(` $output_ports^ `:` type($output_ports) `)`)? attr-dict";
 }
 
 def Cal_ActionOp : Cal_Op<"action"> {

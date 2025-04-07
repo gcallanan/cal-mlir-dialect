@@ -8,6 +8,9 @@
 
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Cal/CalDialect.h"
+#include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoOps.h"
+#include "Dialect/Fifo/FifoTypes.h"
 
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.cpp.inc"

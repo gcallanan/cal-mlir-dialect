@@ -9,7 +9,8 @@
 #include "Dialect/Cal-c/Dialects.h"
 
 #include "Dialect/Cal/CalDialect.h"
+#include "Dialect/Fifo/FifoDialect.h"
 #include "mlir/CAPI/Registration.h"
 
-MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Cal, cal,
-                                      mlir::cal::CalDialect)
+MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Fifo, fifo, mlir::fifo::FifoDialect)
+MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Cal, cal, mlir::cal::CalDialect)

@@ -5,11 +5,13 @@ add_llvm_library(CalPlugin
 
         DEPENDS
         MLIRCal
+        MLIRFifo
         PLUGIN_TOOL
         mlir-opt
 
         LINK_LIBS
         MLIRCal
+        MLIRFifo
         )
 target_include_directories(
         CalPlugin

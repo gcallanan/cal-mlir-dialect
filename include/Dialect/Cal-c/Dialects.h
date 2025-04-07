@@ -15,7 +15,9 @@
 extern "C" {
 #endif
 
+MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Fifo, fifo);
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Cal, cal);
+
 
 #ifdef __cplusplus
 }

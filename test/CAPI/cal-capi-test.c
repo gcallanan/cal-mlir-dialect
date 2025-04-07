@@ -28,9 +28,12 @@ int main(int argc, char **argv) {
   // This adds dozens of MB of binary size over just the cal dialect.
   registerAllUpstreamDialects(ctx);
   mlirDialectHandleRegisterDialect(mlirGetDialectHandle__cal__(), ctx);
+  mlirDialectHandleRegisterDialect(mlirGetDialectHandle__fifo__(), ctx);
 
   MlirModule module = mlirModuleCreateParse(
-      ctx, mlirStringRefCreateFromCString("%0 = arith.constant 2 : i32\n"));
+      ctx, mlirStringRefCreateFromCString("cal.actor @my_actor\n"
+        "%in0,%out0 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>\n"
+      ));
   if (mlirModuleIsNull(module)) {
     printf("ERROR: Could not parse.\n");
     mlirContextDestroy(ctx);
@@ -38,7 +41,8 @@ int main(int argc, char **argv) {
   }
   MlirOperation op = mlirModuleGetOperation(module);
 
-  // CHECK: %[[C:.*]] = arith.constant 2 : i32
+  // CHECK: cal.actor @my_actor
+  // CHECK: %inputPort, %outputPort = fifo.create<i32> (1) : !fifo.input_port<i32>, !fifo.output_port<i32>
   mlirOperationDump(op);
 
   mlirModuleDestroy(module);

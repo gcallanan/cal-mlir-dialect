@@ -17,27 +17,6 @@
 // CHECK: module {
 
 // Here is the input
-cal.actor @my_actor
-        input_ports()
-        output_ports()
-{
-}
-
-// These check commands now specify the expected output
-
-// CHECK:  cal.actor @my_actor input_ports() output_ports() {}
-
-
 %input1 = arith.constant 10 : i64
-%input2 = arith.constant 20 : i64
-%input3 = arith.constant 30 : i64
-
-cal.actor @my_actor1
-        input_ports(%input1, %input2, %input3)
-        output_ports(%input1, %input3)
-{
-}
-
-// CHECK: cal.actor @my_actor1 input_ports(%c10_i64, %c20_i64, %c30_i64) output_ports(%c10_i64, %c30_i64) {}
-
-// CHECK: }
+// These check commands now specify the expected output
+// CHECK: %c10_i64 = arith.constant 10 : i64
