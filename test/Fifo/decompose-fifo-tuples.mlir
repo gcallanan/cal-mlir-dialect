@@ -44,7 +44,6 @@ func.func @if_result(%arg0: tuple<memref<15xi32>, memref<2xi32>, i32>, %arg1: i1
 }
 
 func.func @while_operands_results(%arg0: tuple<tuple<>, i1, tuple<i2>>, %arg1: i1) -> tuple<tuple<>, i1, tuple<i2>> {
-    // CHECK: func.func @while_operands_results(%arg0: i1, %arg1: i2, %arg2: i1) -> (i1, i2)
   %0 = scf.while (%arg2 = %arg0) : (tuple<tuple<>, i1, tuple<i2>>) -> tuple<tuple<>, i1, tuple<i2>> {
     scf.condition(%arg1) %arg2 : tuple<tuple<>, i1, tuple<i2>>
   } do {
@@ -53,3 +52,14 @@ func.func @while_operands_results(%arg0: tuple<tuple<>, i1, tuple<i2>>, %arg1: i
   }
   return %0 : tuple<tuple<>, i1, tuple<i2>>
 }
+
+// CHECK: func.func @while_operands_results(%arg0: i1, %arg1: i2, %arg2: i1) -> (i1, i2) {
+// CHECK:   %1:2 = scf.while (%arg3 = %arg0, %arg4 = %arg1) : (i1, i2) -> (i1, i2) {
+// CHECK:     scf.condition(%arg2) %arg3, %arg4 : i1, i2
+// CHECK:   } do {
+// CHECK:   ^bb0(%arg3: i1, %arg4: i2):
+// CHECK:     scf.yield %arg3, %arg4 : i1, i2
+// CHECK:   }
+// CHECK:   return %1#0, %1#1 : i1, i2
+// CHECK: }
+
