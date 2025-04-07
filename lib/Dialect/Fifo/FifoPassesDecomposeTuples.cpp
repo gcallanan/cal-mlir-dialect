@@ -20,8 +20,10 @@
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/OneToNFuncConversions.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -102,6 +104,13 @@ public:
     RewritePatternSet patterns(context);
     patterns.add<ConvertMakeTuple, ConvertGetTupleElement>(
         typeConverter, patterns.getContext());
+
+    // These are patterns existing in MLIR that take in tuple arguments
+    // in ops withink the func and scf dialects and decompose them into
+    // their individual elements.
+    populateFuncTypeConversionPatterns(typeConverter, patterns);
+    mlir::scf::populateSCFStructuralOneToNTypeConversions(typeConverter,
+                                                          patterns);
 
     // Run conversion.
     if (failed(applyPartialOneToNConversion(getOperation(), typeConverter,
