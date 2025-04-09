@@ -15,7 +15,13 @@
 ### 2. Installation Instructions:
 
 1. Install the MLIR dialect by running the [install_mlir.sh](./install_mlir.sh) script. It will pull and install the LLVM repo with MLIR into a new directory titled `llvm-project` in this repository. It will take many hours to install, but you should only need to install it once.
+    - Optionally update your PATH with the `llvm-project/build/bin` directory
+    - Optionally update your LD_LIBRARY_PATH with the `llvm-project/build/lib` directory
 2. Once the above step is complete, install this CAL dialect using the [install_cal_dialect.sh](./install_cal_dialect.sh) script. Every time you modify the code in this repo, you will need to run this script again.
+    - Optionally update your PATH with the `build/bin` directory
+
+### 3. GPU Support
+To enable lowering to MLIR dialects with GPU support, ensure that you install MLIR with GPU support by using the `--enable-gpu` flag in the [install_mlir.sh](./install_mlir.sh) script. For more details on using NVIDIA GPUs with MLIR refer to [README.md](./extras/using-nvidia-gpus/README.md) file in the [extras/using-nvidia-gpus](./extras/using-nvidia-gpus) directory.
 
 ## Usage Examples:
 
@@ -87,3 +93,7 @@ MLIR and LLVM have a specific way of running regression tests. I have written a 
 
 This README can sometimes be out of date, but typically, the tests should always be working, so if
 some commands listed here are not working in the README, look at the tests instead.
+
+## DISCLAIMER:
+
+I, Gareth Callanan, am the author of this repository but I have made use of ChatGPT to generate a significant portion of this documentation for this repo in an attempt to make it more accesible for someone new jumping in without requiring a significant time investment on my side. Where AI has been used, the output has been verified by me.
