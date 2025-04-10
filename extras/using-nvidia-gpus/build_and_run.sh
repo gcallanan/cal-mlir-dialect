@@ -7,15 +7,27 @@
 # 3. Compiles the LLVM IR to a binary executable using Clang++.
 # 4. Executes the resulting binary.
 
-mlir-opt example.mlir                   \
-  --pass-pipeline="builtin.module(      \
-    gpu-kernel-outlining,               \
-    nvvm-attach-target{chip=sm_75 O=3}, \
-    gpu.module(convert-gpu-to-nvvm),    \
-    gpu-to-llvm,                        \
-    gpu-module-to-binary                \
-  )" -o example-nvvm.mlir
+set -e
 
+# Here is the original command for lowering the GPU commands. We modified it below
+# so that we can use other passes
+# mlir-opt example-lowered.mlir                   \
+#   --pass-pipeline="builtin.module(      \
+#     gpu-kernel-outlining,               \
+#     nvvm-attach-target{chip=sm_75 O=3}, \
+#     gpu.module(convert-gpu-to-nvvm),    \
+#     gpu-to-llvm,                        \
+#     gpu-module-to-binary                \
+#   )" -o example-nvvm.mlir
+
+mlir-opt example.mlir \
+    --convert-scf-to-cf \
+    --gpu-kernel-outlining \
+    --nvvm-attach-target='chip=sm_75 O=3' \
+    --convert-gpu-to-nvvm \
+    --gpu-to-llvm \
+    --gpu-module-to-binary \
+    -o example-nvvm.mlir
 
 mlir-translate example-nvvm.mlir        \
   --mlir-to-llvmir                      \
