@@ -17,9 +17,7 @@ include "mlir/IR/SymbolInterfaces.td"
 
 
 
-// TODO: Need to update this description with an example
-// TODO: What traits should this function have?
-def Fifo_CreateOp : Fifo_Op<"create", []> {
+def Fifo_CreateOp : Fifo_Op<"create", [MemoryEffects<[MemAlloc]>, MemoryEffects<[MemWrite]>]> {
   let summary = "Creates a FIFO buffer of a given size and element type";
   let description = [{
     The `fifo.create` operation initializes a FIFO buffer with a given size

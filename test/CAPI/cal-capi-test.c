@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
   mlirDialectHandleRegisterDialect(mlirGetDialectHandle__fifo__(), ctx);
 
   MlirModule module = mlirModuleCreateParse(
-      ctx, mlirStringRefCreateFromCString("cal.actor @my_actor\n"
+      ctx, mlirStringRefCreateFromCString("cal.actor @my_actor{}\n"
         "%in0,%out0 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>\n"
       ));
   if (mlirModuleIsNull(module)) {

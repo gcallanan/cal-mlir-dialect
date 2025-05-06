@@ -6,8 +6,8 @@ module {
     return
   }
 
-  // CHECK-LABEL: func @cal_types(%arg0: !cal.custom<"10">)
-  func.func @cal_types(%arg0: !cal.custom<"10">) {
+  // CHECK-LABEL: func @cal_types(%arg0: !cal.state_ref<i64>)
+  func.func @cal_types(%arg0: !cal.state_ref<i64>) {
     return
   }
 }

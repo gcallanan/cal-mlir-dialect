@@ -14,6 +14,8 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
+#include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
+#include "mlir/Dialect/GPU/Transforms/Passes.h"
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalPasses.h"
@@ -35,7 +37,7 @@ int main(int argc, char **argv) {
                   mlir::LLVM::LLVMDialect, mlir::cf::ControlFlowDialect,
                   mlir::scf::SCFDialect, mlir::math::MathDialect,
                   mlir::func::FuncDialect, mlir::gpu::GPUDialect,
-                  mlir::nvgpu::NVGPUDialect>();
+                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect>();
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
   // will be *parsed* by the tool, not the one generated

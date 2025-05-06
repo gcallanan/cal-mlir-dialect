@@ -21,11 +21,14 @@ class Cal_Type<string name, string typeMnemonic, list<Trait> traits = []>
   let mnemonic = typeMnemonic;
 }
 
-def Cal_CustomType : Cal_Type<"Custom", "custom"> {
-    let summary = "Cal custom type";
-    let description = "Custom type in cal dialect";
-    let parameters = (ins StringRefParameter<"the custom value">:$value);
-    let assemblyFormat = "`<` $value `>`";
+def Cal_StateVarRef : Cal_Type<"StateVarRef", "state_ref", []> {
+    let summary = "Reference to an actor state variable";
+    let description = [{
+      This type is used to reference an actor state variable. It is used in
+      operations that need to access the value of a state variable.
+    }];
+    let parameters = (ins "Type":$stateType);
+    let assemblyFormat = "`<` $stateType `>`";
 }
 
 #endif // CAL_TYPES

@@ -1,3 +1,5 @@
+NOTE: Tips on hoisting: https://mlir.llvm.org/doxygen/Hoisting_8cpp_source.html
+
 # CAL Actor Language Dialect for the MLIR Compilation Framework
 
 ## Introduction and Motivation 
@@ -8,9 +10,14 @@
 
 ### Optimisation Passes
 
-## Installation
+## Getting Started
 
 ### 1. Installation Requirements
+Before installing, ensure you have:
+- A C++17 compatible compiler
+- CMake (version 3.13.4 or higher)
+- Ninja build system
+- Python 3.6 or higher
 
 ### 2. Installation Instructions:
 
@@ -21,11 +28,9 @@
     - Optionally update your PATH with the `build/bin` directory
 
 ### 3. GPU Support
-To enable lowering to MLIR dialects with GPU support, ensure that you install MLIR with GPU support by using the `--enable-gpu` flag in the [install_mlir.sh](./install_mlir.sh) script. For more details on using NVIDIA GPUs with MLIR refer to [README.md](./extras/using-nvidia-gpus/README.md) file in the [extras/using-nvidia-gpus](./extras/using-nvidia-gpus) directory.
+To enable lowering to MLIR dialects with GPU support, ensure that you install MLIR with GPU support by using the `--enable-gpu` flag in the [install_mlir.sh](./install_mlir.sh) script. For more details on using NVIDIA GPUs with MLIR refer to the [README.md](./extras/using-nvidia-gpus/README.md) file in the [extras/using-nvidia-gpus](./extras/using-nvidia-gpus) directory.
 
-## Usage Examples:
-
-You should be able to run these examples from the top level directory in the repository after having followed the installation instructions.
+## Working with the Dialect
 
 ### 1. Convert CAL to LLVM
 
@@ -84,7 +89,9 @@ echo '
 ./build/bin/cal-opt --view-op-graph  temp.mlir 2>&1 >/dev/null | dot -Tpng -o dag.png
 ```
 
-## Testing:
+## Development and Testing
+
+### Running Tests
 
 Whenever you install the CAL-MLIR-DIALECT project, regression tests will be run. These tests are all located in [test/](test/)
 
@@ -96,4 +103,4 @@ some commands listed here are not working in the README, look at the tests inste
 
 ## DISCLAIMER:
 
-I, Gareth Callanan, am the author of this repository but I have made use of ChatGPT to generate a significant portion of this documentation for this repo in an attempt to make it more accesible for someone new jumping in without requiring a significant time investment on my side. Where AI has been used, the output has been verified by me.
+I, Gareth Callanan, am the author of this repository but I have made use of ChatGPT to generate a significant portion of this documentation for this repo. This is an attempt to make it more accesible for someone jumping in while at the same time not requiring a significant time investment on my side. Where AI has been used, the output has been verified by me.
