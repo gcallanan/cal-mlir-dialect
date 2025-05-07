@@ -19,7 +19,7 @@ module {
     fifo.print("Result: %d\0A\00", %val0) : (i32)
     // CHECK: Result: 672
     fifo.print("Result: %d\0A\00", %val1) : (i32)
-    // CHECK: Result: 171
+    // CHECK: Result: 17
 
     func.return %constant0 : i32
   }

@@ -15,6 +15,7 @@ include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
+include "mlir/IR/CommonAttrConstraints.td"
 
 // This operation is declared with the folloing interfaces:
 //    - [Symbol]: This actor needs to have a name and this name needs to be part
@@ -37,7 +38,7 @@ include "mlir/IR/SymbolInterfaces.td"
 //
 //
 
-def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator, AttrSizedOperandSegments]> {
+def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   let summary = "CAL actor operation";
   let description = [{
     Represents an actor that contains one or more action regions. Each region
@@ -45,14 +46,13 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator, Attr
   }];
 
   let arguments = (ins
-    SymbolNameAttr:$sym_name, // Actor Name: Required by the Symbol interface
-    Variadic<Fifo_InputPort>:$input_ports,
-    Variadic<Fifo_OutputPort>:$output_ports
+    SymbolNameAttr:$sym_name // Actor Name: Required by the Symbol interface
   );
 
-  let regions = (region AnyRegion:$execute_once);
+  let regions = (region AnyRegion:$body);
 
-  let assemblyFormat = "$sym_name (`ports_out` `(` $input_ports^ `:` type($input_ports) `)`)? (`ports_in` `(` $output_ports^ `:` type($output_ports) `)`)? `{` ( `initial_region` $execute_once^ )? `}` attr-dict ";
+  //let assemblyFormat = "$sym_name  `(` $input_port `)`  ( $body^ )? attr-dict ";
+  let hasCustomAssemblyFormat = 1;
 }
 
 def Cal_ActionOp : Cal_Op<"action"> {
