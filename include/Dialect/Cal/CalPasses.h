@@ -15,6 +15,9 @@
 
 namespace mlir {
 namespace cal {
+
+std::unique_ptr<mlir::Pass> lowerCalStateToMemref();
+
 #define GEN_PASS_DECL
 #include "Dialect/Cal/CalPasses.h.inc"
 

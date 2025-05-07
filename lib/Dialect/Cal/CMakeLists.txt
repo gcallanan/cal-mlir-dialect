@@ -2,7 +2,7 @@ add_mlir_dialect_library(MLIRCal
         CalTypes.cpp
         CalDialect.cpp
         CalOps.cpp
-        CalPasses.cpp
+        CalPassesLowerStateToMemref.cpp
 
         ADDITIONAL_HEADER_DIRS
         ${PROJECT_SOURCE_DIR}/include/Cal

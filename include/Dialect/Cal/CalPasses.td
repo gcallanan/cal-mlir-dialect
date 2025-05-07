@@ -11,20 +11,24 @@
 
 include "mlir/Pass/PassBase.td"
 
-def CalSwitchBarFoo: Pass<"cal-switch-bar-foo", "::mlir::ModuleOp"> {
-  let summary = "Switches the name of a FuncOp named `bar` to `foo` and folds.";
+def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
+  let summary = "Lower CAL state operations to MemRef dialect operations";
   let description = [{
-    Switches the name of a FuncOp named `bar` to `foo` and folds.
-    ```
-    func.func @bar() {
-      return
-    }
-    // Gets transformed to:
-    func.func @foo() {
-      return
-    }
-    ```
+    This pass lowers state-related operations from the CAL dialect, specifically
+    `cal.state`, `cal.get`, and `cal.set`, to equivalent operations in the MemRef
+    dialect. The transformation replaces CAL state definitions with `memref.alloc`
+    operations, and rewrites `cal.get` and `cal.set` into `memref.load` and
+    `memref.store`, respectively.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
+  let constructor = "mlir::cal::lowerCalStateToMemref()";
+  let dependentDialects = [
+    "cal::CalDialect",
+    "index::IndexDialect",
+    "arith::ArithDialect",
+    "memref::MemRefDialect"
+  ];
 }
 
 #endif // CAL_PASS
