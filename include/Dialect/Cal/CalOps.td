@@ -55,13 +55,33 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def Cal_ActionOp : Cal_Op<"action"> {
+def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator]> {
+  let summary = "TODO";
+  let description = [{
+    TODO
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
+def CAL_ActionNotDoneOp : Cal_Op<"action_not_done", [Terminator]> {
+  let summary = "TODO";
+  let description = [{
+    TODO
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
+def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">]> {
   let summary = "CAL action operation";
   let description = [{
     Represents an individual action within a cal.actor.
   }];
 
-  let assemblyFormat = "`{` attr-dict `}` ";  // Adjust as needed.
+  let regions = (region AnyRegion:$body);
+
+  let assemblyFormat = "$body attr-dict ";
 }
 
 def CAL_CreateStateVarOp : Cal_Op<"create_state_var", [MemoryEffects<[MemAlloc]>, MemoryEffects<[MemWrite]>]> {

@@ -109,10 +109,14 @@ ParseResult parseAndCheckPorts(OpAsmParser &parser,
 ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
   SmallVector<OpAsmParser::Argument> inVals, outVals;
 
+  auto location = parser.getCurrentLocation();
+
+  // Get the symbol name
   mlir::StringAttr symNameAttr;
   if (parser.parseSymbolName(symNameAttr, "sym_name", result.attributes))
     return failure();
 
+  // Parse the input and output arguments.
   if (failed(parseAndCheckPorts<mlir::fifo::OutputPortType>(
           parser, inVals, "ports_in",
           "expected OutputPortType (fifo.output_port<...>) for ports_in "
@@ -127,15 +131,37 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
   }
 
+  // Combine the input and output arguments into a single list
   SmallVector<OpAsmParser::Argument> entryArgs;
   entryArgs.reserve(inVals.size() + outVals.size());
   entryArgs.append(inVals.begin(), inVals.end());
   entryArgs.append(outVals.begin(), outVals.end());
 
+  // Attach the arguments to the region
   Region &bodyRegion = *result.addRegion();
   if (parser.parseRegion(bodyRegion, entryArgs,
                          /*enableNameShadowing=*/true))
     return failure();
+
+  // Check that the last operations in a region are all of cal.action
+  auto beginIt = bodyRegion.op_begin();
+  auto endIt = bodyRegion.op_end();
+  bool firstActionFound = false;
+  for (auto it = beginIt; it != endIt; ++it) {
+    Operation &op = *it; // reference to the operation
+    if (llvm::isa<ActionOp>(op)) {
+      firstActionFound = true; // first action found
+    } else {
+      if (firstActionFound) { // We found a non-action operation after an action
+                              // operation
+        return parser.emitError(
+            location,
+            "Expected all cal.action operations in the cal.actor to appear at "
+            "the end of the region. In this cal.actor, some non-action "
+            "operations were found after a cal.action operation.");
+      }
+    }
+  }
 
   return success();
 }
