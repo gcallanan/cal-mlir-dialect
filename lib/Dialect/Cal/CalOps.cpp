@@ -36,7 +36,7 @@ using namespace mlir::cal;
 ///   printer - The printer used to emit the formatted output.
 ///   args    - The list of block arguments to filter and print.
 ///   label   - A string label (e.g., "ports_in") used as a prefix in the
-///   output.
+///             output.
 template <typename T>
 void collectAndPrintArgumentsByType(OpAsmPrinter &printer,
                                     mlir::Block::BlockArgListType args,
@@ -66,19 +66,23 @@ void collectAndPrintArgumentsByType(OpAsmPrinter &printer,
 
 /// Parses a list of arguments and checks if they are of the expected port type.
 ///
-/// This templated function attempts to parse a list of arguments specified by the
-/// given `keyword`, and ensures that each argument is of the expected port type.
-/// If any argument's type does not match the expected `PortType`, an error is emitted
-/// with a specified error message.
+/// This templated function attempts to parse a list of arguments specified by
+/// the given `keyword`, and ensures that each argument is of the expected port
+/// type. If any argument's type does not match the expected `PortType`, an
+/// error is emitted with a specified error message.
 ///
 /// Template Parameter:
-///   PortType - The type that the arguments are expected to have (e.g., OutputPortType or InputPortType).
+///   PortType - The type that the arguments are expected to have (e.g.,
+///   OutputPortType or InputPortType).
 ///
 /// Parameters:
 ///   parser   - The OpAsmParser used to parse the arguments.
-///   args     - A vector to store the parsed arguments (either `ports_in` or `ports_out`).
-///   keyword  - The keyword in the ASM (e.g., "ports_in" or "ports_out") to trigger parsing.
-///   errorMsg - The error message to display if any argument doesn't match the expected type.
+///   args     - A vector to store the parsed arguments (either `ports_in` or
+///              `ports_out`).
+///   keyword  - The keyword in the ASM (e.g., "ports_in" or
+///              "ports_out") to trigger parsing.
+///   errorMsg - The error message to display
+///   if any argument doesn't match the expected type.
 ///
 /// Returns:
 ///   `success` if all arguments are of the expected type; otherwise, `failure`.
@@ -86,6 +90,7 @@ template <typename PortType>
 ParseResult parseAndCheckPorts(OpAsmParser &parser,
                                SmallVectorImpl<OpAsmParser::Argument> &args,
                                StringRef keyword, StringRef errorMsg) {
+  auto location = parser.getCurrentLocation();
   if (succeeded(parser.parseOptionalKeyword(keyword))) {
     if (parser.parseArgumentList(args, OpAsmParser::Delimiter::Paren,
                                  /*allowType=*/true,
@@ -94,7 +99,7 @@ ParseResult parseAndCheckPorts(OpAsmParser &parser,
 
     for (auto &arg : args) {
       if (!mlir::isa<PortType>(arg.type)) {
-        return parser.emitError(parser.getCurrentLocation(), errorMsg);
+        return parser.emitError(location, errorMsg);
       }
     }
   }
@@ -154,6 +159,7 @@ void ActorOp::print(OpAsmPrinter &printer) {
   printer.printNewline();
   printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,
                       /*printBlockTerminators=*/false);
+  printer.printNewline();
 }
 
 LogicalResult CreateStateVarOp::verify() {

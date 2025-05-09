@@ -1,47 +1,61 @@
 // RUN: cal-opt %s | FileCheck %s
 
-%input1 = arith.constant 10 : i64
-%input2 = arith.constant 20 : i64
-%input3 = arith.constant 30 : i64
 
-cal.actor @my_actor
+cal.actor @my_actor1
 {
 }
 
-%in0,%out0 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>
-%in1,%out1 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>
-%in2,%out2 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>
+// CHECK:  cal.actor @my_actor1
+// CHECK-NEXT:  {
+// CHECK-NEXT:  }
+
 
 cal.actor @my_actor2
-        ports_out(%in0, %in1, %in2 : !fifo.input_port<i32>, !fifo.input_port<i32>, !fifo.input_port<i32>)
+    ports_out (%arg3: !fifo.input_port<i33>, %arg4: !fifo.input_port<i34>, %arg6: !fifo.input_port<i36>)
 {
 }
+
+// CHECK:  cal.actor @my_actor2
+// CHECK-NEXT:    ports_out (
+// CHECK-NEXT:      %arg0: !fifo.input_port<i33>,
+// CHECK-NEXT:      %arg1: !fifo.input_port<i34>,
+// CHECK-NEXT:      %arg2: !fifo.input_port<i36>
+// CHECK-NEXT:    )
+// CHECK-NEXT:  {
+// CHECK-NEXT:  }
 
 cal.actor @my_actor3
-        ports_in(%out0, %out1, %out2 : !fifo.output_port<i32>, !fifo.output_port<i32>, !fifo.output_port<i32>)
+    ports_in(%arg0: !fifo.output_port<i31>, %arg1: !fifo.output_port<i32>, %arg2: !fifo.output_port<i35>)
 {
 }
+
+// CHECK:  cal.actor @my_actor3
+// CHECK-NEXT:    ports_in (
+// CHECK-NEXT:      %arg0: !fifo.output_port<i31>,
+// CHECK-NEXT:      %arg1: !fifo.output_port<i32>,
+// CHECK-NEXT:      %arg2: !fifo.output_port<i35>
+// CHECK-NEXT:    )
+// CHECK-NEXT:  {
+// CHECK-NEXT:  }
 
 cal.actor @my_actor4
-        ports_out(%in0, %in1, %in2 : !fifo.input_port<i32>, !fifo.input_port<i32>, !fifo.input_port<i32>)
-        ports_in(%out0, %out1, %out2 : !fifo.output_port<i32>, !fifo.output_port<i32>, !fifo.output_port<i32>)
+    ports_in(%arg0: !fifo.output_port<i31>, %arg1: !fifo.output_port<i32>, %arg2: !fifo.output_port<i35>)
+    ports_out (%arg3: !fifo.input_port<i33>, %arg4: !fifo.input_port<i34>, %arg6: !fifo.input_port<i36>)
 {
+    %c1 = arith.constant 10 : i32
 }
 
-// CHECK: cal.actor @my_actor2 ports_out(%inputPort, %inputPort_0, %inputPort_2 : !fifo.input_port<i32>, !fifo.input_port<i32>, !fifo.input_port<i32>)
-// CHECK: cal.actor @my_actor3 ports_in(%outputPort, %outputPort_1, %outputPort_3 : !fifo.output_port<i32>, !fifo.output_port<i32>, !fifo.output_port<i32>)
-// CHECK: cal.actor @my_actor4 ports_out(%inputPort, %inputPort_0, %inputPort_2 : !fifo.input_port<i32>, !fifo.input_port<i32>, !fifo.input_port<i32>) ports_in(%outputPort, %outputPort_1, %outputPort_3 : !fifo.output_port<i32>, !fifo.output_port<i32>, !fifo.output_port<i32>)
-
-
-cal.actor @my_actor5
-    ports_out(%in0, %in1, %in2 : !fifo.input_port<i32>, !fifo.input_port<i32>, !fifo.input_port<i32>)
-    ports_in(%out0, %out1, %out2 : !fifo.output_port<i32>, !fifo.output_port<i32>, !fifo.output_port<i32>)
-    {        
-        initial_region{
-            //^bb0(%arg0: !fifo.input_port<i32>, %arg1: !fifo.input_port<i32>, %arg2: !fifo.input_port<i32>, 
-            //     %arg3: !fifo.output_port<i32>, %arg4: !fifo.output_port<i32>, %arg5: !fifo.output_port<i32>):
-                %c1 = arith.constant 10 : i32
-            //    fifo.push(%arg0: !fifo.input_port<i32>, %c1: i32)
-        }
-        
-    }
+// CHECK:  cal.actor @my_actor4
+// CHECK-NEXT:    ports_in (
+// CHECK-NEXT:      %arg0: !fifo.output_port<i31>,
+// CHECK-NEXT:      %arg1: !fifo.output_port<i32>,
+// CHECK-NEXT:      %arg2: !fifo.output_port<i35>
+// CHECK-NEXT:    )
+// CHECK-NEXT:    ports_out (
+// CHECK-NEXT:      %arg3: !fifo.input_port<i33>,
+// CHECK-NEXT:      %arg4: !fifo.input_port<i34>,
+// CHECK-NEXT:      %arg5: !fifo.input_port<i36>
+// CHECK-NEXT:    )
+// CHECK-NEXT:  {
+// CHECK-NEXT:    %c10_i32 = arith.constant 10 : i32
+// CHECK-NEXT:  }
