@@ -17,6 +17,7 @@
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -468,21 +469,24 @@ class ConvertFifoSpaceOpToMemref : public OpConversionPattern<SpaceOp> {
 //   %peekVal = fifo.peek(%out0: !fifo.output_port<i32>, %idx: index) : i32
 //
 // Transformed output (simplified):
-//   %0 = fifo.get_tuple_element %out0[0] : tuple<memref<6xi32>, memref<2xi32>, i32> -> memref<6xi32>
-//   %1 = fifo.get_tuple_element %out0[1] : tuple<memref<6xi32>, memref<2xi32>, i32> -> memref<2xi32>
-//   %2 = fifo.get_tuple_element %out0[2] : tuple<memref<6xi32>, memref<2xi32>, i32> -> i32
+//   %0 = fifo.get_tuple_element %out0[0] :
+//        tuple<memref<6xi32>, memref<2xi32>, i32> -> memref<6xi32>
+//   %1 = fifo.get_tuple_element %out0[1] :
+//        tuple<memref<6xi32>, memref<2xi32>, i32> -> memref<2xi32>
+//   %2 = fifo.get_tuple_element %out0[2] :
+//        tuple<memref<6xi32>, memref<2xi32>, i32> -> i32
 //   %3 = arith.index_cast %2 : i32 to index
 //   %c0 = arith.constant 0 : index
 //   %4 = memref.load %1[%c0] : memref<2xi32>
 //   %5 = arith.index_cast %4 : i32 to index
 //   %6 = arith.addi %5, %idx : index
-//   %7 = arith.remsi %6, %3 : index
+//   %7 = arith.remsi %6, %3 : index 
 //   %8 = memref.load %0[%7] : memref<6xi32>
 //
-// This conversion allows the fifo.peek operation to be lowered into conventional
-// index arithmetic and memory access operations that operate directly on
-// memrefs, making it compatible with passes that work over standard MLIR
-// dialects like memref and arith.
+// This conversion allows the fifo.peek operation to be lowered into
+// conventional index arithmetic and memory access operations that operate
+// directly on memrefs, making it compatible with passes that work over standard
+// MLIR dialects like memref and arith.
 class ConvertFifoPeekToMemref : public OpConversionPattern<Peek> {
   using OpConversionPattern<Peek>::OpConversionPattern;
 
@@ -520,13 +524,103 @@ class ConvertFifoPeekToMemref : public OpConversionPattern<Peek> {
         loc, peekIndexFromReadIndex, bufferSizeIndex);
 
     // 3. Get the data to be peeked using the peekIndexWrapped
-    auto peekedData =
-        rewriter.create<memref::LoadOp>(loc, dataMemref, peekIndexWrapped.getResult());
+    auto peekedData = rewriter.create<memref::LoadOp>(
+        loc, dataMemref, peekIndexWrapped.getResult());
     rewriter.replaceOp(op, peekedData);
 
     return success();
   }
 };
+
+/// Build a converter that changes !fifo.output_port<T> and !fifo.input_port<T>
+/// into tuple<memref<?xT>, memref<2x i32>, i32>
+static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
+                                             MLIRContext *context) {
+
+  // 1) The identity conversion for all other types
+  converter.addConversion([&](Type type) { return type; });
+  // 2) Custom conversion for fifo::OutputPortType
+  converter.addConversion(
+      [context](fifo::OutputPortType portType) -> mlir::Type {
+        auto elementType = portType.getElementType();
+        // kDynamic means that the size of the memref is not known at compile
+        // time
+        auto memRefType_data =
+            MemRefType::get(mlir::ShapedType::kDynamic, elementType);
+        auto memRefType_metadata = MemRefType::get(2, elementType);
+        auto i32Type = mlir::IntegerType::get(context, 32);
+        auto tupleType = TupleType::get(
+            context, {memRefType_data, memRefType_metadata, i32Type});
+        return tupleType;
+      });
+  // 3) Custom conversion for fifo::OutputPortType
+  converter.addConversion(
+      [context](fifo::InputPortType portType) -> mlir::Type {
+        auto elementType = portType.getElementType();
+        // kDynamic means that the size of the memref is not known at compile
+        // time
+        auto memRefType_data =
+            MemRefType::get(mlir::ShapedType::kDynamic, elementType);
+        auto memRefType_metadata = MemRefType::get(2, elementType);
+        auto i32Type = mlir::IntegerType::get(context, 32);
+        auto tupleType = TupleType::get(
+            context, {memRefType_data, memRefType_metadata, i32Type});
+        return tupleType;
+      });
+  // 4) Target Materialization for fifo::InputPortType and fifo::OutputPortType
+  //
+  // During conversions, we sometimes get a tuple containing a statically sized
+  // memref, and we need to convert it to a dynamically sized memref. An example
+  // is passing a FIFO port of a static size to a call function that
+  // can support different sizes of ports. The static form needs to be cast
+  // to a dynamic form. This function will insert fifo.get_tuple_element
+  // memref.cast and fifo.make_tuple operations into your SSA.
+  //
+  // Example input type: tuple<memref<11xi32>, memref<2xi32>, i32>
+  // Generated output type: tuple<memref<?xi32>, memref<2xi32>, i32>
+  //
+  // Process:
+  //   1. Extract the input tuple and decompose it into its constituent
+  //   elements:
+  //      - inputDataMemref: memref<11xi32>
+  //      - metadataMemref: memref<2xi32>
+  //      - size: i32
+  //   2. Cast inputDataMemref from memref<11xi32> to memref<?xi32> using
+  //   memref.cast.
+  //   3. Reconstruct a new tuple with the casted memref, preserving the
+  //   metadata and size.
+  converter.addTargetMaterialization(
+      [context](OpBuilder &builder, TupleType resultType, ValueRange inputs,
+                Location loc) -> Value {
+        Value input = inputs[0];
+
+        TupleType inputTupleType = mlir::cast<TupleType>(input.getType());
+        Type dataType =
+            mlir::cast<MemRefType>(inputTupleType.getType(0)).getElementType();
+        Type inputDataMemrefType = inputTupleType.getType(0);
+        Type metadataMemrefType = inputTupleType.getType(1);
+        Type sizeType = inputTupleType.getType(2);
+        auto inputDataMemref = builder.create<fifo::GetTupleElement>(
+            loc, inputDataMemrefType, input, 0);
+        auto metadataMemref = builder.create<fifo::GetTupleElement>(
+            loc, metadataMemrefType, input, 1);
+        auto size =
+            builder.create<fifo::GetTupleElement>(loc, sizeType, input, 2);
+
+        auto dynamicDataMemrefType =
+            mlir::MemRefType::get({mlir::ShapedType::kDynamic}, dataType);
+        auto castedMemref = builder.create<mlir::memref::CastOp>(
+            loc, dynamicDataMemrefType, inputDataMemref);
+        llvm::outs() << castedMemref << "\n";
+
+        auto makeTupleOp = builder.create<fifo::MakeTuple>(
+            loc, resultType,
+            ValueRange{castedMemref.getResult(), metadataMemref.getResult(),
+                       size.getResult()});
+
+        return makeTupleOp;
+      });
+}
 
 // This pass converts operations from the FIFO dialect to the MemRef dialect,
 // enabling interaction with memory buffers in a more conventional MLIR
@@ -558,6 +652,9 @@ public:
   void runOnOperation() final {
     ConversionTarget target(getContext());
 
+    TypeConverter typeConverter;
+    populateFifoTypeConverterDynamic(typeConverter, &getContext());
+
     RewritePatternSet patterns(&getContext());
     patterns.add<ConvertFifoSizeOpToMemref>(&getContext());
     patterns.add<ConvertFifoSpaceOpToMemref>(&getContext());
@@ -566,11 +663,26 @@ public:
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
     patterns.add<ConvertFifoPeekToMemref>(&getContext());
 
+    // Helper functions to add a type conversion pattern to the func.func
+    // and func.call operations
+    mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
+        patterns, typeConverter);
+    mlir::populateCallOpTypeConversionPattern(patterns, typeConverter);
+
     // Set the legal and illegal dialects after this conversion
     target.addIllegalDialect<fifo::FifoDialect>();
     target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement, fifo::PrintOp>();
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
                            arith::ArithDialect>();
+
+    // Ensure that func.func and func.call operations can handle the new
+    // types after the typeConverter has been applied.
+    target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp fn) {
+      return typeConverter.isSignatureLegal(fn.getFunctionType());
+    });
+    target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
+      return typeConverter.isSignatureLegal(op.getCalleeType());
+    });
 
     // Run the conversion
     if (failed(applyPartialConversion(getOperation(), target,

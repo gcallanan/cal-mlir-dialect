@@ -65,3 +65,28 @@ fifo.push(%in0: !fifo.input_port<i32>, %newResult: i32)
 // CHECK-NEXT: %23 = arith.remsi %22, %19 : i32
 // CHECK-NEXT: memref.store %23, %18[%c1_6] : memref<2xi32>
 
+
+func.func @my_func (%c5: !fifo.input_port<i32>, %c6: !fifo.output_port<i32>){
+    // CHECK: func.func @my_func(%arg0: tuple<memref<?xi32>, memref<2xi32>, i32>, %arg1: tuple<memref<?xi32>, memref<2xi32>, i32>)
+    return
+}
+
+%in1,%out1 = fifo.create<i32>(10) : !fifo.input_port<i32>, !fifo.output_port<i32>
+// CHECK: %alloc_9 = memref.alloc() : memref<11xi32>
+// CHECK-NEXT: %alloc_10 = memref.alloc() : memref<2xi32>
+// CHECK-NEXT: %c11_i32_11 = arith.constant 11 : i32
+// CHECK-NEXT: %24 = fifo.make_tuple(%alloc_9, %alloc_10, %c11_i32_11) : memref<11xi32>, memref<2xi32>, i32 -> tuple<memref<11xi32>, memref<2xi32>, i32>
+// CHECK-NEXT: %25 = fifo.get_tuple_element %24[0] : tuple<memref<11xi32>, memref<2xi32>, i32> -> memref<11xi32>
+// CHECK-NEXT: %26 = fifo.get_tuple_element %24[1] : tuple<memref<11xi32>, memref<2xi32>, i32> -> memref<2xi32>
+// CHECK-NEXT: %27 = fifo.get_tuple_element %24[2] : tuple<memref<11xi32>, memref<2xi32>, i32> -> i32
+// CHECK-NEXT: %cast = memref.cast %25 : memref<11xi32> to memref<?xi32>
+// CHECK-NEXT: %28 = fifo.make_tuple(%cast, %26, %27) : memref<?xi32>, memref<2xi32>, i32 -> tuple<memref<?xi32>, memref<2xi32>, i32>
+// CHECK-NEXT: %c0_i32_12 = arith.constant 0 : i32
+// CHECK-NEXT: %c0_13 = arith.constant 0 : index
+// CHECK-NEXT: %c1_14 = arith.constant 1 : index
+// CHECK-NEXT: memref.store %c0_i32_12, %alloc_10[%c0_13] : memref<2xi32>
+// CHECK-NEXT: memref.store %c0_i32_12, %alloc_10[%c1_14] : memref<2xi32>
+
+
+func.call @my_func(%in1, %out1) : (!fifo.input_port<i32>, !fifo.output_port<i32>) -> ()
+//CHECK: func.call @my_func(%28, %28) : (tuple<memref<?xi32>, memref<2xi32>, i32>, tuple<memref<?xi32>, memref<2xi32>, i32>) -> ()
