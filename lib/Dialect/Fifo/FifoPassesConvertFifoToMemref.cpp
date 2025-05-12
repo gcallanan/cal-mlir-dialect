@@ -166,7 +166,7 @@ class ConvertFifoPopToMemref : public OpConversionPattern<Pop> {
 
     mlir::Location loc = op.getLoc();
 
-    auto tupleType = adaptor.getOutputPort().getType().cast<TupleType>();
+    auto tupleType = mlir::cast<TupleType>(adaptor.getOutputPort().getType());
     auto dataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
@@ -328,7 +328,7 @@ class ConvertFifoSizeOpToMemref : public OpConversionPattern<SizeOp> {
 
     mlir::Location loc = op.getLoc();
 
-    auto tupleType = adaptor.getOutputPort().getType().cast<TupleType>();
+    auto tupleType = mlir::cast<TupleType>(adaptor.getOutputPort().getType());
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
     auto bufferSizeI32 = rewriter.create<fifo::GetTupleElement>(
@@ -408,7 +408,7 @@ class ConvertFifoSpaceOpToMemref : public OpConversionPattern<SpaceOp> {
 
     mlir::Location loc = op.getLoc();
 
-    auto tupleType = adaptor.getInputPort().getType().cast<TupleType>();
+    auto tupleType = mlir::cast<TupleType>(adaptor.getInputPort().getType());
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(1), adaptor.getInputPort(), 1);
     auto bufferSizeI32 = rewriter.create<fifo::GetTupleElement>(
@@ -490,7 +490,7 @@ class ConvertFifoPeekToMemref : public OpConversionPattern<Peek> {
 
     // llvm::outs() << "Peek op: " << op << "\n";
 
-    auto tupleType = adaptor.getOutputPort().getType().cast<TupleType>();
+    auto tupleType = mlir::cast<TupleType>(adaptor.getOutputPort().getType());
     auto dataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
