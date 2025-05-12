@@ -1,6 +1,6 @@
 // RUN: cal-opt %s | FileCheck %s
 
-cal.actor @my_actor
+cal.actor @my_actor()
     ports_in(%in0: !fifo.output_port<i32>)
     ports_out (%out0: !fifo.input_port<i32>)
 {
@@ -29,7 +29,7 @@ cal.actor @my_actor
 }
 
 // CHECK: module {
-// CHECK-NEXT:   cal.actor @my_actor
+// CHECK-NEXT:   cal.actor @my_actor()
 // CHECK-NEXT:     ports_in (
 // CHECK-NEXT:       %arg0: !fifo.output_port<i32>
 // CHECK-NEXT:     )

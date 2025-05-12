@@ -92,9 +92,9 @@ ParseResult parseAndCheckPorts(OpAsmParser &parser,
                                StringRef keyword, StringRef errorMsg) {
   auto location = parser.getCurrentLocation();
   if (succeeded(parser.parseOptionalKeyword(keyword))) {
-    if (parser.parseArgumentList(args, OpAsmParser::Delimiter::Paren,
-                                 /*allowType=*/true,
-                                 /*allowAttrs=*/false))
+    if (failed(parser.parseArgumentList(args, OpAsmParser::Delimiter::Paren,
+                                        /*allowType=*/true,
+                                        /*allowAttrs=*/false)))
       return failure();
 
     for (auto &arg : args) {
@@ -107,13 +107,20 @@ ParseResult parseAndCheckPorts(OpAsmParser &parser,
 }
 
 ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
-  SmallVector<OpAsmParser::Argument> inVals, outVals;
+  SmallVector<OpAsmParser::Argument> inVals, outVals, standardArgs;
 
   auto location = parser.getCurrentLocation();
 
   // Get the symbol name
   mlir::StringAttr symNameAttr;
   if (parser.parseSymbolName(symNameAttr, "sym_name", result.attributes))
+    return failure();
+
+  // Get list of arguments if they exist
+  if (failed(parser.parseArgumentList(standardArgs,
+                                      OpAsmParser::Delimiter::Paren,
+                                      /*allowType=*/true,
+                                      /*allowAttrs=*/false)))
     return failure();
 
   // Parse the input and output arguments.
@@ -133,7 +140,8 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
 
   // Combine the input and output arguments into a single list
   SmallVector<OpAsmParser::Argument> entryArgs;
-  entryArgs.reserve(inVals.size() + outVals.size());
+  entryArgs.reserve(inVals.size() + outVals.size() + standardArgs.size());
+  entryArgs.append(standardArgs.begin(), standardArgs.end());
   entryArgs.append(inVals.begin(), inVals.end());
   entryArgs.append(outVals.begin(), outVals.end());
 
@@ -174,6 +182,25 @@ void ActorOp::print(OpAsmPrinter &printer) {
 
   printer << ' ';
   printer.printSymbolName(actorName);
+
+  // Print all non-port arguments if they exist
+  SmallVector<Value> standardArgs;
+  for (Value arg : getBody().getArguments()) {
+    if (!mlir::isa<mlir::fifo::OutputPortType>(arg.getType()) &&
+        !mlir::isa<mlir::fifo::InputPortType>(arg.getType())) {
+      standardArgs.push_back(arg);
+    }
+  }
+
+  printer << "(";
+  if (standardArgs.size() > 0) {
+    interleaveComma(standardArgs, printer, [&](Value v) {
+      printer.printOperand(v);
+      printer << ": ";
+      printer.printType(v.getType());
+    });
+  }
+  printer << ")";
 
   printer.increaseIndent();
   collectAndPrintArgumentsByType<mlir::fifo::OutputPortType>(

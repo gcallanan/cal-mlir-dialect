@@ -4,7 +4,7 @@
 // -----
 
 // expected-error @+1 {{custom op 'cal.actor' Expected all cal.action operations in the cal.actor to appear at the end of the region. In this cal.actor, some non-action operations were found after a cal.action operation.}}
-cal.actor @my_actor{
+cal.actor @my_actor(){
     cal.action
     {
         %c1 = arith.constant 10 : i32
@@ -14,7 +14,7 @@ cal.actor @my_actor{
 
 // -----
 
-cal.actor @my_actor{
+cal.actor @my_actor(){
     cal.action
     {
         // expected-error @+1 {{'cal.action' op expects parent op 'cal.actor'}}
@@ -28,7 +28,7 @@ cal.actor @my_actor{
 
 // -----
 
-cal.actor @my_actor{
+cal.actor @my_actor(){
     cal.action
     {
         %c1 = arith.constant 10 : i32
@@ -40,7 +40,7 @@ cal.actor @my_actor{
 
 // -----
 
-cal.actor @my_actor{
+cal.actor @my_actor(){
     cal.action
     {
         // expected-error @+1 {{block with no terminator, has %0 = "arith.constant"() <{value = 10 : i32}> : () -> i32}}
