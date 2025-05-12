@@ -15,6 +15,8 @@
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoPasses.h"
 #include "Dialect/Fifo/FifoTypes.h"
+#include "Dialect/Cal/CalDialect.h"
+#include "Dialect/Cal/CalOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
@@ -111,10 +113,8 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
     Value index0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     Value index1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    auto zeroReadLocation =
-        rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index0);
-    auto zeroWriteLocation =
-        rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index1);
+    rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index0);
+    rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index1);
 
     rewriter.replaceOp(op,
                        {make_tuple_op.getResult(), make_tuple_op.getResult()});
@@ -186,8 +186,6 @@ class ConvertFifoPopToMemref : public OpConversionPattern<Pop> {
         rewriter.create<memref::LoadOp>(loc, dataMemref, readIndex);
 
     // 3. Increment the read index and wrap it to zero if it goes out of bounds
-    auto zeroI32 = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
     auto oneI32 = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
     auto incrementedReadI32 =
@@ -196,7 +194,7 @@ class ConvertFifoPopToMemref : public OpConversionPattern<Pop> {
         rewriter.create<arith::RemSIOp>(loc, incrementedReadI32, bufferSizeI32);
 
     // 4. Write the new read index back to the metadata
-    auto storeNewReadI32 = rewriter.create<memref::StoreOp>(
+    rewriter.create<memref::StoreOp>(
         loc, newReadI32, metadataMemref, readLocationIndex);
 
     rewriter.replaceOp(op, outputData);
@@ -248,7 +246,7 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
 
     mlir::Location loc = op.getLoc();
 
-    auto tupleType = adaptor.getInputPort().getType().cast<TupleType>();
+    auto tupleType = mlir::cast<TupleType>(adaptor.getInputPort().getType());
     auto dataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(0), adaptor.getInputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
@@ -268,8 +266,6 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
         loc, adaptor.getInputToken(), dataMemref, writeIndex);
 
     // 3. Increment the write index and wrap it to zero if it goes out of bounds
-    auto zeroI32 = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
     auto oneI32 = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
     auto incrementedWriteI32 =
@@ -278,7 +274,7 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
                                                        bufferSizeI32);
 
     // 4. Write the new write index back to the metadata buffer
-    auto storeNewWriteI32 = rewriter.create<memref::StoreOp>(
+    rewriter.create<memref::StoreOp>(
         loc, newWriteI32, metadataMemref, writeLocationIndex);
 
     rewriter.replaceOp(op, pushedData);
@@ -333,8 +329,6 @@ class ConvertFifoSizeOpToMemref : public OpConversionPattern<SizeOp> {
     mlir::Location loc = op.getLoc();
 
     auto tupleType = adaptor.getOutputPort().getType().cast<TupleType>();
-    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
-        loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
     auto bufferSizeI32 = rewriter.create<fifo::GetTupleElement>(
@@ -415,8 +409,6 @@ class ConvertFifoSpaceOpToMemref : public OpConversionPattern<SpaceOp> {
     mlir::Location loc = op.getLoc();
 
     auto tupleType = adaptor.getInputPort().getType().cast<TupleType>();
-    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
-        loc, tupleType.getType(0), adaptor.getInputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(1), adaptor.getInputPort(), 1);
     auto bufferSizeI32 = rewriter.create<fifo::GetTupleElement>(
@@ -480,7 +472,7 @@ class ConvertFifoSpaceOpToMemref : public OpConversionPattern<SpaceOp> {
 //   %4 = memref.load %1[%c0] : memref<2xi32>
 //   %5 = arith.index_cast %4 : i32 to index
 //   %6 = arith.addi %5, %idx : index
-//   %7 = arith.remsi %6, %3 : index 
+//   %7 = arith.remsi %6, %3 : index
 //   %8 = memref.load %0[%7] : memref<6xi32>
 //
 // This conversion allows the fifo.peek operation to be lowered into
