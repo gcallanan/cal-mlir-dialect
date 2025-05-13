@@ -30,28 +30,28 @@ LogicalResult CreateOp::verify() {
   }
 
   Type inputPortType = getInputPort().getType();
-  if (!inputPortType.isa<InputPortType>()) {
+  if (!mlir::isa<InputPortType>(inputPortType)) {
     return emitOpError() << "expected inputPort to be of type InputPortType "
                             "(!fifo.input_port<"
                          << getElementType() << ">), but got " << inputPortType;
   }
 
-  InputPortType inputPort = inputPortType.cast<InputPortType>();
+  InputPortType inputPort = mlir::cast<InputPortType>(inputPortType);
   if (inputPort.getElementType() != getElementType()) {
     return emitOpError() << "expected inputPort element type to be "
                          << getElementType() << ", but got "
                          << inputPort.getElementType();
   }
-
+  
   Type outputPortType = getOutputPort().getType();
-  if (!outputPortType.isa<OutputPortType>()) {
+  if (!mlir::isa<OutputPortType>(outputPortType)) {
     return emitOpError() << "expected outputPort to be of type OutputPortType "
                             "(!fifo.output_port<"
                          << getElementType() << ">), but got "
                          << outputPortType;
   }
 
-  OutputPortType outputPort = outputPortType.cast<OutputPortType>();
+  OutputPortType outputPort = mlir::cast<OutputPortType>(outputPortType);
   if (outputPort.getElementType() != getElementType()) {
     return emitOpError() << "expected outputPort element type to be "
                          << getElementType() << ", but got "
@@ -65,13 +65,13 @@ LogicalResult Pop::verify() {
   Type tokenType = getOutputToken().getType();
   Type outputPortType = getOutputPort().getType();
 
-  if (!outputPortType.isa<OutputPortType>()) {
+  if (!mlir::isa<OutputPortType>(outputPortType)) {
     return emitOpError() << "expected outputPort to be of type OutputPortType "
                             "(!fifo.output_port<"
                          << tokenType << ">), but got " << outputPortType;
   }
 
-  OutputPortType outputPort = outputPortType.cast<OutputPortType>();
+  OutputPortType outputPort = mlir::cast<OutputPortType>(outputPortType);
   if (outputPort.getElementType() != tokenType) {
     return emitOpError() << "expected outputPort element type to be "
                          << tokenType << ", but got "
@@ -84,13 +84,13 @@ LogicalResult Pop::verify() {
 LogicalResult Push::verify() {
   Type tokenType = getInputToken().getType();
   Type inputPortType = getInputPort().getType();
-  if (!inputPortType.isa<InputPortType>()) {
+  if (!mlir::isa<InputPortType>(inputPortType)) {
     return emitOpError() << "expected inputPort to be of type InputPortType "
                             "(!fifo.input_port<"
                          << tokenType << ">), but got " << inputPortType;
   }
 
-  InputPortType inputPort = inputPortType.cast<InputPortType>();
+  InputPortType inputPort = mlir::cast<InputPortType>(inputPortType);
   if (inputPort.getElementType() != tokenType) {
     return emitOpError() << "expected inputPort element type to be "
                          << tokenType << ", but got "
@@ -102,14 +102,14 @@ LogicalResult Push::verify() {
 
 LogicalResult Peek::verify() {
   Type outputPortType = getOutputPort().getType();
-  if (!outputPortType.isa<OutputPortType>()) {
+  if (!mlir::isa<OutputPortType>(outputPortType)) {
     return emitOpError() << "expected outputPort to be of type OutputPortType "
                             "(!fifo.output_port<...>), but got "
                          << outputPortType;
   }
-
+  
   Type indexType = getPeekIndex().getType();
-  if (!indexType.isa<IndexType>()) {
+  if (!mlir::isa<IndexType>(indexType)) {
     return emitOpError() << "expected peekIndex to be of type Index "
                             "(index), but got "
                          << indexType;
@@ -121,7 +121,7 @@ LogicalResult Peek::verify() {
 LogicalResult SizeOp::verify() {
   Type outputPortType = getOutputPort().getType();
 
-  if (!outputPortType.isa<OutputPortType>()) {
+  if (!mlir::isa<OutputPortType>(outputPortType)) {
     return emitOpError() << "expected outputPort to be of type OutputPortType "
                             "(!fifo.output_port<...>), but got "
                          << outputPortType;
@@ -132,7 +132,7 @@ LogicalResult SizeOp::verify() {
 
 LogicalResult SpaceOp::verify() {
   Type inputPortType = getInputPort().getType();
-  if (!inputPortType.isa<InputPortType>()) {
+  if (!mlir::isa<InputPortType>(inputPortType)) {
     return emitOpError() << "expected inputPort to be of type InputPortType "
                             "(!fifo.input_port<...>), but got "
                          << inputPortType;
