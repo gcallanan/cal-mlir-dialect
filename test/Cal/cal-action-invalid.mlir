@@ -12,7 +12,7 @@ cal.actor @my_actor(){
     %c2 = arith.constant 10 : i32
 }
 
-// -----
+// // -----
 
 cal.actor @my_actor(){
     cal.action
@@ -21,24 +21,26 @@ cal.actor @my_actor(){
         cal.action
         {
             %c1 = arith.constant 10 : i32
-            cal.action_done
+            %true = arith.constant 1 : i1
+            cal.action_done %true : i1
         }
     }
 }
 
-// -----
+// // -----
 
 cal.actor @my_actor(){
     cal.action
     {
         %c1 = arith.constant 10 : i32
+        %true = arith.constant 1 : i1
         // expected-error @+1 {{'cal.action_done' op must be the last operation in the parent block}}
-        cal.action_done
-        cal.action_done
+        cal.action_done %true : i1
+        cal.action_done %true : i1
     }
 }
 
-// -----
+// // -----
 
 cal.actor @my_actor(){
     cal.action

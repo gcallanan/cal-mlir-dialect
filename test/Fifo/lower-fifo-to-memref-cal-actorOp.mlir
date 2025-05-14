@@ -7,7 +7,8 @@ cal.actor @my_actor (%c5: i32, %c4: i32)
     cal.action
     {
         %0 = fifo.pop(%in0: !fifo.output_port<i32>) : i32
-        cal.action_done
+        %true = arith.constant true
+        cal.action_done %true : i1
     }
 
 }
@@ -26,6 +27,7 @@ cal.actor @my_actor (%c5: i32, %c4: i32)
 // CHECK-NEXT:     %6 = arith.addi %3, %c1_i32 : i32
 // CHECK-NEXT:     %7 = arith.remsi %6, %2 : i32
 // CHECK-NEXT:     memref.store %7, %1[%c0] : memref<2xi32>
-// CHECK-NEXT:     cal.action_done
+// CHECK-NEXT:     %true = arith.constant true
+// CHECK-NEXT:     cal.action_done %true : i1
 // CHECK-NEXT:   }
 // CHECK-NEXT: }

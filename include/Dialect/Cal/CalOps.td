@@ -61,16 +61,9 @@ def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator]> {
     TODO
   }];
 
-  let assemblyFormat = "attr-dict";
-}
+  let arguments = (ins I1:$has_executed);
 
-def CAL_ActionNotDoneOp : Cal_Op<"action_not_done", [Terminator]> {
-  let summary = "TODO";
-  let description = [{
-    TODO
-  }];
-
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = "attr-dict $has_executed `:` type($has_executed)";
 }
 
 def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">]> {

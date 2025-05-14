@@ -10,20 +10,23 @@ cal.actor @my_actor()
     {
         %c2 = arith.constant 11 : i32
         %c3 = arith.addi %c1, %c2 : i32
-        cal.action_done
+        %true = arith.constant 1 : i1
+        cal.action_done %true : i1
     }
 
     cal.action
     {
         %c2 = arith.constant 11 : i32
         %c3 = arith.addi %c1, %c2 : i32
-        cal.action_not_done
+        %true = arith.constant 1 : i1
+        cal.action_done %true : i1
     }
 
     cal.action
     {
         %0 = fifo.pop(%in0: !fifo.output_port<i32>) : i32
-        cal.action_done
+        %true = arith.constant 1 : i1
+        cal.action_done %true : i1
     }
 
 }
@@ -41,16 +44,19 @@ cal.actor @my_actor()
 // CHECK-NEXT:     cal.action {
 // CHECK-NEXT:       %c11_i32 = arith.constant 11 : i32
 // CHECK-NEXT:       %0 = arith.addi %c10_i32, %c11_i32 : i32
-// CHECK-NEXT:       cal.action_done
+// CHECK-NEXT:       %true = arith.constant true
+// CHECK-NEXT:       cal.action_done %true : i1
 // CHECK-NEXT:     }
 // CHECK-NEXT:     cal.action {
 // CHECK-NEXT:       %c11_i32 = arith.constant 11 : i32
 // CHECK-NEXT:       %0 = arith.addi %c10_i32, %c11_i32 : i32
-// CHECK-NEXT:       cal.action_not_done
+// CHECK-NEXT:       %true = arith.constant true
+// CHECK-NEXT:       cal.action_done %true : i1
 // CHECK-NEXT:     }
 // CHECK-NEXT:     cal.action {
 // CHECK-NEXT:       %0 = fifo.pop(%arg0 : !fifo.output_port<i32>) : i32
-// CHECK-NEXT:       cal.action_done
+// CHECK-NEXT:       %true = arith.constant true
+// CHECK-NEXT:       cal.action_done %true : i1
 // CHECK-NEXT:     }
 // CHECK-NEXT:   }
 // CHECK: }

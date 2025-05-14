@@ -14,12 +14,14 @@ cal.actor @my_actor(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>, memref<2
       %6 = arith.addi %3, %c1_i32 : i32
       %7 = arith.remsi %6, %2 : i32
       memref.store %7, %1[%c0] : memref<2xi32>
-      cal.action_done
+      %8 = arith.constant 1 : i1
+      cal.action_done %8: i1
     }
   }
 
 // CHECK: cal.actor @my_actor(%arg0: i32, %arg1: i32, %arg2: memref<?xi32>, %arg3: memref<2xi32>, %arg4: i32, %arg5: memref<?xi32>, %arg6: memref<2xi32>, %arg7: i32)
 // CHECK-NEXT: {
+// CHECK-NEXT:   %true = arith.constant true
 // CHECK-NEXT:   %c1_i32 = arith.constant 1 : i32
 // CHECK-NEXT:   %c0 = arith.constant 0 : index
 // CHECK-NEXT:   cal.action {
@@ -27,7 +29,7 @@ cal.actor @my_actor(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>, memref<2
 // CHECK-NEXT:     %1 = arith.addi %0, %c1_i32 : i32
 // CHECK-NEXT:     %2 = arith.remsi %1, %arg4 : i32
 // CHECK-NEXT:     memref.store %2, %arg3[%c0] : memref<2xi32>
-// CHECK-NEXT:     cal.action_done
+// CHECK-NEXT:     cal.action_done %true : i1
 // CHECK-NEXT:   }
 // CHECK-NEXT: }
 
