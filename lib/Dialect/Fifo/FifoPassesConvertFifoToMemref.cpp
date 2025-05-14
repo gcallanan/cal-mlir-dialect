@@ -11,12 +11,12 @@
 // top level comments describing each class with the hope that it will make
 // the code easier to understand.
 
+#include "Dialect/Cal/CalDialect.h"
+#include "Dialect/Cal/CalOps.h"
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoPasses.h"
 #include "Dialect/Fifo/FifoTypes.h"
-#include "Dialect/Cal/CalDialect.h"
-#include "Dialect/Cal/CalOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
@@ -194,8 +194,8 @@ class ConvertFifoPopToMemref : public OpConversionPattern<Pop> {
         rewriter.create<arith::RemSIOp>(loc, incrementedReadI32, bufferSizeI32);
 
     // 4. Write the new read index back to the metadata
-    rewriter.create<memref::StoreOp>(
-        loc, newReadI32, metadataMemref, readLocationIndex);
+    rewriter.create<memref::StoreOp>(loc, newReadI32, metadataMemref,
+                                     readLocationIndex);
 
     rewriter.replaceOp(op, outputData);
 
@@ -274,8 +274,8 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
                                                        bufferSizeI32);
 
     // 4. Write the new write index back to the metadata buffer
-    rewriter.create<memref::StoreOp>(
-        loc, newWriteI32, metadataMemref, writeLocationIndex);
+    rewriter.create<memref::StoreOp>(loc, newWriteI32, metadataMemref,
+                                     writeLocationIndex);
 
     rewriter.replaceOp(op, pushedData);
 
@@ -525,7 +525,7 @@ class ConvertFifoPeekToMemref : public OpConversionPattern<Peek> {
 };
 
 /// Build a converter that changes !fifo.output_port<T> and !fifo.input_port<T>
-/// into tuple<memref<?xT>, memref<2x i32>, i32>
+/// types into tuple<memref<?xT>, memref<2x i32>, i32>
 static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
                                              MLIRContext *context) {
 
@@ -563,8 +563,8 @@ static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
   //
   // During conversions, we sometimes get a tuple containing a statically sized
   // memref, and we need to convert it to a dynamically sized memref. An example
-  // is passing a FIFO port of a static size to a call function that
-  // can support different sizes of ports. The static form needs to be cast
+  // is passing a memref of a static size to a call function that
+  // can support different sizes of memrefs. The static form needs to be cast
   // to a dynamic form. This function will insert fifo.get_tuple_element
   // memref.cast and fifo.make_tuple operations into your SSA.
   //
@@ -614,6 +614,49 @@ static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
       });
 }
 
+// This class defines a conversion pattern for the cal.actor operation.
+// It applies a type conversion to the arguments of the cal.actor operation,
+// specifically targeting types such as fifo.input_port and fifo.output_port.
+// The conversion transforms these types into their corresponding tuple types,
+// enabling further decomposition and lowering in subsequent passes.
+//
+// The transformation performs the following steps:
+//
+// - Applies the provided type converter to the region's argument types,
+//   converting types like fifo.input_port and fifo.output_port into tuple types.
+// - Updates the region's signature with the converted types.
+//
+// Input example:
+//   cal.actor @my_actor3(%arg0: i32, %arg1: i32)
+//       ports_in (
+//         %arg2: !fifo.output_port<i32>
+//       )
+//     {
+//     }
+//
+// Transformed output:
+//   cal.actor @my_actor3(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>, memref<2xi32>, i32>)
+//     {
+//     }
+class ConvertCalActorArguments : public ConversionPattern {
+public:
+  ConvertCalActorArguments(MLIRContext *ctx, const TypeConverter &converter)
+      : ConversionPattern(converter, "cal.actor", /*benefit=*/1, ctx) {}
+
+  LogicalResult
+  matchAndRewrite(Operation *op, ArrayRef<Value> /*operands*/,
+                  ConversionPatternRewriter &rewriter) const override {
+    cal::ActorOp actorOp = cast<cal::ActorOp>(op);
+
+    if (failed(rewriter.convertRegionTypes(&actorOp.getBody(), *typeConverter,
+                                           nullptr))) {
+      return failure();
+    }
+
+    return success();
+  }
+};
+
 // This pass converts operations from the FIFO dialect to the MemRef dialect,
 // enabling interaction with memory buffers in a more conventional MLIR
 // representation. The pass transforms `fifo.push`, `fifo.pop`, and
@@ -654,6 +697,7 @@ public:
     patterns.add<ConvertFifoPushToMemref>(&getContext());
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
     patterns.add<ConvertFifoPeekToMemref>(&getContext());
+    patterns.add<ConvertCalActorArguments>(&getContext(), typeConverter);
 
     // Helper functions to add a type conversion pattern to the func.func
     // and func.call operations
@@ -674,6 +718,18 @@ public:
     });
     target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
       return typeConverter.isSignatureLegal(op.getCalleeType());
+    });
+    target.addDynamicallyLegalOp<cal::ActorOp>([&](cal::ActorOp op) {
+      Region &body = op.getBody();
+      Block &block = body.front();
+      auto blockArguments = block.getArguments();
+      for (auto arg : blockArguments) {
+        if (mlir::isa<fifo::OutputPortType>(arg.getType()) ||
+            mlir::isa<fifo::InputPortType>(arg.getType())) {
+          return false;
+        }
+      }
+      return true;
     });
 
     // Run the conversion
