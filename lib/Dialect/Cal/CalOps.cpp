@@ -113,7 +113,8 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
 
   // Get the symbol name
   mlir::StringAttr symNameAttr;
-  if (parser.parseSymbolName(symNameAttr, "sym_name", result.attributes))
+  if (failed(
+          parser.parseSymbolName(symNameAttr, "sym_name", result.attributes)))
     return failure();
 
   // Get list of arguments if they exist
@@ -271,4 +272,244 @@ LogicalResult StateSetOp::verify() {
   }
 
   return success();
+}
+
+LogicalResult
+CreateInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+
+  // 1. Verify that this operation references a valid cal.actor
+  FlatSymbolRefAttr actorRef = getActorRefAttr();
+  ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, actorRef);
+  if (!actorRef)
+    return emitOpError() << "'" << actorRef.getValue()
+                         << "' does not reference a valid cal.actor";
+
+  // 2. Verify that the number of operands matches the number of arguments in the
+  // cal.actor
+  auto actorArgs = actor.getBody().getArguments();
+  auto operands = getOperands();
+  if (operands.size() != actorArgs.size())
+    return emitOpError() << "expected " << actorArgs.size()
+                         << " operands, but got " << operands.size();
+
+  // 3. Verify that the types of the operands match the types of the arguments in
+  // the cal.actor.
+  for (size_t i = 0; i < operands.size(); i++) {
+    if (operands[i].getType() != actorArgs[i].getType()) {
+      return emitOpError() << "operand type mismatch: expected "
+                           << actorArgs[i].getType() << ", but got "
+                           << operands[i].getType();
+    }
+  }
+
+  return success();
+}
+
+/// Prints a labeled group of operands along with their types in a structured
+/// format.
+///
+/// This function outputs a group of operands under a specified label (e.g.,
+/// "ports_in", "ports_out"), formatting them as follows:
+///
+///   label (%operand1, %operand2, ...) : type1, type2, ...
+///
+/// If the operand list is empty, the function performs no action.
+///
+/// Parameters:
+/// - `printer`: The MLIR assembly printer used to emit the output.
+/// - `label`: A string label describing the operand group.
+/// - `operands`: The list of operands to be printed.
+///
+/// Behavior:
+/// - Outputs a newline followed by the label and an opening parenthesis.
+/// - Prints the operands as a comma-separated list.
+/// - Prints a colon followed by the types of each operand, also as a
+/// comma-separated list.
+/// - Closes the group with a closing parenthesis.
+///
+/// Example Output:
+///   ports_in (%in1, %in2 : !fifo.output_port<i32>, !fifo.output_port<f32>)
+void printOperandGroup(OpAsmPrinter &printer, StringRef label,
+                       ArrayRef<Value> operands) {
+  if (operands.empty())
+    return;
+  printer.printNewline();
+  printer << label << " (";
+  printer.printOperands(operands);
+  printer << " : ";
+  llvm::interleaveComma(operands, printer,
+                        [&](Value v) { printer.printType(v.getType()); });
+  printer << ")";
+}
+
+void CreateInstanceOp::print(OpAsmPrinter &printer) {
+  // 1. Print the symbol name
+  printer << " ";
+  printer.printSymbolName(getActorRefAttr().getValue());
+
+  // 2. Print the optional instance name if it exists
+  if (getInstanceNameAttr()) {
+    printer << " ";
+    printer.printString(getInstanceNameAttr().getValue());
+    printer << " ";
+  }
+
+  // 3. Sort the operands according to if they are ports or not
+  SmallVector<Value> portsOut, portsIn, others;
+  for (Value operand : getOperands()) {
+    Type type = operand.getType();
+    if (mlir::isa<fifo::InputPortType>(type))
+      portsOut.push_back(operand);
+    else if (mlir::isa<fifo::OutputPortType>(type))
+      portsIn.push_back(operand);
+    else
+      others.push_back(operand);
+  }
+
+  // 3.1 Print out the standard operands
+  printer << "(";
+  if (!others.empty()) {
+    printer.printOperands(others);
+    printer << " : ";
+    llvm::interleaveComma(others, printer,
+                          [&](Value v) { printer.printType(v.getType()); });
+  }
+  printer << ")";
+
+  printer.increaseIndent();
+  printer.increaseIndent();
+  // 3.2 Print out the ports_in
+  printOperandGroup(printer, "ports_in", portsIn);
+  // 3.3 Print out the ports_in
+  printOperandGroup(printer, "ports_out", portsOut);
+  printer.decreaseIndent();
+  printer.decreaseIndent();
+}
+
+/// Parses an optional operand group with an associated type list and validates
+/// each type against a provided constraint.
+///
+/// This function attempts to parse a group of operands prefixed by a specific
+/// keyword (e.g., "ports_in", "ports_out"). The expected syntax is:
+///
+///   keyword (%operand1, %operand2, ...) : type1, type2, ...
+///
+/// - If the keyword is present:
+///   - Parses the operand list enclosed in parentheses.
+///   - If operands are present:
+///     - Parses a colon followed by a comma-separated list of types.
+///     - Validates each type using the provided `typeConstraint` function.
+///   - Parses the closing parenthesis.
+///
+/// Parameters:
+/// - `parser`: The MLIR assembly parser.
+/// - `keyword`: The keyword indicating the start of the operand group.
+/// - `operands`: Output vector to store the parsed operands.
+/// - `types`: Output vector to store the parsed types.
+/// - `typeConstraint`: A function that returns true if a type is valid.
+/// - `typeConstraintMsg`: Error message to emit if a type fails validation.
+///
+/// Returns:
+/// - `success()` if parsing and validation succeed.
+/// - `failure()` if any parsing step fails or a type does not satisfy the
+/// constraint.
+static ParseResult
+parseOperandGroup(OpAsmParser &parser, StringRef keyword,
+                  SmallVectorImpl<OpAsmParser::UnresolvedOperand> &operands,
+                  SmallVectorImpl<Type> &types,
+                  llvm::function_ref<bool(Type)> typeConstraint,
+                  StringRef typeConstraintMsg) {
+  auto location = parser.getCurrentLocation();
+  if (succeeded(parser.parseOptionalKeyword(keyword))) {
+    if (failed(parser.parseLParen()) ||
+        failed(parser.parseOperandList(operands, OpAsmParser::Delimiter::None)))
+      return failure();
+
+    if (!operands.empty()) {
+      if (failed(parser.parseColon()) || failed(parser.parseTypeList(types)))
+        return failure();
+      for (Type &type : types) {
+        if (!typeConstraint(type))
+          return parser.emitError(location, typeConstraintMsg);
+      }
+    }
+    if (failed(parser.parseRParen()))
+      return failure();
+  }
+  return success();
+}
+
+ParseResult CreateInstanceOp::parse(OpAsmParser &parser,
+                                    OperationState &result) {
+
+  // 1. Parse the symbol name
+  FlatSymbolRefAttr actorRef;
+  if (failed(parser.parseAttribute<FlatSymbolRefAttr>(
+          actorRef, /*type=*/{}, "actorRef", result.attributes)))
+    return failure();
+
+  // 2. Parse the optional instance name if it exists
+  std::string instance_name;
+  if (succeeded(parser.parseOptionalString(&instance_name))) {
+    result.addAttribute("instanceName",
+                        parser.getBuilder().getStringAttr(instance_name));
+  }
+
+  if (failed(parser.parseLParen()))
+    return failure();
+
+  // 3. Parse standard operands
+  SmallVector<OpAsmParser::UnresolvedOperand> standardOperands;
+  SmallVector<Type> standardTypes;
+  if (failed(parser.parseOperandList(standardOperands,
+                                     OpAsmParser::Delimiter::None)))
+    return failure();
+
+  if (!standardOperands.empty()) {
+    if (failed(parser.parseColon()) ||
+        failed(parser.parseTypeList(standardTypes)))
+      return failure();
+    for (Type &type : standardTypes) {
+      if (mlir::isa<fifo::InputPortType>(type) ||
+          mlir::isa<fifo::OutputPortType>(type))
+        return parser.emitError(
+            parser.getCurrentLocation(),
+            "standard arguments may not include fifo input/output port types");
+    }
+  }
+
+  if (failed(parser.parseRParen()))
+    return failure();
+
+  // 4. Parse ports_in
+  SmallVector<OpAsmParser::UnresolvedOperand> portsIn;
+  SmallVector<Type> portsInTypes;
+  if (failed(parseOperandGroup(
+          parser, "ports_in", portsIn, portsInTypes,
+          [](Type t) { return mlir::isa<fifo::OutputPortType>(t); },
+          "expected fifo.output_port<...> for ports_in")))
+    return failure();
+
+  // 5. Parse ports_out
+  SmallVector<OpAsmParser::UnresolvedOperand> portsOut;
+  SmallVector<Type> portsOutTypes;
+  if (failed(parseOperandGroup(
+          parser, "ports_out", portsOut, portsOutTypes,
+          [](Type t) { return mlir::isa<fifo::InputPortType>(t); },
+          "expected fifo.input_port<...> for ports_out")))
+    return failure();
+
+  // 6. Combine all operands and assign them to the result so that they can be
+  // be used to constuct the operation
+  SmallVector<OpAsmParser::UnresolvedOperand> allOperands;
+  SmallVector<Type> allTypes;
+  allOperands.append(standardOperands);
+  allOperands.append(portsIn);
+  allOperands.append(portsOut);
+  allTypes.append(standardTypes);
+  allTypes.append(portsInTypes);
+  allTypes.append(portsOutTypes);
+
+  return parser.resolveOperands(allOperands, allTypes, parser.getNameLoc(),
+                                result.operands);
 }

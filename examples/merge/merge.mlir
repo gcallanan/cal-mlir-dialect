@@ -132,3 +132,26 @@ cal.actor @merge()
         cal.action_done %action_performed : i1
     }
 }
+
+
+cal.network {
+    %0 = arith.constant 10 : i32
+    %1 = arith.constant 10 : i32
+
+    %in0, %out0 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+    %in1, %out1 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+    %in2, %out2 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+
+    cal.create_instance @src "srcA" (%0: i32)
+            ports_out(%in0 : !fifo.input_port<i32>)
+
+    cal.create_instance @src "srcB" (%1: i32)
+            ports_out(%in1 : !fifo.input_port<i32>)
+
+    cal.create_instance @merge "merge" ()
+            ports_in(%out0, %out1: !fifo.output_port<i32>, !fifo.output_port<i32>)
+            ports_out(%in2: !fifo.input_port<i32>)
+
+    cal.create_instance @sink "sink" ()
+            ports_in(%out2 : !fifo.output_port<i32>)
+}

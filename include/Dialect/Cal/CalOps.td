@@ -55,6 +55,63 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   let hasCustomAssemblyFormat = 1;
 }
 
+
+def Cal_NetworkOp : Cal_Op<"network", [NoTerminator]> {
+  let summary = "A network instantiating actors and the connections between them";
+  let description = [{
+    The `cal.network` operation defines a network that instantiates actors and
+    he connections between them. It serves as the top-level container for actor
+    instances and their interconnections within a single application.
+
+    This implementation is an initial step towards modeling actor-based networks
+    in MLIR. It has very many limitations:
+    - its not actually a symbol, so it cannot be called or referenced from other
+      locations. As such modular composition is not possible.
+    - it does not have any input or output ports, so it cannot be connected to
+      other networks or actors.
+
+      As such, this is not a complete implementation, it will need to be
+      updated and extended.
+  }];
+
+  let regions = (region AnyRegion:$body);
+
+  let assemblyFormat = "$body attr-dict";
+}
+
+def Cal_CreateInstanceOp : Cal_Op<"create_instance", [DeclareOpInterfaceMethods<SymbolUserOpInterface>,HasParent<"NetworkOp">]> {
+  let summary = "Creates an instance of a CAL actor";
+  let description = [{
+    The `cal.create_instance` operation instantiates a CAL actor, creating a new
+    instance of the specified actor definition. This operation allows multiple
+    instances of the same actor to exist in a system.
+
+    Example:
+      cal.create_instance @merge "merge" (%c0: i32)
+        ports_in (%outputPort, %outputPort_2 : !fifo.output_port<i32>, !fifo.output_port<i32>)
+        ports_out (%inputPort_3 : !fifo.input_port<i32>)
+
+    This creates an instance of the `@merge` actor with the name `"merge"`, and
+    connects its input and output ports to the specified FIFO ports. ports_in
+    and ports_out are optional.
+
+    It is required (and verified by the passer) that the standard argument
+    operands and the operands in ports_out and ports_in match what is specified
+    in the corresponding actor definition (in this case @merge).
+
+    The instance name ("merge" in this case) is optional.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$actorRef, // Reference to the actor definition
+    OptionalAttr<StrAttr>:$instanceName, // Optional name for the instance
+    Variadic<AnyType>:$operands // The operands to be passed to the actor instance
+  );
+
+
+  let hasCustomAssemblyFormat = 1;
+}
+
 def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator]> {
   let summary = "TODO";
   let description = [{
