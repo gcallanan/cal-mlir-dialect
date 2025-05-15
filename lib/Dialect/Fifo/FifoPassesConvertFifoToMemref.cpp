@@ -623,7 +623,8 @@ static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
 // The transformation performs the following steps:
 //
 // - Applies the provided type converter to the region's argument types,
-//   converting types like fifo.input_port and fifo.output_port into tuple types.
+//   converting types like fifo.input_port and fifo.output_port into tuple
+//   types.
 // - Updates the region's signature with the converted types.
 //
 // Input example:
@@ -635,7 +636,8 @@ static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
 //     }
 //
 // Transformed output:
-//   cal.actor @my_actor3(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>, memref<2xi32>, i32>)
+//   cal.actor @my_actor3(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>,
+//   memref<2xi32>, i32>)
 //     {
 //     }
 class ConvertCalActorArguments : public ConversionPattern {
@@ -652,6 +654,44 @@ public:
                                            nullptr))) {
       return failure();
     }
+
+    return success();
+  }
+};
+
+// This class defines a conversion pattern for the cal.create_instance
+// operation. It does not need to do much as the ArrayRef<Value> array
+// already contains the transformed operands. We just create a new
+// cal.create_instance operation with the transformed operands and
+// replace the cal.create_instance old operation with the new one.
+//
+// Input example:
+//   cal.create_instance @one_output "temp" ()
+//     ports_out (%inputPort : !fifo.input_port<i32>)
+//
+// Transformed output:
+//   cal.create_instance @one_output "temp" (%4 :
+//            tuple<memref<?xi32>, memref<2xi32>, i32>)
+class ConvertCalCreateInstanceOperands : public ConversionPattern {
+public:
+  ConvertCalCreateInstanceOperands(MLIRContext *ctx,
+                                   const TypeConverter &converter)
+      : ConversionPattern(converter, "cal.create_instance", /*benefit=*/1,
+                          ctx) {}
+
+  LogicalResult
+  matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
+    cal::CreateInstanceOp createInstanceOp = cast<cal::CreateInstanceOp>(op);
+
+    // Create a new operation with all the same attributes, just pass the
+    // new transformed operands into it
+    auto newOp = rewriter.create<cal::CreateInstanceOp>(
+        createInstanceOp.getLoc(), createInstanceOp->getResultTypes(), operands,
+        createInstanceOp->getAttrs());
+
+    // Replace the old operation with the new one
+    rewriter.replaceOp(op, newOp);
 
     return success();
   }
@@ -698,6 +738,8 @@ public:
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
     patterns.add<ConvertFifoPeekToMemref>(&getContext());
     patterns.add<ConvertCalActorArguments>(&getContext(), typeConverter);
+    patterns.add<ConvertCalCreateInstanceOperands>(&getContext(),
+                                                   typeConverter);
 
     // Helper functions to add a type conversion pattern to the func.func
     // and func.call operations
@@ -731,6 +773,12 @@ public:
       }
       return true;
     });
+    target.addDynamicallyLegalOp<cal::CreateInstanceOp>(
+        [&](cal::CreateInstanceOp op) {
+          return llvm::all_of(op.getOperandTypes(), [&](Type opType) {
+            return typeConverter.isLegal(opType);
+          });
+        });
 
     // Run the conversion
     if (failed(applyPartialConversion(getOperation(), target,
