@@ -280,7 +280,7 @@ CreateInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // 1. Verify that this operation references a valid cal.actor
   FlatSymbolRefAttr actorRef = getActorRefAttr();
   ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, actorRef);
-  if (!actorRef)
+  if (!actor)
     return emitOpError() << "'" << actorRef.getValue()
                          << "' does not reference a valid cal.actor";
 
