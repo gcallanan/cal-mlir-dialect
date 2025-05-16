@@ -488,8 +488,6 @@ class ConvertFifoPeekToMemref : public OpConversionPattern<Peek> {
 
     mlir::Location loc = op.getLoc();
 
-    // llvm::outs() << "Peek op: " << op << "\n";
-
     auto tupleType = mlir::cast<TupleType>(adaptor.getOutputPort().getType());
     auto dataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
@@ -603,7 +601,6 @@ static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
             mlir::MemRefType::get({mlir::ShapedType::kDynamic}, dataType);
         auto castedMemref = builder.create<mlir::memref::CastOp>(
             loc, dynamicDataMemrefType, inputDataMemref);
-        llvm::outs() << castedMemref << "\n";
 
         auto makeTupleOp = builder.create<fifo::MakeTuple>(
             loc, resultType,

@@ -56,7 +56,7 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
 }
 
 
-def Cal_NetworkOp : Cal_Op<"network", [NoTerminator]> {
+def Cal_NetworkOp : Cal_Op<"network", [NoTerminator, IsolatedFromAbove]> {
   let summary = "A network instantiating actors and the connections between them";
   let description = [{
     The `cal.network` operation defines a network that instantiates actors and

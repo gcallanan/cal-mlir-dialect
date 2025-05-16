@@ -167,6 +167,73 @@ public:
   }
 };
 
+/// Conversion pattern for `cal.create_instance` operations that decompose tuple-typed
+/// operands into their individual elements.
+///
+///
+/// The transformation proceeds as follows:
+/// - The pattern first checks if any operands are of
+///   `TupleType`. If none are found, the pattern does not apply.
+/// - The original operation is replaced with a new instance
+///   that has the same attributes and result types but flattened operands.
+///
+///
+/// **Example Transformation**:
+/// Input:
+/// ```
+/// cal.create_instance @one_output "temp"
+///         (%arg0: tuple<memref<?xi32>, memref<2xi32>, i32>)
+/// ```
+///
+/// Output:
+/// ```
+/// cal.create_instance @one_output "temp"
+///         (%arg0: memref<?xi32>, %arg1: memref<2xi32>, %arg2: i32)
+/// ```
+class ConvertCalCreateInstanceTupleOperands : public OneToNConversionPattern {
+public:
+  ConvertCalCreateInstanceTupleOperands(const TypeConverter &converter,
+                                        MLIRContext *ctx)
+      : OneToNConversionPattern(converter, "cal.create_instance", /*benefit=*/1,
+                                ctx) {}
+
+  LogicalResult matchAndRewrite(Operation *op, OneToNPatternRewriter &rewriter,
+                                const OneToNTypeMapping &operandMapping,
+                                const OneToNTypeMapping &resultMapping,
+                                ValueRange convertedOperands) const override {
+
+    cal::CreateInstanceOp createInstanceOp = cast<cal::CreateInstanceOp>(op);
+    Location loc = op->getLoc();
+
+    // 1. Check termination condition
+    // We need a termination condition or else the fixed point computation will
+    // never terminate. We do this by checking if the op has any tuple types
+    // as input arguments. If it does, we can need to rewrite the op.
+    // If it doesn't, we can skip the conversion.
+    bool hasTupleTypes = false;
+    for (auto opType : createInstanceOp.getOperandTypes()) {
+      if (mlir::isa<TupleType>(opType)) {
+        hasTupleTypes = true;
+        break;
+      }
+    }
+
+    if (!hasTupleTypes) {
+      return failure();
+    }
+
+    // 2. Create a replacement operation, it is the same as before except that
+    // the input operands are replaced with the decomposed tuples.
+    auto newOp = rewriter.create<cal::CreateInstanceOp>(
+        createInstanceOp.getLoc(), createInstanceOp->getResultTypes(),
+        convertedOperands, createInstanceOp->getAttrs());
+
+    rewriter.replaceOp(op, newOp);
+
+    return success();
+  }
+};
+
 class DecomposeFifoTuplesPass
     : public impl::DecomposeFifoTuplesBase<DecomposeFifoTuplesPass> {
 public:
@@ -193,8 +260,9 @@ public:
     // types
     RewritePatternSet patterns(context);
     patterns.add<ConvertMakeTuple, ConvertGetTupleElement,
-                 ConvertCalActorTupleArguments>(typeConverter,
-                                                patterns.getContext());
+                 ConvertCalActorTupleArguments,
+                 ConvertCalCreateInstanceTupleOperands>(typeConverter,
+                                                        patterns.getContext());
 
     // These are patterns existing in MLIR that take in tuple arguments
     // in ops within the func and scf dialects and decompose them into
