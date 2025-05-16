@@ -10,6 +10,8 @@
 #include "Dialect/Cal/CalPasses.h"
 #include "Dialect/Cal/CalTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/PatternMatch.h"
@@ -23,7 +25,8 @@ namespace mlir::cal {
 #define GEN_PASS_DEF_LOWERCALSTATETOMEMREF
 #include "Dialect/Cal/CalPasses.h.inc"
 
-// Converts the `cal.create_state_var` operation into a memref allocation of size 1
+// Converts the `cal.create_state_var` operation into a memref allocation of
+// size 1
 //
 // This transformation lowers a `cal.create_state_var` on a state reference of
 // element type `T` to a `memref.alloc` of shape `<1 x T>`.
@@ -110,29 +113,134 @@ class ConvertCalStateSetOpToMemref : public OpConversionPattern<StateSetOp> {
   }
 };
 
+// TODO: Merge this with the one in FifoPassesConvertFifoToMemref.cpp
+// This class is a copy of the same class in FifoPassesConvertFifoToMemref.cpp
+// This is bad practice and these classes should be defined in a common
+// location. This is a temporary solution until we can refactor the code
+class ConvertCalActorArguments : public ConversionPattern {
+public:
+  ConvertCalActorArguments(MLIRContext *ctx, const TypeConverter &converter)
+      : ConversionPattern(converter, "cal.actor", /*benefit=*/1, ctx) {}
+
+  LogicalResult
+  matchAndRewrite(Operation *op, ArrayRef<Value> /*operands*/,
+                  ConversionPatternRewriter &rewriter) const override {
+    cal::ActorOp actorOp = cast<cal::ActorOp>(op);
+
+    if (failed(rewriter.convertRegionTypes(&actorOp.getBody(), *typeConverter,
+                                           nullptr))) {
+      return failure();
+    }
+
+    return success();
+  }
+};
+
+// TODO: Merge this with the one in FifoPassesConvertFifoToMemref.cpp
+// This class is a copy of the same class in FifoPassesConvertFifoToMemref.cpp
+// This is bad practice and these classes should be defined in a common
+// location. This is a temporary solution until we can refactor the code
+class ConvertCalCreateInstanceOperands : public ConversionPattern {
+public:
+  ConvertCalCreateInstanceOperands(MLIRContext *ctx,
+                                   const TypeConverter &converter)
+      : ConversionPattern(converter, "cal.create_instance", /*benefit=*/1,
+                          ctx) {}
+
+  LogicalResult
+  matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
+    cal::CreateInstanceOp createInstanceOp = cast<cal::CreateInstanceOp>(op);
+
+    // Create a new operation with all the same attributes, just pass the
+    // new transformed operands into it
+    auto newOp = rewriter.create<cal::CreateInstanceOp>(
+        createInstanceOp.getLoc(), createInstanceOp->getResultTypes(), operands,
+        createInstanceOp->getAttrs());
+
+    // Replace the old operation with the new one
+    rewriter.replaceOp(op, newOp);
+
+    return success();
+  }
+};
+
+/// Build a converter that changes `cal.state_ref<T>` types into `memref<1xT>`
+static void populateCalStateTypeConverterDynamic(mlir::TypeConverter &converter,
+                                                 MLIRContext *context) {
+
+  // 1) The identity conversion for all other types
+  converter.addConversion([&](Type type) { return type; });
+  // 2) The conversion for `cal.state` to `memref`
+  converter.addConversion([&](cal::StateVarRefType type) {
+    return MemRefType::get(1, type.getStateType());
+  });
+}
+
 /// This pass lowers `cal.state`, `cal.get`, and `cal.set` operations to
 /// standard MLIR `memref` operations.
 ///
 /// Specifically:
-/// - `cal.state` is replaced with an `memref.alloc` of size 1 to simulate a scalar state.
+/// - `cal.state` is replaced with an `memref.alloc` of size 1 to simulate a
+/// scalar state.
 /// - `cal.get` is replaced with a `memref.load` from index 0.
 /// - `cal.set` is replaced with a `memref.store` to index 0.
+///
+/// A type converter is declared that changes all occurences of cal.state_ref
+/// types to memref types. This occurs for func.func and func.call as
+/// well as the cal.actor and cal.create_instance.
 class LowerCalStateToMemrefPass
     : public impl::LowerCalStateToMemrefBase<LowerCalStateToMemrefPass> {
 public:
   void runOnOperation() final {
     ConversionTarget target(getContext());
 
+    TypeConverter typeConverter;
+    populateCalStateTypeConverterDynamic(typeConverter, &getContext());
+
     RewritePatternSet patterns(&getContext());
     patterns.add<ConvertCalStateSetOpToMemref>(&getContext());
     patterns.add<ConvertCalStateGetOpToMemref>(&getContext());
     patterns.add<ConvertCalCreateStateVarOpToMemref>(&getContext());
+    patterns.add<ConvertCalActorArguments>(&getContext(), typeConverter);
+    patterns.add<ConvertCalCreateInstanceOperands>(&getContext(),
+                                                   typeConverter);
+
+    mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
+        patterns, typeConverter);
+    mlir::populateCallOpTypeConversionPattern(patterns, typeConverter);
 
     // // Set the legal and illegal dialects after this conversion
     // target.addIllegalDialect<cal::CalDialect>();
     // target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement,
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
                            arith::ArithDialect>();
+
+    // Provide checks to ensure that the following operations
+    // have correctly applied the typeConverter
+    target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp fn) {
+      return typeConverter.isSignatureLegal(fn.getFunctionType());
+    });
+    target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
+      return typeConverter.isSignatureLegal(op.getCalleeType());
+    });
+    target.addDynamicallyLegalOp<cal::ActorOp>([&](cal::ActorOp op) {
+      Region &body = op.getBody();
+      Block &block = body.front();
+      auto blockArguments = block.getArguments();
+      for (auto arg : blockArguments) {
+        if (mlir::isa<cal::StateVarRefType>(arg.getType())) {
+          return false;
+        }
+      }
+      return true;
+    });
+    target.addDynamicallyLegalOp<cal::CreateInstanceOp>(
+        [&](cal::CreateInstanceOp op) {
+          return llvm::all_of(op.getOperandTypes(), [&](Type opType) {
+            return typeConverter.isLegal(opType);
+          });
+        });
 
     // Run the conversion
     if (failed(applyPartialConversion(getOperation(), target,
