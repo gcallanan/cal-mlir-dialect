@@ -6,7 +6,7 @@ NOTE: Tips on hoisting: https://mlir.llvm.org/doxygen/Hoisting_8cpp_source.html
 
 ### Dialects
 
-### Transformation Passes
+### Transformation Pipelines
 
 ### Optimisation Passes
 
