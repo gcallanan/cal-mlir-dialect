@@ -4,3 +4,4 @@ The following is a list of outstanding tasks:
 3. Move transformation passes. Currently transformation passes are in the Dialect/"Dialect Name"/ directory. We need to create a Conversion/"Conversion Sub Directory"/ path and move them there instead.
 4. Define the cal.network properly. Currently only one cal.network operand is supported per program. It does not allow for input or output or for the composition of subnetworks. This whole operation needs to be reworked.
 5. Add descriptions to many of the cal operations defined in /include/Dialect/Cal/CalOps.td: I did not write a description for them as they were modified a bit during development, this description is needed.
+6. Add description to HoistCalStateOutOfActor in CalPasses.td

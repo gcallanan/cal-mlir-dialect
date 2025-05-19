@@ -31,4 +31,12 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
   ];
 }
 
+def HoistCalStateOutOfActor: Pass<"hoist-cal-state-out-of-actor"> {
+  let summary = "Move all cal.create_state_vars out of cal.actors and into cal.network operation that create instances of that actor..";
+  let description = [{
+    TODO
+  }];
+  let constructor = "mlir::cal::hoistCalStateOutOfActor()";
+}
+
 #endif // CAL_PASS
