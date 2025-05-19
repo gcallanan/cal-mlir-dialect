@@ -39,3 +39,14 @@ cal.set(%c0: i32, %c1: i32)
 cal.set(%ref3: !cal.state_ref<i32>, %c1: i17)
 
 // -----
+
+
+cal.actor @act1 (){
+    %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    cal.execution_body{
+        // expected-error @+1 {{'cal.create_state_var' op cannot create state variable in within cal.execution_body}}
+        %ref1 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    }
+}
+
+// -----

@@ -260,6 +260,13 @@ LogicalResult CreateStateVarOp::verify() {
                          << stateRef.getStateType();
   }
 
+  if (getOperation()->getParentOp()) {
+    if (mlir::isa<ExecutionBody>(getOperation()->getParentOp())) {
+      return emitOpError()
+             << "cannot create state variable in within cal.execution_body";
+    }
+  }
+
   return success();
 }
 
