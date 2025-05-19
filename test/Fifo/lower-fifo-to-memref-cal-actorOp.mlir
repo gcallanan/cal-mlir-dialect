@@ -4,7 +4,7 @@ cal.actor @my_actor (%c5: i32, %c4: i32)
     ports_in(%in0: !fifo.output_port<i32>)
     ports_out (%out0: !fifo.input_port<i32>)
 {
-    cal.action
+    cal.execution_body
     {
         %0 = fifo.pop(%in0: !fifo.output_port<i32>) : i32
         %true = arith.constant true
@@ -15,7 +15,7 @@ cal.actor @my_actor (%c5: i32, %c4: i32)
 
 // CHECK: cal.actor @my_actor(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>, memref<2xi32>, i32>, %arg3: tuple<memref<?xi32>, memref<2xi32>, i32>)
 // CHECK-NEXT: {
-// CHECK-NEXT:   cal.action {
+// CHECK-NEXT:   cal.execution_body {
 // CHECK-NEXT:     %0 = fifo.get_tuple_element %arg2[0] : tuple<memref<?xi32>, memref<2xi32>, i32> -> memref<?xi32>
 // CHECK-NEXT:     %1 = fifo.get_tuple_element %arg2[1] : tuple<memref<?xi32>, memref<2xi32>, i32> -> memref<2xi32>
 // CHECK-NEXT:     %2 = fifo.get_tuple_element %arg2[2] : tuple<memref<?xi32>, memref<2xi32>, i32> -> i32

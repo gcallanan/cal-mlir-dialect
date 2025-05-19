@@ -123,10 +123,21 @@ def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator]> {
   let assemblyFormat = "attr-dict $has_executed `:` type($has_executed)";
 }
 
-def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">]> {
-  let summary = "CAL action operation";
+// def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">]> {
+//   let summary = "CAL action operation";
+//   let description = [{
+//     Represents an individual action within a cal.actor.
+//   }];
+
+//   let regions = (region AnyRegion:$body);
+
+//   let assemblyFormat = "$body attr-dict ";
+// }
+
+def Cal_ExecutionBody : Cal_Op<"execution_body", [HasParent<"ActorOp">]> {
+  let summary = "TODO";
   let description = [{
-    Represents an individual action within a cal.actor.
+    TODO.
   }];
 
   let regions = (region AnyRegion:$body);

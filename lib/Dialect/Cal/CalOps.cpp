@@ -153,21 +153,50 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
 
   // Check that the last operations in a region are all of cal.action
+  // auto beginIt = bodyRegion.op_begin();
+  // auto endIt = bodyRegion.op_end();
+  // bool firstActionFound = false;
+  // for (auto it = beginIt; it != endIt; ++it) {
+  //   Operation &op = *it; // reference to the operation
+  //   if (llvm::isa<ActionOp>(op)) {
+  //     firstActionFound = true; // first action found
+  //   } else {
+  //     if (firstActionFound) { // We found a non-action operation after an
+  //     action
+  //                             // operation
+  //       return parser.emitError(
+  //           location,
+  //           "Expected all cal.action operations in the cal.actor to appear at
+  //           " "the end of the region. In this cal.actor, some non-action "
+  //           "operations were found after a cal.action operation.");
+  //     }
+  //   }
+  // }
+
+  // If the last operation is a cal.execution_body then there can only be
+  // one of these operations in the region (it must be last) and there
+  // can be no cal.action operations in the actor.
   auto beginIt = bodyRegion.op_begin();
   auto endIt = bodyRegion.op_end();
-  bool firstActionFound = false;
+  bool executionBodyFound = false;
   for (auto it = beginIt; it != endIt; ++it) {
     Operation &op = *it; // reference to the operation
-    if (llvm::isa<ActionOp>(op)) {
-      firstActionFound = true; // first action found
-    } else {
-      if (firstActionFound) { // We found a non-action operation after an action
-                              // operation
+    if (llvm::isa<ExecutionBody>(op)) {
+      if (executionBodyFound) {
         return parser.emitError(
             location,
-            "Expected all cal.action operations in the cal.actor to appear at "
-            "the end of the region. In this cal.actor, some non-action "
-            "operations were found after a cal.action operation.");
+            "The cal.execution_body operation in the cal.actor is "
+            "required to be unique and the last operation in the region. You "
+            "may not have more than one cal.execution_body in this region");
+      }
+      executionBodyFound = true; // first action found
+    } else {
+      if (executionBodyFound) { // We found a non-action operation after an
+                                // action
+                                // operation
+        return parser.emitError(
+            location, "The cal.execution_body operation in the cal.actor is "
+                      "required to be the last operation in the region.");
       }
     }
   }
@@ -284,16 +313,16 @@ CreateInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "'" << actorRef.getValue()
                          << "' does not reference a valid cal.actor";
 
-  // 2. Verify that the number of operands matches the number of arguments in the
-  // cal.actor
+  // 2. Verify that the number of operands matches the number of arguments in
+  // the cal.actor
   auto actorArgs = actor.getBody().getArguments();
   auto operands = getOperands();
   if (operands.size() != actorArgs.size())
     return emitOpError() << "expected " << actorArgs.size()
                          << " operands, but got " << operands.size();
 
-  // 3. Verify that the types of the operands match the types of the arguments in
-  // the cal.actor.
+  // 3. Verify that the types of the operands match the types of the arguments
+  // in the cal.actor.
   for (size_t i = 0; i < operands.size(); i++) {
     if (operands[i].getType() != actorArgs[i].getType()) {
       return emitOpError() << "operand type mismatch: expected "

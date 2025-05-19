@@ -2,7 +2,7 @@
 // RUN: cal-opt --decompose-fifo-tuples %s | FileCheck %s
 cal.actor @my_actor(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>, memref<2xi32>, i32>, %arg3: tuple<memref<?xi32>, memref<2xi32>, i32>)
   {
-    cal.action {
+    cal.execution_body {
       %0 = fifo.get_tuple_element %arg2[0] : tuple<memref<?xi32>, memref<2xi32>, i32> -> memref<?xi32>
       %1 = fifo.get_tuple_element %arg2[1] : tuple<memref<?xi32>, memref<2xi32>, i32> -> memref<2xi32>
       %2 = fifo.get_tuple_element %arg2[2] : tuple<memref<?xi32>, memref<2xi32>, i32> -> i32
@@ -24,7 +24,7 @@ cal.actor @my_actor(%arg0: i32, %arg1: i32, %arg2: tuple<memref<?xi32>, memref<2
 // CHECK-NEXT:   %true = arith.constant true
 // CHECK-NEXT:   %c1_i32 = arith.constant 1 : i32
 // CHECK-NEXT:   %c0 = arith.constant 0 : index
-// CHECK-NEXT:   cal.action {
+// CHECK-NEXT:   cal.execution_body {
 // CHECK-NEXT:     %0 = memref.load %arg3[%c0] : memref<2xi32>
 // CHECK-NEXT:     %1 = arith.addi %0, %c1_i32 : i32
 // CHECK-NEXT:     %2 = arith.remsi %1, %arg4 : i32

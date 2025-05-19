@@ -27,7 +27,7 @@ cal.actor @src(%max_tokens_to_send: i32)
     %c0 = arith.constant 0 : i32
     cal.set(%num_tokens_sent_state: !cal.state_ref<i32>, %c0: i32)
 
-    cal.action
+    cal.execution_body
     {
         // Condition 1: Ensure that we have at least one free spot in the buffer
         %num_free_slots = fifo.space(%out0: !fifo.input_port<i32>) : index
@@ -63,7 +63,7 @@ cal.actor @src(%max_tokens_to_send: i32)
 cal.actor @sink()
     ports_in(%in0: !fifo.output_port<i32>)
 {
-    cal.action
+    cal.execution_body
     {
         // Condition : Ensure that we have a token to consume
         %num_tokens_available = fifo.size(%in0: !fifo.output_port<i32>) : index
@@ -89,7 +89,7 @@ cal.actor @merge()
     ports_in(%in0: !fifo.output_port<i32>, %in1: !fifo.output_port<i32>)
     ports_out(%out0: !fifo.input_port<i32>)
 {
-    cal.action
+    cal.execution_body
     {
         %zero = arith.constant 0 : index
         %one = arith.constant 1 : index
