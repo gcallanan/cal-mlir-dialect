@@ -77,7 +77,7 @@ void registerLowerCalToLLVMPipeline() {
       [](mlir::OpPassManager &pm) {
         // 1. FIFO/CAL-specific lowering:
         //    - Lower FIFO operations to MemRef operations before decomposing FIFO tuples.
-        pm.addPass(mlir::cal::lowerCalStateToMemref());
+        pm.addPass(mlir::lowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());

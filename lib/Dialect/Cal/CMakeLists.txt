@@ -2,7 +2,6 @@ add_mlir_dialect_library(MLIRCal
         CalTypes.cpp
         CalDialect.cpp
         CalOps.cpp
-        CalPassesLowerStateToMemref.cpp
         CalPassesHoistCalStateOutOfActor.cpp
 
         ADDITIONAL_HEADER_DIRS

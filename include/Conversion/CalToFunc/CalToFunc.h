@@ -6,14 +6,7 @@
 
 namespace mlir {
 
-//===- Generated includes -------------------------------------------------===//
-
-// #define GEN_PASS_DECL_CONVERTCALTOFUNC
-// #include "Conversion/Passes.h.inc"
-
-//===----------------------------------------------------------------------===//
-
-std::unique_ptr<Pass> createConvertCalToFuncPass();
+std::unique_ptr<mlir::Pass> createConvertCalToFuncPass();
 
 #define GEN_PASS_DECL_CONVERTCALTOFUNC
 #include "Conversion/Passes.h.inc"

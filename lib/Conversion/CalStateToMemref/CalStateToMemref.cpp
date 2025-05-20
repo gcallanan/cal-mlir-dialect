@@ -19,11 +19,17 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#include "Dialect/Cal/CalPasses.h"
+#include "Conversion/Passes.h"
+#include "Conversion/CalStateToMemref/CalStateToMemref.h"
 
-namespace mlir::cal {
+
+
+namespace mlir {
+  
+using namespace cal;
+
 #define GEN_PASS_DEF_LOWERCALSTATETOMEMREF
-#include "Dialect/Cal/CalPasses.h.inc"
+#include "Conversion/Passes.h.inc"
 
 // Converts the `cal.create_state_var` operation into a memref allocation of
 // size 1
@@ -250,10 +256,10 @@ public:
   }
 };
 
-} // namespace mlir::cal
+} // namespace mlir
 
 /// Creates a pass that lowers CAL dialect state operations (`cal.state`,
 /// `cal.get`, `cal.set`) to equivalent operations in the MemRef dialect.
-std::unique_ptr<mlir::Pass> mlir::cal::lowerCalStateToMemref() {
-  return std::make_unique<mlir::cal::LowerCalStateToMemrefPass>();
+std::unique_ptr<mlir::Pass> mlir::lowerCalStateToMemref() {
+  return std::make_unique<mlir::LowerCalStateToMemrefPass>();
 }

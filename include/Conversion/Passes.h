@@ -4,6 +4,7 @@
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Conversion/CalToFunc/CalToFunc.h"
+#include "Conversion/CalStateToMemref/CalStateToMemref.h"
 
 namespace mlir {
 
