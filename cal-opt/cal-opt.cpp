@@ -22,11 +22,14 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoPasses.h"
 
+#include "Conversion/Passes.h"
+
 void registerLowerCalToLLVMPipeline();
 
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mlir::cal::registerPasses();
+  mlir::cal::registerConversionPasses();
   mlir::fifo::registerPasses();
   // TODO: Register cal passes here.
 

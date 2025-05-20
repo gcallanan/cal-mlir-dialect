@@ -280,7 +280,7 @@ public:
     patterns.add<MoveInitOperationsToArguments>(&getContext());
     patterns.add<AddStateAboveCreateInstance>(&getContext());
 
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
+    if (failed(applyPatternsGreedily(getOperation(),
                                             std::move(patterns)))) {
       signalPassFailure();
     }
