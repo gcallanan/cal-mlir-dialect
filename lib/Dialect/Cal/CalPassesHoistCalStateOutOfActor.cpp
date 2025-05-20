@@ -33,28 +33,37 @@ namespace mlir::cal {
 // supplied as incoming arguments rather than being computed inside the actor
 // definition.
 //
-// Input example:
-//   cal.actor @src(%arg0: i32)
-//       ports_out (%arg1: !fifo.input_port<i32>)
-//     {
-//       %true = arith.constant true
-//       %c0_i32 = arith.constant 0 : i32
-//       %0 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//       cal.set(%0 : !cal.state_ref<i32>, %c0_i32 : i32)
-//       cal.execution_body {
-//         cal.action_done %true : i1
-//       }
-//     }
+// NOTE: arith.constant ops are not removed and transformed into arguments. This
+// is because leaving them in leaves the door open for optimizations further
+// in the pipeline. If they were arguments the compiler would not know that they
+// are constants and would not be able to optimize them away.
 //
-// Transformed output:
-//   cal.actor @src(%arg0: i32, %arg2: i1, %arg3: i32, %arg4:
-//   !cal.state_ref<i32>)
-//       ports_out (%arg1: !fifo.input_port<i32>)
-//     {
-//       cal.execution_body {
-//         cal.action_done %arg2 : i1
-//       }
+// Input example:
+// cal.actor @src(%arg0: i32)
+//     ports_out (
+//       %arg1: !fifo.input_port<i32>
+//     )
+//   {
+//     %true = arith.constant true
+//     %c0_i32 = arith.constant 0 : i32
+//     %0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+//     cal.set(%0 : !cal.state_ref<i32>, %c0_i32 : i32)
+//     cal.execution_body {
+//       cal.action_done %true : i1
 //     }
+//   }
+//
+//  Transformed output:
+//   cal.actor @src(%arg0: i32, %arg2: !cal.state_ref<i32>)
+//     ports_out (
+//       %arg1: !fifo.input_port<i32>
+//     )
+//   {
+//     %true = arith.constant true
+//     cal.execution_body {
+//       cal.action_done %true : i1
+//     }
+//   }
 //
 struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -72,7 +81,8 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
     // blocks argument list and then remove the operation.
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
-      if (!mlir::isa<cal::ExecutionBody>(op)) {
+      if (!mlir::isa<cal::ExecutionBody>(op) &&
+          !mlir::isa<arith::ConstantOp>(op)) {
         variableHoisted = true;
 
         // 1.1 Add an argument to the actorOp for each result in the entry block
@@ -107,30 +117,36 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
 // Its goal is to duplicate all of the actor’s initialization-only instructions
 // (those outside any cal.execution_body) directly above each CreateInstanceOp
 // site, then extend that CreateInstanceOp’s operand list to include the values
-// produced by those cloned initialization ops. After this pass, each create_
-// instance op has all of the state‐setup values inlined as explicit arguments,
-// and the original initialization logic remains in the network body.
+// produced by those cloned initialization ops. After this pass, each
+// cal.create_instance op has all of the state‐setup values inlined as explicit
+// arguments, and the original initialization logic remains in the network body.
+//
+// NOTE: arith.constant ops are hoisted, but not passed into the
+// CreateInstanceOp as an argument. This is because the constants are also kept
+// in the actrorOp to ensure that they are optimised correctly.
 //
 // Input example:
-//   cal.network {
-//     %c10_i32 = arith.constant 10 : i32
-//     %inputPort, %outputPort   = fifo.create<i32>(3) : !fifo.input_port<i32>,
-//     !fifo.output_port<i32> cal.create_instance @src "srcA" (%c10_i32 : i32)
-//         ports_out (%inputPort : !fifo.input_port<i32>)
-//   }
+//     cal.network {
+//       %c10_i32 = arith.constant 10 : i32
+//       %inputPort, %outputPort = fifo.create<i32> (3)
+//               : !fifo.input_port<i32>, !fifo.output_port<i32>
+//       cal.create_instance @src "srcA" (%c10_i32 : i32)
+//           ports_out (%inputPort : !fifo.input_port<i32>)
+//     }
 //
 // Transformed output:
-//   cal.network {
-//     %c0_i32 = arith.constant 0    : i32
-//     %true = arith.constant true : i1
-//     %c10_i32 = arith.constant 10   : i32
-//     %inputPort, %outputPort   = fifo.create<i32>(3) : !fifo.input_port<i32>,
-//     !fifo.output_port<i32> %0 = cal.create_state_var<i32>       :
-//     !cal.state_ref<i32> cal.set(%0 : !cal.state_ref<i32>, %c0_i32 : i32)
-//     cal.create_instance @src "srcA"
-//       (%c10_i32, %true, %c0_i32, %0 : i32, i1, i32, !cal.state_ref<i32>)
-//       ports_out (%inputPort : !fifo.input_port<i32>)
-//   }
+//     cal.network {
+//       %c0_i32 = arith.constant 0 : i32
+//       %c10_i32 = arith.constant 10 : i32
+//       %inputPort, %outputPort = fifo.create<i32> (3):
+//               !fifo.input_port<i32>, !fifo.output_port<i32>
+//       %0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+//       cal.set(%0 : !cal.state_ref<i32>, %c0_i32 : i32)
+//       cal.create_instance @src "srcA" (%c10_i32, %0:
+//               i32, !cal.state_ref<i32>)
+//           ports_out (%inputPort : !fifo.input_port<i32>)
+//     }
+
 struct AddStateAboveCreateInstance
     : public OpRewritePattern<cal::CreateInstanceOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -152,10 +168,28 @@ struct AddStateAboveCreateInstance
     // in this pattern running again which can result in an infinite loop. We
     // need a termination condition. This occurs when the number of operands
     // of the CreateInstanceOp is greater than the number of arguments in the
-    // actorOp. This occurs on new CreateInstanceOps that have already been
+    // actorOp. This means a new CreateInstanceOp has already been
     // updated and as such we can skip processing them.
     if (instanceOp.getNumOperands() > actorBody.getArguments().size()) {
-      // llvm::outs() << "Skipping CreateInstanceOp: " << instanceOp << "\n";
+      return failure();
+    }
+
+    // An additional termination condition occurs if there are no operations in
+    // the actor body that are not cal.execution_body or arith.constant. This
+    // means that there are no operations to hoist and as such we can skip
+    // processing them.
+    auto beginIt = actorBody.op_begin();
+    auto endIt = actorBody.op_end();
+    bool nonConstantsToHoist = false;
+    for (auto it = beginIt; it != endIt; ++it) {
+      Operation &op = *it; // reference to the operation
+      if (!mlir::isa<cal::ExecutionBody>(op) &&
+          !mlir::isa<arith::ConstantOp>(op)) {
+        nonConstantsToHoist = true;
+      }
+    }
+
+    if (!nonConstantsToHoist) {
       return failure();
     }
 
@@ -183,8 +217,8 @@ struct AddStateAboveCreateInstance
     // 2. Iterate through the operations in the actor body that execute during
     // initiaisation and clone them to the new instance above the
     // CreateInstanceOp.
-    auto beginIt = actorBody.op_begin();
-    auto endIt = actorBody.op_end();
+    beginIt = actorBody.op_begin();
+    endIt = actorBody.op_end();
     bool variableHoisted = false;
 
     for (auto it = beginIt; it != endIt; ++it) {
@@ -211,7 +245,11 @@ struct AddStateAboveCreateInstance
           Value resultSrc = op.getResult(i);
           Value resultDst = clonedOp->getResult(i);
           originalToClonedOperandsMap.map(resultSrc, resultDst);
-          operands.push_back(resultDst);
+
+          // Remember that we do not pass ConstantOps as parameters to the
+          // CreateInstanceOp.
+          if (!mlir::isa<arith::ConstantOp>(op))
+            operands.push_back(resultDst);
         }
       }
     }
@@ -225,8 +263,7 @@ struct AddStateAboveCreateInstance
       auto newOp = rewriter.create<cal::CreateInstanceOp>(
           instanceOp.getLoc(), instanceOp->getResultTypes(), operands,
           instanceOp->getAttrs());
-      instanceOp.erase();
-
+      rewriter.replaceOp(instanceOp, newOp);
       return success();
     }
     return failure();
@@ -252,8 +289,7 @@ public:
 
 } // namespace mlir::cal
 
-/// Creates a pass that lowers CAL dialect state operations (`cal.state`,
-/// `cal.get`, `cal.set`) to equivalent operations in the MemRef dialect.
+/// Creates a pass to hoist cal.state operations out of actor bodies.
 std::unique_ptr<mlir::Pass> mlir::cal::hoistCalStateOutOfActor() {
   return std::make_unique<mlir::cal::HoistCalStateOutOfActorPass>();
 }

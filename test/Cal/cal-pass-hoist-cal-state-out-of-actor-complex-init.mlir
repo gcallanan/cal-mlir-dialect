@@ -25,15 +25,20 @@ cal.actor @src(%temp: i32)
     }
 }
 
-// CHECK: cal.actor @src(%arg0: i32, %arg2: i1, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: !cal.state_ref<i32>, %arg7: i1, %arg8: i32)
-// CHECK-NEXT:     ports_out (
-// CHECK-NEXT:       %arg1: !fifo.input_port<i32>
-// CHECK-NEXT:     )
-// CHECK-NEXT:   {
-// CHECK-NEXT:     cal.execution_body {
-// CHECK-NEXT:       cal.action_done %arg2 : i1
-// CHECK-NEXT:     }
-// CHECK-NEXT:   }
+// CHECK:  cal.actor @src(%arg0: i32, %arg2: !cal.state_ref<i32>, %arg3: i1, %arg4: i32)
+// CHECK-NEXT:    ports_out (
+// CHECK-NEXT:      %arg1: !fifo.input_port<i32>
+// CHECK-NEXT:    )
+// CHECK-NEXT:  {
+// CHECK-NEXT:    %true = arith.constant true
+// CHECK-NEXT:    cal.execution_body {
+// CHECK-NEXT:      cal.action_done %true : i1
+// CHECK-NEXT:    }
+// CHECK-NEXT:  }
+
+  
+
+
 
 
 cal.network {
@@ -46,22 +51,22 @@ cal.network {
     cal.create_instance @src "srcA" (%0: i32)
             ports_out(%in0 : !fifo.input_port<i32>)
 
-// CHECK:  %c8_i32 = arith.constant 8 : i32
-// CHECK-NEXT:  %c11_i32 = arith.constant 11 : i32
-// CHECK-NEXT:  %c0_i32 = arith.constant 0 : i32
-// CHECK-NEXT:  %c1_i32 = arith.constant 1 : i32
-// CHECK-NEXT:  %c2_i32 = arith.constant 2 : i32
-// CHECK-NEXT:  %true = arith.constant true
-// CHECK-NEXT:  %c10_i32 = arith.constant 10 : i32
-// CHECK-NEXT:  %inputPort, %outputPort = fifo.create<i32> (3) : !fifo.input_port<i32>, !fifo.output_port<i32>
-// CHECK-NEXT:  %inputPort_0, %outputPort_1 = fifo.create<i32> (3) : !fifo.input_port<i32>, !fifo.output_port<i32>
-// CHECK-NEXT:  %0 = cal.create_state_var<i32> : !cal.state_ref<i32>
-// CHECK-NEXT:  %1 = scf.if %true -> (i32) {
-// CHECK-NEXT:    scf.yield %c11_i32 : i32
-// CHECK-NEXT:  } else {
-// CHECK-NEXT:    scf.yield %c8_i32 : i32
+// CHECK:  cal.network {
+// CHECK-NEXT:    %c8_i32 = arith.constant 8 : i32
+// CHECK-NEXT:    %c11_i32 = arith.constant 11 : i32
+// CHECK-NEXT:    %true = arith.constant true
+// CHECK-NEXT:    %c10_i32 = arith.constant 10 : i32
+// CHECK-NEXT:    %inputPort, %outputPort = fifo.create<i32> (3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+// CHECK-NEXT:    %inputPort_0, %outputPort_1 = fifo.create<i32> (3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+// CHECK-NEXT:    %0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:    %1 = scf.if %true -> (i32) {
+// CHECK-NEXT:      scf.yield %c11_i32 : i32
+// CHECK-NEXT:    } else {
+// CHECK-NEXT:      scf.yield %c8_i32 : i32
+// CHECK-NEXT:    }
+// CHECK-NEXT:    cal.set(%0 : !cal.state_ref<i32>, %1 : i32)
+// CHECK-NEXT:    cal.create_instance @src "srcA" (%c10_i32, %0, %true, %1 : i32, !cal.state_ref<i32>, i1, i32)
+// CHECK-NEXT:        ports_out (%inputPort : !fifo.input_port<i32>)
 // CHECK-NEXT:  }
-// CHECK-NEXT:  cal.set(%0 : !cal.state_ref<i32>, %1 : i32)
-// CHECK-NEXT:  cal.create_instance @src "srcA" (%c10_i32, %true, %c2_i32, %c1_i32, %c0_i32, %0, %true, %1 : i32, i1, i32, i32, i32, !cal.state_ref<i32>, i1, i32)
 
 }
