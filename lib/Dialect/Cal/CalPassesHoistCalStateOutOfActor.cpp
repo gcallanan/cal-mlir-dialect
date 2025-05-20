@@ -33,7 +33,7 @@ namespace mlir::cal {
 // supplied as incoming arguments rather than being computed inside the actor
 // definition.
 //
-// NOTE: arith.constant ops are not removed and transformed into arguments. This
+// NOTE: constant ops are not removed and transformed into arguments. This
 // is because leaving them in leaves the door open for optimizations further
 // in the pipeline. If they were arguments the compiler would not know that they
 // are constants and would not be able to optimize them away.
@@ -82,7 +82,7 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
       if (!mlir::isa<cal::ExecutionBody>(op) &&
-          !mlir::isa<arith::ConstantOp>(op)) {
+          !op.hasTrait<mlir::OpTrait::ConstantLike>()) {
         variableHoisted = true;
 
         // 1.1 Add an argument to the actorOp for each result in the entry block
@@ -121,7 +121,7 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
 // cal.create_instance op has all of the state‐setup values inlined as explicit
 // arguments, and the original initialization logic remains in the network body.
 //
-// NOTE: arith.constant ops are hoisted, but not passed into the
+// NOTE: constant ops are hoisted, but not passed into the
 // CreateInstanceOp as an argument. This is because the constants are also kept
 // in the actrorOp to ensure that they are optimised correctly.
 //
@@ -184,7 +184,7 @@ struct AddStateAboveCreateInstance
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
       if (!mlir::isa<cal::ExecutionBody>(op) &&
-          !mlir::isa<arith::ConstantOp>(op)) {
+          !op.hasTrait<mlir::OpTrait::ConstantLike>()) {
         nonConstantsToHoist = true;
       }
     }
@@ -248,7 +248,7 @@ struct AddStateAboveCreateInstance
 
           // Remember that we do not pass ConstantOps as parameters to the
           // CreateInstanceOp.
-          if (!mlir::isa<arith::ConstantOp>(op))
+          if (!op.hasTrait<mlir::OpTrait::ConstantLike>())
             operands.push_back(resultDst);
         }
       }
