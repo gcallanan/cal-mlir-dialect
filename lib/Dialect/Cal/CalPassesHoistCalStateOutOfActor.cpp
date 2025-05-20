@@ -26,12 +26,12 @@ namespace mlir::cal {
 #define GEN_PASS_DEF_HOISTCALSTATEOUTOFACTOR
 #include "Dialect/Cal/CalPasses.h.inc"
 
-
-// This class defines a rewrite pattern for the cal.actor operation. Its goal is to
-// lift all initialization-only operations (i.e., those outside the cal.execution_body
-// region) into explicit block arguments of the actor’s entry block, then remove the
-// original ops. After this pass, those values are supplied as incoming arguments
-// rather than being computed inside the actor definition.
+// This class defines a rewrite pattern for the cal.actor operation. Its goal is
+// to lift all initialization-only operations (i.e., those outside the
+// cal.execution_body region) into explicit block arguments of the actor’s entry
+// block, then remove the original ops. After this pass, those values are
+// supplied as incoming arguments rather than being computed inside the actor
+// definition.
 //
 // Input example:
 //   cal.actor @src(%arg0: i32)
@@ -47,7 +47,8 @@ namespace mlir::cal {
 //     }
 //
 // Transformed output:
-//   cal.actor @src(%arg0: i32, %arg2: i1, %arg3: i32, %arg4: !cal.state_ref<i32>)
+//   cal.actor @src(%arg0: i32, %arg2: i1, %arg3: i32, %arg4:
+//   !cal.state_ref<i32>)
 //       ports_out (%arg1: !fifo.input_port<i32>)
 //     {
 //       cal.execution_body {
@@ -102,18 +103,19 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
   }
 };
 
-// This class defines a rewrite pattern for the cal.create_instance operation. Its goal is to
-// duplicate all of the actor’s initialization-only instructions (those outside any cal.execution_body)
-// directly above each CreateInstanceOp site, then extend that CreateInstanceOp’s operand list to
-// include the values produced by those cloned initialization ops. After this pass, each instance
-// invocation has all of the state‐setup values inlined as explicit arguments, and the original
-// initialization logic remains in the network body.
+// This class defines a rewrite pattern for the cal.create_instance operation.
+// Its goal is to duplicate all of the actor’s initialization-only instructions
+// (those outside any cal.execution_body) directly above each CreateInstanceOp
+// site, then extend that CreateInstanceOp’s operand list to include the values
+// produced by those cloned initialization ops. After this pass, each create_
+// instance op has all of the state‐setup values inlined as explicit arguments,
+// and the original initialization logic remains in the network body.
 //
 // Input example:
 //   cal.network {
 //     %c10_i32 = arith.constant 10 : i32
-//     %inputPort, %outputPort   = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
-//     cal.create_instance @src "srcA" (%c10_i32 : i32)
+//     %inputPort, %outputPort   = fifo.create<i32>(3) : !fifo.input_port<i32>,
+//     !fifo.output_port<i32> cal.create_instance @src "srcA" (%c10_i32 : i32)
 //         ports_out (%inputPort : !fifo.input_port<i32>)
 //   }
 //
@@ -122,9 +124,9 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
 //     %c0_i32 = arith.constant 0    : i32
 //     %true = arith.constant true : i1
 //     %c10_i32 = arith.constant 10   : i32
-//     %inputPort, %outputPort   = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
-//     %0 = cal.create_state_var<i32>       : !cal.state_ref<i32>
-//     cal.set(%0 : !cal.state_ref<i32>, %c0_i32 : i32)
+//     %inputPort, %outputPort   = fifo.create<i32>(3) : !fifo.input_port<i32>,
+//     !fifo.output_port<i32> %0 = cal.create_state_var<i32>       :
+//     !cal.state_ref<i32> cal.set(%0 : !cal.state_ref<i32>, %c0_i32 : i32)
 //     cal.create_instance @src "srcA"
 //       (%c10_i32, %true, %c0_i32, %0 : i32, i1, i32, !cal.state_ref<i32>)
 //       ports_out (%inputPort : !fifo.input_port<i32>)
@@ -159,7 +161,6 @@ struct AddStateAboveCreateInstance
 
     mlir::SmallVector<mlir::Value, 4> operands(instanceOp.getOperands().begin(),
                                                instanceOp.getOperands().end());
-
     // 1. Initialise a map mapping the original operands to the the operands
     // of the cloned equivalent. We need this as when we clone an operation, the
     // operands it has are the same as in the original operation which are not
@@ -172,11 +173,11 @@ struct AddStateAboveCreateInstance
     // instead use the operands that are passed to the CreateInstanceOp.
     // So we populate the map with the operands from the CreateInstanceOp and
     // the arguments of the actor body to capture this.
-    llvm::DenseMap<Value, Value> originalToClonedOperandsMap;
+    IRMapping originalToClonedOperandsMap;
     for (size_t i = 0; i < instanceOp.getNumOperands(); i++) {
       Value dstOpValue = instanceOp.getOperand(i);
       Value srcOpValue = actorBody.getArguments()[i];
-      originalToClonedOperandsMap[srcOpValue] = dstOpValue;
+      originalToClonedOperandsMap.map(srcOpValue, dstOpValue);
     }
 
     // 2. Iterate through the operations in the actor body that execute during
@@ -189,17 +190,17 @@ struct AddStateAboveCreateInstance
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
       if (!mlir::isa<cal::ExecutionBody>(op)) {
-
         variableHoisted = true;
 
-        Operation *clonedOp = op.clone();
-        rewriter.insert(clonedOp);
+        auto cloneOptions = Operation::CloneOptions().cloneRegions(true);
+        Operation *clonedOp = rewriter.clone(op, originalToClonedOperandsMap);
 
         // 2.1 Replace the operands of the cloned operation so that they
         // point operands from other cloned operations
         for (size_t i = 0; i < op.getOperands().size(); i++) {
           Value srcOpValue = op.getOperand(i);
-          Value dstOpValue = originalToClonedOperandsMap[srcOpValue];
+          Value dstOpValue =
+              originalToClonedOperandsMap.lookupOrNull(srcOpValue);
           clonedOp->setOperand(i, dstOpValue);
         }
 
@@ -209,7 +210,7 @@ struct AddStateAboveCreateInstance
         for (size_t i = 0; i < op.getResults().size(); i++) {
           Value resultSrc = op.getResult(i);
           Value resultDst = clonedOp->getResult(i);
-          originalToClonedOperandsMap[resultSrc] = resultDst;
+          originalToClonedOperandsMap.map(resultSrc, resultDst);
           operands.push_back(resultDst);
         }
       }
