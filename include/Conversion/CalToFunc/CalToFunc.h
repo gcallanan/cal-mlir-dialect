@@ -5,7 +5,6 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
-namespace cal {
 
 //===- Generated includes -------------------------------------------------===//
 
@@ -19,7 +18,6 @@ std::unique_ptr<Pass> createConvertCalToFuncPass();
 #define GEN_PASS_DECL_CONVERTCALTOFUNC
 #include "Conversion/Passes.h.inc"
 
-} // namespace cal
 } // namespace mlir
 
 #endif

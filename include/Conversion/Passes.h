@@ -5,7 +5,7 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Conversion/CalToFunc/CalToFunc.h"
 
-namespace mlir::cal {
+namespace mlir {
 
 //===- Generated passes ---------------------------------------------------===//
 

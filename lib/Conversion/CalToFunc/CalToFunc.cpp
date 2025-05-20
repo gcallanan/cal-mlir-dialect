@@ -23,7 +23,7 @@
 #include "Conversion/Passes.h"
 #include "Conversion/CalToFunc/CalToFunc.h"
 
-namespace mlir::cal {
+namespace mlir {
 #define GEN_PASS_DEF_CONVERTCALTOFUNC
 #include "Conversion/Passes.h.inc"
 
@@ -47,9 +47,9 @@ public:
   }
 };
 
-} // namespace mlir::cal
+} // namespace mlir
 
 /// Creates a pass to hoist cal.state operations out of actor bodies.
-std::unique_ptr<mlir::Pass> mlir::cal::createConvertCalToFuncPass() {
-  return std::make_unique<mlir::cal::ConvertCalToFuncPass>();
+std::unique_ptr<mlir::Pass> mlir::createConvertCalToFuncPass() {
+  return std::make_unique<mlir::ConvertCalToFuncPass>();
 }

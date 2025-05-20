@@ -29,7 +29,7 @@ void registerLowerCalToLLVMPipeline();
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mlir::cal::registerPasses();
-  mlir::cal::registerConversionPasses();
+  mlir::registerCalConversionPasses();
   mlir::fifo::registerPasses();
   // TODO: Register cal passes here.
 

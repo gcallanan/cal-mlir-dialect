@@ -1,6 +1,6 @@
-add_custom_target(ConversionIncGen)
+add_custom_target(CalConversionIncGen)
 
 set(LLVM_TARGET_DEFINITIONS Passes.td)
-mlir_tablegen(Passes.h.inc --gen-pass-decls -name Conversion)
-add_public_tablegen_target(ConversionPassesIncGen)
-add_dependencies(ConversionIncGen ConversionPassesIncGen)
+mlir_tablegen(Passes.h.inc --gen-pass-decls -name CalConversion)
+add_public_tablegen_target(CalConversionPassesIncGen)
+add_dependencies(CalConversionIncGen CalConversionPassesIncGen)

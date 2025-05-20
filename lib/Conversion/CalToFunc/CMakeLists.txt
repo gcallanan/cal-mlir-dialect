@@ -2,7 +2,7 @@ add_mlir_conversion_library(CalToFunc
         CalToFunc.cpp
 
     DEPENDS
-        ConversionIncGen
+        CalConversionIncGen
 
     LINK_COMPONENTS
         Core
