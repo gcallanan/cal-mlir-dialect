@@ -54,7 +54,7 @@ cal.actor @src(%max_tokens_to_send: i32, %actor_index: i32)
             %value_to_send = arith.addi %tokens_sent, %actor_index_by_100 : i32
 
             // -- send the token
-            fifo.push(%out0: !fifo.input_port<i32>, %tokens_sent: i32)
+            fifo.push(%out0: !fifo.input_port<i32>, %value_to_send: i32)
             fifo.print("Src %d, pushed token: %d\0A\00", %actor_index ,%value_to_send) : (i32, i32)
             
             %true = arith.constant 1 : i1
