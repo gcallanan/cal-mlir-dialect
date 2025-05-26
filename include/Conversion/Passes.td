@@ -7,6 +7,26 @@ include "Dialect/Fifo/FifoDialect.td"
 
 def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
     let summary = "A pass that converts CAL actors and networks to a series of functions that are called in a loop";
+    let description = [{
+        Creates a pass to lower CAL dialect operations (`cal.actor`, `cal.network`,
+        and related constructs) into standard MLIR `func` operations suitable for
+        LLVM lowering and execution.
+        This pass performs a series of rewrites to:
+          - Convert each `cal.actor` into a `func.func` function with matching
+            arguments and logic.
+          - Replace `cal.create_instance` operations with calls to the corresponding
+            actor functions, passing necessary operands explicitly.
+          - Rewrite `cal.action_done` into a `func.return` to signal action
+            completion.
+          - Transform the top-level `cal.network` into a `func.func` called "main",
+            which initializes the network and then repeatedly calls each actor
+            function in a `scf.while` loop until no actor performs any further work.
+        After this transformation, the CAL program is expressed entirely in terms of
+        `func.func`, `func.call`, and other core dialects, enabling straightforward
+        lowering to LLVM.
+
+        Description originally written by Gareth Callanan and refined using ChatGPT.
+    }];
 
     let constructor = "mlir::createConvertCalToFuncPass()";
 

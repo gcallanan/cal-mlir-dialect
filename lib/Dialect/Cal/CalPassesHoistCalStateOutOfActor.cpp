@@ -208,11 +208,8 @@ struct AddStateAboveCreateInstance
     // So we populate the map with the operands from the CreateInstanceOp and
     // the arguments of the actor body to capture this.
     IRMapping originalToClonedOperandsMap;
-    for (size_t i = 0; i < instanceOp.getNumOperands(); i++) {
-      Value dstOpValue = instanceOp.getOperand(i);
-      Value srcOpValue = actorBody.getArguments()[i];
-      originalToClonedOperandsMap.map(srcOpValue, dstOpValue);
-    }
+    originalToClonedOperandsMap.map(actorBody.getArguments(),
+                                    instanceOp.getOperands());
 
     // 2. Iterate through the operations in the actor body that execute during
     // initiaisation and clone them to the new instance above the
@@ -226,25 +223,14 @@ struct AddStateAboveCreateInstance
       if (!mlir::isa<cal::ExecutionBody>(op)) {
         variableHoisted = true;
 
-        auto cloneOptions = Operation::CloneOptions().cloneRegions(true);
+        // 2.1 Clone the operation and replace the operands of the cloned
+        // operation if they are in the map
         Operation *clonedOp = rewriter.clone(op, originalToClonedOperandsMap);
 
-        // 2.1 Replace the operands of the cloned operation so that they
-        // point operands from other cloned operations
-        for (size_t i = 0; i < op.getOperands().size(); i++) {
-          Value srcOpValue = op.getOperand(i);
-          Value dstOpValue =
-              originalToClonedOperandsMap.lookupOrNull(srcOpValue);
-          clonedOp->setOperand(i, dstOpValue);
-        }
-
-        // 2.2 This cloned operation produces values that can be used as
-        // operands for other operations, so we need to add these values to the
-        // operands maps.
+        // 2.2 These operands now need to be passed into
+        // the actor as operands. We add them to the list of operands here.
         for (size_t i = 0; i < op.getResults().size(); i++) {
-          Value resultSrc = op.getResult(i);
           Value resultDst = clonedOp->getResult(i);
-          originalToClonedOperandsMap.map(resultSrc, resultDst);
 
           // Remember that we do not pass ConstantOps as parameters to the
           // CreateInstanceOp.
@@ -274,14 +260,12 @@ class HoistCalStateOutOfActorPass
     : public impl::HoistCalStateOutOfActorBase<HoistCalStateOutOfActorPass> {
 public:
   void runOnOperation() final {
-    ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
     patterns.add<MoveInitOperationsToArguments>(&getContext());
     patterns.add<AddStateAboveCreateInstance>(&getContext());
 
-    if (failed(applyPatternsGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }
   }

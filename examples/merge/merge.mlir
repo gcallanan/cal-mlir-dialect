@@ -20,7 +20,7 @@
 //        | sink |           
 //        +------+  
 
-cal.actor @src(%max_tokens_to_send: i32)
+cal.actor @src(%max_tokens_to_send: i32, %actor_index: i32)
     ports_out(%out0: !fifo.input_port<i32>)
 {
     %num_tokens_sent_state = cal.create_state_var<i32> : !cal.state_ref<i32>
@@ -47,8 +47,15 @@ cal.actor @src(%max_tokens_to_send: i32)
             %tokens_sent = cal.get(%num_tokens_sent_state: !cal.state_ref<i32>) : i32
             %tokens_sent_plus_one = arith.addi %tokens_sent, %one_i32 : i32
             cal.set(%num_tokens_sent_state: !cal.state_ref<i32>, %tokens_sent_plus_one: i32)
+
+            // -- calculate the value to send
+            %one_hundred = arith.constant 100 : i32
+            %actor_index_by_100 = arith.muli %actor_index, %one_hundred : i32
+            %value_to_send = arith.addi %tokens_sent, %actor_index_by_100 : i32
+
             // -- send the token
             fifo.push(%out0: !fifo.input_port<i32>, %tokens_sent: i32)
+            fifo.print("Src %d, pushed token: %d\0A\00", %actor_index ,%value_to_send) : (i32, i32)
             
             %true = arith.constant 1 : i1
             scf.yield %true : i1 
@@ -70,8 +77,7 @@ cal.actor @sink()
         %zero = arith.constant 0 : index
         %token_available = arith.cmpi sgt, %num_tokens_available, %zero : index
 
-        // // Conjoin the conditions and if both are true, perform action
-        // %cond = arith.andi %cmp_free, %cmp_sent : i1
+        // If a token is available, pop it and print
         scf.if %token_available {
             // Perform the action: Retrieve and print the token
             %token = fifo.pop(%in0: !fifo.output_port<i32>) : i32
@@ -137,15 +143,17 @@ cal.actor @merge()
 cal.network {
     %0 = arith.constant 10 : i32
     %1 = arith.constant 10 : i32
+    %one = arith.constant 1 : i32
+    %two = arith.constant 2 : i32
 
     %in0, %out0 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
     %in1, %out1 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
     %in2, %out2 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
 
-    cal.create_instance @src "srcA" (%0: i32)
+    cal.create_instance @src "srcA" (%0, %one : i32, i32)
             ports_out(%in0 : !fifo.input_port<i32>)
 
-    cal.create_instance @src "srcB" (%1: i32)
+    cal.create_instance @src "srcB" (%1, %two: i32, i32)
             ports_out(%in1 : !fifo.input_port<i32>)
 
     cal.create_instance @merge "merge" ()
