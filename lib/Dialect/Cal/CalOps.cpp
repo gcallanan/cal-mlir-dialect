@@ -173,21 +173,44 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
   //   }
   // }
 
-  // If the last operation is a cal.execution_body then there can only be
+  // Here we perform a few checks to enforce that cal.actor body is formatted
+  // how we expect it to be:
+  // 1. If the last operation is a cal.execution_body then there can only be
   // one of these operations in the region (it must be last) and there
   // can be no cal.action operations in the actor.
+  // 2. cal.action and cal.execution_body are mutually exclusive operations in a
+  // cal.actor. If one is present, the other must not be present.
+  // 3. cal.action operations must be the last operations in the region.
   auto beginIt = bodyRegion.op_begin();
   auto endIt = bodyRegion.op_end();
   bool executionBodyFound = false;
+  bool firstActionFound = false;
   for (auto it = beginIt; it != endIt; ++it) {
     Operation &op = *it; // reference to the operation
-    if (llvm::isa<ExecutionBody>(op)) {
+    if (llvm::isa<ActionOp>(op)) {
+      firstActionFound = true; // first action found
       if (executionBodyFound) {
         return parser.emitError(
             location,
-            "The cal.execution_body operation in the cal.actor is "
+            ". Within a cal.actor, there can either be a single cal.execution "
+            "body or one or more cal.actions. Both of the operations may not "
+            "appear in the same cal.actor.");
+      }
+    } else if (llvm::isa<ExecutionBody>(op)) {
+      if (executionBodyFound) {
+        return parser.emitError(
+            location,
+            ". The cal.execution_body operation in the cal.actor is "
             "required to be unique and the last operation in the region. You "
             "may not have more than one cal.execution_body in this region");
+      }
+
+      if (firstActionFound) {
+        return parser.emitError(
+            location,
+            ". Within a cal.actor, there can either be a single cal.execution "
+            "body or one or more cal.actions. Both of the operations may not "
+            "appear in the same cal.actor.");
       }
       executionBodyFound = true; // first action found
     } else {
@@ -197,6 +220,14 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
         return parser.emitError(
             location, "The cal.execution_body operation in the cal.actor is "
                       "required to be the last operation in the region.");
+      }
+      if (firstActionFound) { // We found a non-action operation after an action
+                              // operation
+        return parser.emitError(
+            location,
+            "expected all cal.action operations in the cal.actor to appear at "
+            "the end of the region. In this cal.actor, some non - action "
+            "operations were found after a cal.action operation.");
       }
     }
   }
@@ -263,7 +294,12 @@ LogicalResult CreateStateVarOp::verify() {
   if (getOperation()->getParentOp()) {
     if (mlir::isa<ExecutionBody>(getOperation()->getParentOp())) {
       return emitOpError()
-             << "cannot create state variable in within cal.execution_body";
+             << "cannot create state variable within cal.execution_body";
+    } else if (mlir::isa<ActionOp>(getOperation()->getParentOp())) {
+      return emitOpError() << "cannot create state variable within cal.action";
+    } else if (mlir::isa<Predicate>(getOperation()->getParentOp())) {
+      return emitOpError()
+             << "cannot create state variable within cal.predicate";
     }
   }
 
@@ -305,6 +341,10 @@ LogicalResult StateSetOp::verify() {
     return emitOpError() << "expected stateVarRef state type to be "
                          << stateValueType << ", but got "
                          << stateRef.getStateType();
+  }
+
+  if (mlir::isa<Predicate>(getOperation()->getParentOp())) {
+    return emitOpError() << "cannot modify state variable within cal.predicate";
   }
 
   return success();
@@ -422,8 +462,8 @@ void CreateInstanceOp::print(OpAsmPrinter &printer) {
   printer.decreaseIndent();
 }
 
-/// Parses an optional operand group with an associated type list and validates
-/// each type against a provided constraint.
+/// Parses an optional operand group with an associated type list and
+/// validates each type against a provided constraint.
 ///
 /// This function attempts to parse a group of operands prefixed by a specific
 /// keyword (e.g., "ports_in", "ports_out"). The expected syntax is:
@@ -508,9 +548,9 @@ ParseResult CreateInstanceOp::parse(OpAsmParser &parser,
     for (Type &type : standardTypes) {
       if (mlir::isa<fifo::InputPortType>(type) ||
           mlir::isa<fifo::OutputPortType>(type))
-        return parser.emitError(
-            parser.getCurrentLocation(),
-            "standard arguments may not include fifo input/output port types");
+        return parser.emitError(parser.getCurrentLocation(),
+                                "standard arguments may not include fifo "
+                                "input/output port types");
     }
   }
 
@@ -548,4 +588,107 @@ ParseResult CreateInstanceOp::parse(OpAsmParser &parser,
 
   return parser.resolveOperands(allOperands, allTypes, parser.getNameLoc(),
                                 result.operands);
+}
+
+ParseResult ActionOp::parse(OpAsmParser &parser, OperationState &result) {
+  // Optional string: actionName
+  std::string action_name;
+  if (succeeded(parser.parseOptionalString(&action_name))) {
+    result.addAttribute("actionName",
+                        parser.getBuilder().getStringAttr(action_name));
+  }
+
+  // Optional keyword "priority = <int>"
+  if (succeeded(parser.parseOptionalKeyword("priority"))) {
+    IntegerAttr priorityAttr;
+    if (parser.parseEqual() ||
+        parser.parseAttribute(priorityAttr, parser.getBuilder().getI32Type(),
+                              "priority", result.attributes))
+      return failure();
+  }
+
+  Region *body = result.addRegion();
+  if (parser.parseRegion(*body, /*arguments=*/{}, /*argTypes=*/{}))
+    return failure();
+
+  return success();
+}
+
+void ActionOp::print(OpAsmPrinter &printer) {
+  if (getActionNameAttr()) {
+    printer << " ";
+    printer.printString(getActionNameAttr().getValue());
+  }
+
+  if (getPriorityAttr()) {
+    printer << " priority=" << getPriorityAttr().getValue();
+  }
+
+  printer.printNewline();
+  printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,
+                      /*printBlockTerminators=*/false);
+  printer.printNewline();
+}
+
+/// Verifies that the operations inside a `cal.action` body follow the correct
+/// ordering constraints.
+///
+/// The expected ordering is:
+///   1. `cal.predicate` operations
+///   2. `fifo.pop` operations
+///   3. `cal.set` (state update) operations
+///   4. `fifo.push` operations
+///
+/// The function walks through the body of the `cal.action` block and enforces
+/// that:
+/// - All `cal.predicate` ops appear before any `fifo.pop`, `cal.set`, or
+///   `fifo.push` ops.
+/// - All `fifo.pop` ops appear before any `cal.set` or `fifo.push` ops.
+/// - All `cal.set` ops appear before any `fifo.push` ops.
+/// - `fifo.push` ops can only appear after all others.
+///
+/// If any of these constraints are violated, an error is emitted for the
+/// `cal.action` operation.
+
+LogicalResult ActionOp::verify() {
+  enum Phase { predicateOps = 0, popOps = 1, setStateOps = 2, pushOps = 3 };
+
+  Phase currentPhase = predicateOps;
+
+  if (!getBody().empty()) {
+    for (Operation &op : getBody().front()) {
+      if (mlir::isa<cal::Predicate>(op)) {
+        if (currentPhase > predicateOps) {
+          return emitOpError()
+                 << "cal.predicate operations must be before fifo.pop, "
+                    "cal.set, and fifo.push operations in the body of the "
+                    "cal.action";
+        }
+        currentPhase = predicateOps;
+      } else if (mlir::isa<fifo::Pop>(op)) {
+        if (currentPhase > popOps) {
+          return emitOpError()
+                 << "fifo.pop operations must be before cal.set and "
+                    "fifo.push operations in the body of the cal.action";
+        }
+        currentPhase = popOps;
+      } else if (mlir::isa<cal::StateSetOp>(op)) {
+        if (currentPhase > setStateOps) {
+          return emitOpError()
+                 << "cal.set operations must be after fifo.pop and "
+                    "cal.predicate operations in the body of the cal.action";
+        }
+        currentPhase = setStateOps;
+      } else if (mlir::isa<fifo::Push>(op)) {
+        if (currentPhase > pushOps) {
+          return emitOpError()
+                 << "fifo.push operations must be the last operations "
+                    "in the the body of the cal.action";
+        }
+        currentPhase = pushOps;
+      }
+    }
+  }
+
+  return success();
 }

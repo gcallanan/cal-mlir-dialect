@@ -44,9 +44,53 @@ cal.set(%ref3: !cal.state_ref<i32>, %c1: i17)
 cal.actor @act1 (){
     %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
     cal.execution_body{
-        // expected-error @+1 {{'cal.create_state_var' op cannot create state variable in within cal.execution_body}}
+        // expected-error @+1 {{'cal.create_state_var' op cannot create state variable within cal.execution_body}}
         %ref1 = cal.create_state_var<i32> : !cal.state_ref<i32>
     }
 }
 
 // -----
+
+cal.actor @act1 (){
+    %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    cal.execution_body{
+        // expected-error @+1 {{'cal.create_state_var' op cannot create state variable within cal.execution_body}}
+        %ref1 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    }
+}
+
+// -----
+cal.actor @act1 (){
+    %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    cal.action{
+        // expected-error @+1 {{'cal.create_state_var' op cannot create state variable within cal.action}}
+        %ref1 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    }
+}
+
+// -----
+cal.actor @act1 (){
+    %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    cal.action{
+        cal.predicate {
+            // expected-error @+1 {{'cal.create_state_var' op cannot create state variable within cal.predicate}}
+            %ref1 = cal.create_state_var<i32> : !cal.state_ref<i32>
+            %true = arith.constant 1 : i1
+            cal.predicate_result %true : i1
+        }
+    }
+}
+
+// -----
+cal.actor @act1 (){
+    %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+    cal.action{
+        cal.predicate {
+            %c1 = arith.constant 1 : i32
+            // expected-error @+1 {{'cal.set' op cannot modify state variable within cal.predicate}}
+            cal.set(%ref0: !cal.state_ref<i32>, %c1: i32)
+            %true = arith.constant 1 : i1
+            cal.predicate_result %true : i1
+        }
+    }
+}

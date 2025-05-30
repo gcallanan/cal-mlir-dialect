@@ -10,8 +10,11 @@
 #include "mlir/InitAllDialects.h"
 #include "mlir/Tools/Plugins/DialectPlugin.h"
 
+#include "Conversion/Passes.h"
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalPasses.h"
+#include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoPasses.h"
 #include "mlir/Tools/Plugins/PassPlugin.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Compiler.h"
@@ -25,14 +28,19 @@ extern "C" LLVM_ATTRIBUTE_WEAK DialectPluginLibraryInfo
 mlirGetDialectPluginInfo() {
   return {MLIR_PLUGIN_API_VERSION, "Cal", LLVM_VERSION_STRING,
           [](DialectRegistry *registry) {
-            registry->insert<mlir::cal::CalDialect>();
+            registry->insert<mlir::cal::CalDialect, mlir::fifo::FifoDialect>();
             mlir::cal::registerPasses();
+            mlir::fifo::registerPasses();
+            mlir::registerCalConversionPasses();
           }};
 }
 
 /// Pass plugin registration mechanism.
 /// Necessary symbol to register the pass plugin.
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo mlirGetPassPluginInfo() {
-  return {MLIR_PLUGIN_API_VERSION, "CalPasses", LLVM_VERSION_STRING,
-          []() { mlir::cal::registerPasses(); }};
+  return {MLIR_PLUGIN_API_VERSION, "CalPasses", LLVM_VERSION_STRING, []() {
+            mlir::cal::registerPasses();
+            mlir::fifo::registerPasses();
+            mlir::registerCalConversionPasses();
+          }};
 }

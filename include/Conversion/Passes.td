@@ -25,6 +25,15 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
         `func.func`, `func.call`, and other core dialects, enabling straightforward
         lowering to LLVM.
 
+        NOTE: This pass only supports cal.actors containing a cal.execution_body
+        and does not support cal.actors containing cal.action operations. If
+        such operations are present, the pass will fail. Each
+        cal.action represents its own CFG and a function
+        with multiple CFGs does not make sense. These instead need to be merged
+        into a single CFG which is what the cal.execution_body represents. There
+        should be a different pass that merges the cal.actions into a single
+        cal.execution_body which should be run before this pass.
+
         Description originally written by Gareth Callanan and refined using ChatGPT.
     }];
 

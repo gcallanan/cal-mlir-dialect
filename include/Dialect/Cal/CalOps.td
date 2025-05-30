@@ -29,20 +29,68 @@ include "mlir/IR/CommonAttrConstraints.td"
 //    - [IsolatedFromAbove]: The actor does not have side effects or dependences
 //                           on the operations above or around it, so it can
 //                           be marked as isolated.
-//    - [AttrSizedOperandSegments]: We have multiple variadic arguments
-//                                  (The $output_ports and $input_ports). MLIR
-//                                  requires that we specify something about the
-//                                  size of these arguments. This trait specifies
-//                                  that there is no relationship between these
-//                                  arguments and that they can be of any size.
-//
-//
-
 def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   let summary = "CAL actor operation";
   let description = [{
-    Represents an actor that contains one or more action regions. Each region
-    must contain exactly one cal.action operation.
+    The `cal.actor` operation defines a computational actor in a CAL-based
+    dataflow model. An actor encapsulates both persistent state and executable
+    behavior, and communicates with its environment via typed FIFO ports.
+
+    Each actor contains a body region that must include either:
+    - One or more `cal.action` operations, each representing an isolated control
+      flow graph (CFG) with optional guards, internal computations, and FIFO
+      interactions; or
+    - A single `cal.execution_body` operation, which represents the entire actor’s
+      behavior as one combined CFG. This unified body is typically the result of
+      composing multiple `cal.action`s during lowering or optimization.
+
+    Actors can optionally declare input and output ports using `ports_in` and
+    `ports_out`. These ports describe how the actor connects to FIFO channels when
+    instantiated in a `cal.network`.
+
+    Example:
+      cal.actor @my_actor(%inc: i32)
+        ports_in(%in0: !fifo.output_port<i32>)
+        ports_out(%out0: !fifo.input_port<i32>)
+      {
+        %s1 = cal.create_state_var<i32> : !cal.state_ref<i32>
+        cal.set(%s1: !cal.state_ref<i32>, %inc: i32)
+
+        cal.action {
+          %0 = cal.get(%s1: !cal.state_ref<i32>) : i32
+          %1 = arith.addi %0, %inc : i32
+          cal.set(%s1: !cal.state_ref<i32>, %1: i32)
+          fifo.push(%out0: !fifo.input_port<i32>, %0: i32)
+        }
+      }
+
+    In the example above, the actor defines a state variable and a single action that
+    increments the state and pushes the old value to an output FIFO port.
+
+    ## Semantics
+
+    - `cal.action` blocks allow for fine-grained specification of behavior and may be
+      independently guarded using `cal.predicate` operations.
+    - During compilation or transformation, actions may be merged into a single
+      `cal.execution_body`, forming a complete CFG for the actor's runtime behavior.
+    - The actor's body must contain *either* a set of `cal.action`s *or* a single
+      `cal.execution_body`, but not both.
+
+    This design enables both modular authoring of actions and efficient downstream
+    scheduling or transformation into a unified control structure.
+
+    This operation has the following traits:
+    - [Symbol]: This actor needs to have a name and this name needs to be part
+                of the symbol table so that it can be accessed from other
+                locations.
+    - [NoTerminator]: A terminator operation is signifies the end of a control
+                      flow region. This does not make sense for an actor
+                      operation as there is no single controle flow defined
+                      yet. When we transform it for execution, then we will
+                      need to decide how action regions are connected.
+    - [IsolatedFromAbove]: The actor does not have side effects or dependences
+                           on the operations above or around it, so it can
+                           be marked as isolated.
   }];
 
   let arguments = (ins
@@ -112,10 +160,83 @@ def Cal_CreateInstanceOp : Cal_Op<"create_instance", [DeclareOpInterfaceMethods<
   let hasCustomAssemblyFormat = 1;
 }
 
-def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator]> {
-  let summary = "TODO";
+// TODO Explain, make sure action_done is a cumpulsory terminator
+def Cal_ExecutionBody : Cal_Op<"execution_body", [HasParent<"ActorOp">]> {
+  let summary = "Execution body of a CAL actor";
   let description = [{
-    TODO
+    Represents the combined execution region of a CAL actor.
+
+    This region contains the merged control flow of all individual actions within
+    the actor, representing the complete behavior of the actor during execution.
+
+    Unlike individual `cal.action` regions which encapsulate single actions, the
+    execution body integrates all these actions into a single, unified control flow
+    graph.
+
+    This operation serves as a container for the actor's executable logic after
+    action merging and scheduling.
+
+    The region must be terminated by a `cal.action_done` operation indicating the
+    completion of execution. It returns a boolean indicating whether
+    the action was successfully executed or not. This is used to signal whether
+    an action executed or not, which helps with scheduling.
+
+    Typically generated by compiler passes that lower or optimize CAL actors for
+    execution.
+
+    Example usage:
+    cal.actor @sink()
+        ports_in(%in0: !fifo.output_port<i32>)
+    {
+        cal.execution_body
+        {
+            // Condition : Ensure that we have a token to consume
+            %num_tokens_available = fifo.size(%in0: !fifo.output_port<i32>) : index
+            %zero = arith.constant 0 : index
+            %token_available = arith.cmpi sgt, %num_tokens_available, %zero : index
+
+            // If a token is available, pop it and print
+            scf.if %token_available {
+                // Perform the action: Retrieve and print the token
+                %token = fifo.pop(%in0: !fifo.output_port<i32>) : i32
+                fifo.print("Popped Token: %d\0A\00", %token) : (i32)
+                scf.yield
+            } else {
+                %false = arith.constant 0 : i1
+                scf.yield
+            }
+            cal.action_done %token_available : i1
+        }
+    }
+
+  }];
+
+  let regions = (region AnyRegion:$body);
+
+  let assemblyFormat = "$body attr-dict ";
+}
+
+def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator, HasParent<"ExecutionBody">]> {
+  let summary = "Indicates the completion of a CAL action's execution";
+
+  let description = [{
+    The `cal.action_done` operation marks the termination point of an execution
+    region within a CAL actor or execution body.
+
+    It signals that the action or execution body has completed its execution,
+    optionally conveying whether the action was executed via the `has_executed`
+    boolean attribute.
+
+    This terminator is required to properly delineate the end of an action's
+    control flow region.
+
+    It is used by compiler passes and runtime systems to determine action
+    completion status and to coordinate scheduling or further execution steps.
+
+    Example:
+
+  cal.action_done true : i1
+
   }];
 
   let arguments = (ins I1:$has_executed);
@@ -123,26 +244,115 @@ def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator]> {
   let assemblyFormat = "attr-dict $has_executed `:` type($has_executed)";
 }
 
-// def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">]> {
-//   let summary = "CAL action operation";
-//   let description = [{
-//     Represents an individual action within a cal.actor.
-//   }];
-
-//   let regions = (region AnyRegion:$body);
-
-//   let assemblyFormat = "$body attr-dict ";
-// }
-
-def Cal_ExecutionBody : Cal_Op<"execution_body", [HasParent<"ActorOp">]> {
-  let summary = "TODO";
+// TODO Explain purpose of has parent and NoTerminator
+def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">, NoTerminator]> {
+  let summary = "Defines a single atomic unit of behavior within a CAL actor";
   let description = [{
-    TODO.
+    The `cal.action` operation defines a single atomic behavioral unit within a
+    `cal.actor`. Each action represents its own self-contained control flow graph
+    (CFG) and is a candidate for execution based on its internal conditions,
+    including predicate evaluation and data availability.
+
+    An actor may contain multiple `cal.action` operations, each describing an
+    independent sequence of behavior. Alternatively, during lowering, these
+    multiple actions may be composed into a single unified control structure
+    through a `cal.execution_body` region, which merges the individual CFGs.
+
+    ## Structure and Semantics
+
+    - Each action consists of an optional name and an optional priority attribute.
+      Priorities are used to resolve which action to fire when multiple are
+      simultaneously enabled.
+    - The body of a `cal.action` is a region that may contain (among other operations):
+      - `cal.predicate` blocks: Used to guard action execution.
+      - FIFO operations such as `fifo.pull` and `fifo.push`.
+      - State operations such as `cal.get` and `cal.set`.
+    - The operations must follow a valid sequence:
+      `cal.predicate` → `fifo.pull` → `cal.set` → `fifo.push`.
+      This ordering is verified to ensure deterministic behavior.
+    - The NoTerminator trait is here as nothing needs to be returned when an
+      action finished executing.
+
+    ## Example
+
+    cal.action {
+      cal.predicate {
+        %true = arith.constant 1 : i1
+        cal.predicate_result %true : i1
+      }
+      %v = cal.get(%state: !cal.state_ref<i32>) : i32
+      %inc = arith.addi %v, %c1 : i32
+      cal.set(%state: !cal.state_ref<i32>, %inc: i32)
+      fifo.push(%out: !fifo.input_port<i32>, %v: i32)
+    }
+  }];
+
+  let arguments = (ins
+    OptionalAttr<StrAttr>:$actionName, // Optional name for the action
+    OptionalAttr<I32Attr>:$priority // Optional priority for the action
+  );
+
+  let regions = (region AnyRegion:$body);
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+
+def Cal_Predicate : Cal_Op<"predicate", [HasParent<"ActionOp">]> {
+  let summary = "Predicate region for conditional action execution";
+  let description = [{
+    The `cal.predicate` operation defines a region within a `cal.action` that computes
+    a condition controlling whether the action is eligible to fire. This region contains
+    a sequence of operations and must terminate with a `cal.predicate_result` operation,
+    which returns a single boolean (`i1`) indicating the result of the predicate evaluation.
+
+    The `cal.predicate` must appear at the beginning of a `cal.action` body, before any
+    `fifo.pull`, `cal.set`, or `fifo.push` operations. Multiple predicate blocks can be
+    declared within a single action, allowing for more complex eligibility conditions.
+
+    This region may contain operations that compute the predicate result, but it is
+    subject to strict restrictions enforced by the verifier:
+    - No FIFO push or pop operations are allowed inside the predicate region.
+    - State variables cannot be modified within this region.
+
+    Example:
+      cal.predicate {
+        %true = arith.constant 1 : i1
+        cal.predicate_result %true : i1
+      }
+
+    The value passed to `cal.predicate_result` determines whether this predicate is
+    satisfied. The final eligibility for the action may be based on the combination
+    of multiple predicate regions, depending on execution semantics.
   }];
 
   let regions = (region AnyRegion:$body);
 
   let assemblyFormat = "$body attr-dict ";
+}
+
+// TODO Explain
+def CAL_PredicateResultOp : Cal_Op<"predicate_result", [Terminator, HasParent<"Predicate">]> {
+  let summary = "Result of a predicate evaluation";
+  let description = [{
+    The `cal.predicate_result` operation serves as the terminator of a `cal.predicate`
+    region. It returns a single boolean (`i1`) value representing the outcome of the
+    predicate evaluation within the action.
+
+    This value indicates whether the predicate condition was met (true) or not (false),
+    determining if the associated action is eligible for execution.
+
+    The `cal.predicate_result` must be the last operation in the `cal.predicate` region
+    and must return exactly one boolean result.
+
+    Example:
+      cal.predicate_result %cond : i1
+  }];
+
+  let arguments = (ins I1:$has_executed);
+
+  let assemblyFormat = "attr-dict $has_executed `:` type($has_executed)";
 }
 
 def CAL_CreateStateVarOp : Cal_Op<"create_state_var", [MemoryEffects<[MemAlloc]>, MemoryEffects<[MemWrite]>]> {

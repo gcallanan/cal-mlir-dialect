@@ -81,7 +81,7 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
     // blocks argument list and then remove the operation.
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
-      if (!mlir::isa<cal::ExecutionBody>(op) &&
+      if (!mlir::isa<cal::ExecutionBody>(op) && !mlir::isa<cal::ActionOp>(op) &&
           !op.hasTrait<mlir::OpTrait::ConstantLike>()) {
         variableHoisted = true;
 
@@ -183,7 +183,7 @@ struct AddStateAboveCreateInstance
     bool nonConstantsToHoist = false;
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
-      if (!mlir::isa<cal::ExecutionBody>(op) &&
+      if (!mlir::isa<cal::ExecutionBody>(op) && !mlir::isa<cal::ActionOp>(op) &&
           !op.hasTrait<mlir::OpTrait::ConstantLike>()) {
         nonConstantsToHoist = true;
       }
@@ -220,7 +220,7 @@ struct AddStateAboveCreateInstance
 
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
-      if (!mlir::isa<cal::ExecutionBody>(op)) {
+      if (!mlir::isa<cal::ExecutionBody>(op) && !mlir::isa<cal::ActionOp>(op)) {
         variableHoisted = true;
 
         // 2.1 Clone the operation and replace the operands of the cloned

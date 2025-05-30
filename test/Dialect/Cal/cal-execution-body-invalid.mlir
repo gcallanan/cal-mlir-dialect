@@ -59,7 +59,7 @@ cal.execution_body
 
 // -----
 
-// expected-error @+1 {{custom op 'cal.actor' The cal.execution_body operation in the cal.actor is required to be unique and the last operation in the region. You may not have more than one cal.execution_body in this region}}
+// expected-error @+1 {{custom op 'cal.actor' . The cal.execution_body operation in the cal.actor is required to be unique and the last operation in the region. You may not have more than one cal.execution_body in this region}}
 cal.actor @my_actor(){
     cal.execution_body
     {
@@ -70,6 +70,17 @@ cal.actor @my_actor(){
     cal.execution_body
     {
         %true = arith.constant 1 : i1
+        cal.action_done %true : i1
+    }
+}
+
+// -----
+
+cal.actor @my_actor(){
+    cal.action
+    {
+        %true = arith.constant 1 : i1
+        // expected-error @+1 {{'cal.action_done' op expects parent op 'cal.execution_body'}}
         cal.action_done %true : i1
     }
 }

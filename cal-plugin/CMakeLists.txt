@@ -4,6 +4,8 @@ add_llvm_library(CalPlugin
         cal-plugin.cpp
 
         DEPENDS
+        CalToFunc
+        CalStateToMemref
         MLIRCal
         MLIRFifo
         PLUGIN_TOOL
@@ -12,6 +14,8 @@ add_llvm_library(CalPlugin
         LINK_LIBS
         MLIRCal
         MLIRFifo
+        CalToFunc
+        CalStateToMemref
         )
 target_include_directories(
         CalPlugin

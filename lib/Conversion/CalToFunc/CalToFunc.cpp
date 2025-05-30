@@ -236,6 +236,7 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
 
     // 2. Create and populate the entry block of the function.
     Block *entryBlock = function.addEntryBlock();
+
     rewriter.setInsertionPointToStart(entryBlock);
 
     // 2.1 We need to map the original actor body arguments to the
@@ -251,6 +252,7 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
     auto endIt = actorBody.op_end();
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &opToClone = *it; // reference to the operation
+
       // Most operations can be cloned directly
       if (!mlir::isa<cal::ExecutionBody>(opToClone)) {
         rewriter.clone(opToClone, originalToClonedOperandsMap);
@@ -274,7 +276,7 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
 
     return success();
   }
-};
+}; // namespace mlir
 
 /// Converts a `cal.action_done` terminator into a `func.return` terminator.
 ///
@@ -379,8 +381,29 @@ public:
   }
 
   void runOnOperation() final {
-    RewritePatternSet patterns(&getContext());
 
+    // 1. Check if the module contains any `cal.action` operations.
+    // If it does, we cannot convert the module to func, as `cal.action` is
+    // not supported here. Emit an error and signal pass failure.
+    Operation *module = getOperation();
+    module->walk([&](cal::ActorOp actor) {
+      for (Block &block : actor.getBody()) {
+        for (Operation &op : block) {
+          if (isa<cal::ActionOp>(op)) {
+            actor.emitError("cal.actor contains cal.action - cannot convert to "
+                            "func dialect. Only actors with cal.execution_body "
+                            "are valid in this pass");
+            signalPassFailure();
+            return WalkResult::interrupt(); // Stop walking
+          }
+        }
+      }
+      return WalkResult::advance();
+    });
+
+    // 2. If the module does not contain any `cal.action` operations, we can
+    // proceed with the conversion to func operations
+    RewritePatternSet patterns(&getContext());
     patterns.add<ConvertCalActorToFunc>(&getContext());
     patterns.add<ConvertCalTerminatorToFuncTerminator>(&getContext());
     patterns.add<ConvertCalCreateInstanceToFuncCall>(&getContext());
