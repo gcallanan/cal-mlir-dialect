@@ -12,7 +12,7 @@
 include "mlir/Pass/PassBase.td"
 
 def HoistCalStateOutOfActor: Pass<"hoist-cal-state-out-of-actor"> {
-  let summary = "Move all actor initialisation variables out of cal.actors and into cal.network operation that create instances of that actor..";
+  let summary = "Move all actor initialisation variables out of cal.actors and into cal.network operation that create instances of that actor.";
   let description = [{
     In the CAL dialect, each `cal.actor` may declare state variables or constant values in its
     entry block that are only needed to initialize the actor's internal state before its
@@ -43,6 +43,68 @@ def HoistCalStateOutOfActor: Pass<"hoist-cal-state-out-of-actor"> {
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
   let constructor = "mlir::cal::hoistCalStateOutOfActor()";
+}
+
+def InsertCalPortPredicates: Pass<"insert-cal-port-predicates"> {
+  let summary = "Insert predicates/guards for FIFO port accesses in cal.actions";
+  let description = [{
+    This pass inserts `cal.predicate` operations into `cal.action` bodies to guard
+    FIFO port accesses. These predicates ensure that the
+    conditions for safely executing FIFO operations (like availability of input
+    tokens or sufficient output buffer space) are met before the action executes.
+
+    Each `fifo.pop` or `fifo.push` inside an action corresponds to an input (consumption)
+    or output (production) port that may require a runtime guard. This pass performs
+    static analysis to determine the expected number of tokens
+    required or produced at each port per action. For each such port, a corresponding
+    `cal.predicate` is inserted at the start of the action.
+
+    For each consumption port:
+      - The predicate uses `fifo.size` to get the current token count.
+      - It compares this to the required rate as produced from the static analysis.
+
+    For each production port:
+      - The predicate uses `fifo.space` to get the available buffer space.
+      - It performs the same comparison as above.
+
+    Example Input:
+      cal.action {
+        %token = fifo.pop(%in1: !fifo.output_port<i32>) : i32
+        fifo.push(%out0: !fifo.input_port<i32>, %token: i32)
+      }
+
+    Example Output:
+      cal.action {
+        cal.predicate {
+          %1 = fifo.size(%arg1 : !fifo.output_port<i32>) : index
+          %2 = arith.index_cast %1 : index to i32
+          %3 = arith.cmpi sge, %2, %c1_i32 : i32
+          cal.predicate_result %3 : i1
+        }
+        cal.predicate {
+          %1 = fifo.space(%arg2 : !fifo.input_port<i32>) : index
+          %2 = arith.index_cast %1 : index to i32
+          %3 = arith.cmpi sge, %2, %c1_i32 : i32
+          cal.predicate_result %3 : i1
+        }
+        %0 = fifo.pop(%arg1 : !fifo.output_port<i32>) : i32
+        fifo.push(%arg2 : !fifo.input_port<i32>, %0 : i32)
+      }
+
+    Sometimes, actions are written without guards on the ports but it is
+    nice to have them when generating an executable actor. This pass takes
+    care of that by inserting the necessary guards on the different ports
+    in the action body. This lets the actions be executed safely even if they
+    were not written with the guards explicitly stated.
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
+  }];
+  let constructor = "mlir::cal::insertCalPortPredicates()";
+  let dependentDialects = [
+    "cal::CalDialect",
+    "fifo::FifoDialect",
+    "arith::ArithDialect"
+  ];
 }
 
 #endif // CAL_PASS

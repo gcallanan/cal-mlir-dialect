@@ -17,6 +17,7 @@ namespace mlir {
 namespace cal {
 
 std::unique_ptr<mlir::Pass> hoistCalStateOutOfActor();
+std::unique_ptr<mlir::Pass> insertCalPortPredicates();
 
 #define GEN_PASS_DECL
 #include "Dialect/Cal/CalPasses.h.inc"
