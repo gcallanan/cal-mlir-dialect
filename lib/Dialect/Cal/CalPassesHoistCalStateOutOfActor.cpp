@@ -160,7 +160,7 @@ struct AddStateAboveCreateInstance
     cal::ActorOp actorOp =
         symbolTable.lookupNearestSymbolFrom<cal::ActorOp>(instanceOp, actorRef);
     if (!actorOp)
-      failure();
+      return failure();
 
     mlir::Region &actorBody = actorOp.getBody();
 

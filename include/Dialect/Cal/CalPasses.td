@@ -107,4 +107,70 @@ def InsertCalPortPredicates: Pass<"insert-cal-port-predicates"> {
   ];
 }
 
+def ConvertCalActionsToExecutionBodies: Pass<"convert-cal-actions-to-execution-bodies"> {
+  let summary = "Lower cal.action operations to a unified cal.execution_body operation inside each cal.actor";
+  let description = [{
+    This pass transforms `cal.actor` operations by lowering all contained
+    cal.action operations into a single cal.execution_bod`. The resulting
+    structure uses explicit control flow to sequence and guard each action's
+    execution, making it easier to lower actors into imperative backends.
+
+    For each `cal.action`, the pass:
+      - Extracts its `cal.predicate` operations and evaluates them in the
+        `cal.execution_body` block.
+      - Combines all predicate results using equality checks.
+      - Associates the result with the action as its firing condition.
+
+    Actions are sorted by their optional `priority` attribute (defaulting to 0),
+    and are then wrapped in nested `scf.if` regions that preserve this priority:
+    higher-priority actions are evaluated first, and only the first enabled
+    action executes during a given invocation of the actor.
+
+    After all actions are transformed:
+      - A single `cal.action_done` op is added to indicate whether any action
+        was executed.
+      - The original `cal.action` operations are erased.
+
+    Example Input:
+      cal.actor @sink() {
+        cal.action {
+          cal.predicate {
+            %1 = fifo.size(%arg0) : index
+            %2 = arith.index_cast %1 : i32
+            %3 = arith.cmpi sge, %2, %c1_i32 : i32
+            cal.predicate_result %3 : i1
+          }
+          %0 = fifo.pop(%arg0)
+          fifo.print("token = %d", %0)
+        }
+      }
+
+    Example Output:
+      cal.actor @sink() {
+        cal.execution_body {
+          %0 = fifo.size(%arg0) : index
+          %1 = arith.index_cast %0 : i32
+          %2 = arith.cmpi sge, %1, %c1_i32 : i32
+          %3 = scf.if %2 -> (i1) {
+            %4 = fifo.pop(%arg0)
+            fifo.print("token = %d", %4)
+            scf.yield %true : i1
+          } else {
+            scf.yield %false : i1
+          }
+          cal.action_done %3 : i1
+        }
+      }
+
+    Description originally written by Gareth Callanan and refined using ChatGPT.
+  }];
+  let constructor = "mlir::cal::convertCalActionsToExecutionBodies()";
+  let dependentDialects = [
+    "cal::CalDialect",
+    "fifo::FifoDialect",
+    "arith::ArithDialect",
+    "scf::SCFDialect"
+  ];
+}
+
 #endif // CAL_PASS

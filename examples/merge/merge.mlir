@@ -19,6 +19,14 @@
 //        +------+           
 //        | sink |           
 //        +------+  
+//
+// You can run this code with:
+// cal-opt --lower-cal-to-llvm merge.mlir | cal-translate --mlir-to-llvmir | lli
+//
+// Where:
+//  cal-opt --lower-cal-to-llvm merge.mlir - This command lowers the CAL dialect to the LLVM IR dialect.
+//  cal-translate --mlir-to-llvmir - This command translates the MLIR to LLVM IR.
+//  lli - This command executes the LLVM IR code using the LLVM interpreter.
 
 cal.actor @src(%max_tokens_to_send: i32, %actor_index: i32)
     ports_out(%out0: !fifo.input_port<i32>)
@@ -68,38 +76,36 @@ cal.actor @merge()
 {
     cal.action {
         %token = fifo.pop(%in0: !fifo.output_port<i32>) : i32
-        %token1 = fifo.pop(%in0: !fifo.output_port<i32>) : i32
-        %token2 = fifo.pop(%in0: !fifo.output_port<i32>) : i32
         fifo.push(%out0: !fifo.input_port<i32>, %token: i32)
     }
 
-    cal.action {
+    cal.action{
         %token = fifo.pop(%in1: !fifo.output_port<i32>) : i32
         fifo.push(%out0: !fifo.input_port<i32>, %token: i32)
     }
 }
 
 
-// cal.network {
-//     %0 = arith.constant 10 : i32
-//     %1 = arith.constant 10 : i32
-//     %one = arith.constant 1 : i32
-//     %two = arith.constant 2 : i32
+cal.network {
+    %0 = arith.constant 10 : i32
+    %1 = arith.constant 10 : i32
+    %one = arith.constant 1 : i32
+    %two = arith.constant 2 : i32
 
-//     %in0, %out0 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
-//     %in1, %out1 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
-//     %in2, %out2 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+    %in0, %out0 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+    %in1, %out1 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
+    %in2, %out2 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
 
-//     cal.create_instance @src "srcA" (%0, %one : i32, i32)
-//             ports_out(%in0 : !fifo.input_port<i32>)
+    cal.create_instance @src "srcA" (%0, %one : i32, i32)
+            ports_out(%in0 : !fifo.input_port<i32>)
 
-//     cal.create_instance @src "srcB" (%1, %two: i32, i32)
-//             ports_out(%in1 : !fifo.input_port<i32>)
+    cal.create_instance @src "srcB" (%1, %two: i32, i32)
+            ports_out(%in1 : !fifo.input_port<i32>)
 
-//     cal.create_instance @merge "merge" ()
-//             ports_in(%out0, %out1: !fifo.output_port<i32>, !fifo.output_port<i32>)
-//             ports_out(%in2: !fifo.input_port<i32>)
+    cal.create_instance @merge "merge" ()
+            ports_in(%out0, %out1: !fifo.output_port<i32>, !fifo.output_port<i32>)
+            ports_out(%in2: !fifo.input_port<i32>)
 
-//     cal.create_instance @sink "sink" ()
-//             ports_in(%out2 : !fifo.output_port<i32>)
-// }
+    cal.create_instance @sink "sink" ()
+            ports_in(%out2 : !fifo.output_port<i32>)
+}

@@ -350,9 +350,9 @@ def CAL_PredicateResultOp : Cal_Op<"predicate_result", [Terminator, HasParent<"P
       cal.predicate_result %cond : i1
   }];
 
-  let arguments = (ins I1:$has_executed);
+  let arguments = (ins I1:$evaluation_result);
 
-  let assemblyFormat = "attr-dict $has_executed `:` type($has_executed)";
+  let assemblyFormat = "attr-dict $evaluation_result `:` type($evaluation_result)";
 }
 
 def CAL_CreateStateVarOp : Cal_Op<"create_state_var", [MemoryEffects<[MemAlloc]>, MemoryEffects<[MemWrite]>]> {

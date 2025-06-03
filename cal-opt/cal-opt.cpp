@@ -75,8 +75,9 @@ void registerLowerCalToLLVMPipeline() {
       "lower-cal-to-llvm",
       "Pipline lowering FIFO and CAL dialects to LLVM dialect.",
       [](mlir::OpPassManager &pm) {
-        // 1. FIFO/CAL-specific lowering:
-        //    - Lower FIFO operations to MemRef operations before decomposing FIFO tuples.
+        // 1. FIFO/CAL-specific lowering
+        pm.addPass(mlir::cal::insertCalPortPredicates());
+        pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
         pm.addPass(mlir::lowerCalStateToMemref());
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
