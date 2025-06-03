@@ -176,7 +176,7 @@ cal.actor @src(%arg0: i32, %arg1: i32)
     // CHECK-NEXT:        }
     // CHECK-NEXT:        scf.yield %15 : i1
     // CHECK-NEXT:      }
-    // CHECK-NEXT:      cal.actio1n_done %14 : i1
+    // CHECK-NEXT:      cal.action_done %14 : i1
     // CHECK-NEXT:    }
     // CHECK-NEXT:  }
 
