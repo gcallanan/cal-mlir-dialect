@@ -161,7 +161,7 @@ def Cal_CreateInstanceOp : Cal_Op<"create_instance", [DeclareOpInterfaceMethods<
 }
 
 // TODO Explain, make sure action_done is a cumpulsory terminator
-def Cal_ExecutionBody : Cal_Op<"execution_body", [HasParent<"ActorOp">]> {
+def Cal_ExecutionBody : Cal_Op<"execution_body", [HasParent<"ActorOp">, AutomaticAllocationScope]> {
   let summary = "Execution body of a CAL actor";
   let description = [{
     Represents the combined execution region of a CAL actor.
@@ -245,7 +245,7 @@ def CAL_ActionDoneOp : Cal_Op<"action_done", [Terminator, HasParent<"ExecutionBo
 }
 
 // TODO Explain purpose of has parent and NoTerminator
-def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">, NoTerminator]> {
+def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">, NoTerminator, AutomaticAllocationScope]> {
   let summary = "Defines a single atomic unit of behavior within a CAL actor";
   let description = [{
     The `cal.action` operation defines a single atomic behavioral unit within a
