@@ -141,9 +141,8 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
       Value combinedResult = trueVal;
       for (auto predResult : predicateResults) {
         combinedResult = rewriter
-                             .create<mlir::arith::CmpIOp>(
-                                 actor.getLoc(), mlir::arith::CmpIPredicate::eq,
-                                 predResult, combinedResult)
+                             .create<mlir::arith::AndIOp>(
+                                 actor.getLoc(), predResult, combinedResult)
                              .getResult();
       }
       actionFiringConditions[actionOp] = combinedResult;
@@ -167,7 +166,6 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
     Value result = constructNestedSCFIfStatements(
         0, actionOps, actionFiringConditions, rewriter, execBlock,
         execBodyOp.getLoc());
-
 
     // 5. After all actions have been processed, we need to yield the result of
     // the last action's firing condition. This will be used to determine if
@@ -265,9 +263,10 @@ public:
 
 } // namespace mlir::cal
 
-// Creates and returns a new instance of the ConvertCalActionsToExecutionBodiesPass.
-// This pass is responsible for converting `cal.action` operations into a
-// single `cal.execution_body` region within a `cal.actor`,
+// Creates and returns a new instance of the
+// ConvertCalActionsToExecutionBodiesPass. This pass is responsible for
+// converting `cal.action` operations into a single `cal.execution_body` region
+// within a `cal.actor`,
 std::unique_ptr<mlir::Pass> mlir::cal::convertCalActionsToExecutionBodies() {
   return std::make_unique<mlir::cal::ConvertCalActionsToExecutionBodiesPass>();
 }
