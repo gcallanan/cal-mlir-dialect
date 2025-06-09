@@ -1,0 +1,35 @@
+namespace simple:
+  actor Source(int payload_size) ==> int Out:
+    int counter := 0;
+    transmit: action ==> Out:[t]
+    guard counter < payload_size
+    var t = counter
+    do
+      println("Tx: " + t);
+      counter := counter + 1;
+    end
+  end
+
+  actor Sink() int In ==>:
+    action In:[t] ==>
+    do
+        println("Rx: " + t);
+    end
+  end
+
+  actor Pass() int In ==> int Out:
+    action In:[t] ==> Out:[t]
+    end
+  end
+
+  network PassThrough() ==> :
+  entities
+    source = Source(payload_size = 20);
+    pass  = Pass();
+    sink = Sink();
+  structure
+    source.Out --> pass.In { bufferSize = 1; };
+    pass.Out --> sink.In { bufferSize = 1; } ;
+  end
+
+end

@@ -1,0 +1,1 @@
+cal-opt --lower-cal-to-llvm myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir | lli

@@ -27,6 +27,8 @@
 //  cal-opt --lower-cal-to-llvm merge.mlir - This command lowers the CAL dialect to the LLVM IR dialect.
 //  cal-translate --mlir-to-llvmir - This command translates the MLIR to LLVM IR.
 //  lli - This command executes the LLVM IR code using the LLVM interpreter.
+//
+// Alternativly "bash run.sh" from the terminal will execute these commands for you
 
 cal.actor @src(%max_tokens_to_send: i32, %actor_index: i32)
     ports_out(%out0: !fifo.input_port<i32>)
