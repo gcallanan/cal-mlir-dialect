@@ -1,0 +1,810 @@
+namespace qrd:
+    /**
+     * A parametric systolic array implementation of QR decomposition using the Givens Rotations
+     * method. A KxK matrix A is decomposed into Q and R where R is an upper right triangular
+     * matrix and Q is a unitary matrix.
+     *
+     * The standard Givens Rotations implementation requires many sqrt operations which are very
+     * expensive. This implementation makes use of the CORDIC method to eliminate the sqrt operation
+     *
+     * This implementation makes used of fixed point numbers and fixed point arithmatic instead
+     * of floating point numbers to make this this implementation easier for hardware synthesis tools.
+     *
+     * @author Gareth Callanan
+     *
+     * @section 1: General Outline
+     *
+     * The standard givens rotations implementation is described in:
+     * Gentleman, W. Morven, and H. T. Kung. "Matrix triangularization by systolic arrays."
+     * Real-time signal processing IV. Vol. 298. SPIE, 1982. (https://doi.org/10.1117/12.932507).
+     * This implementation is described as triangluar systolic array of connected processing elements
+     * boundary PEs (B) and internal PEs (I). The structure of this closely follows
+     *
+     * The array looks as follows for a 4x4 array example. > and v indicate direction of data flow:
+     *         v   v   v   v
+     *         B > I > I > I
+     *             v   v   v
+     *             B > I > I
+     *                 v   v
+     *                 B > I
+     *                     v
+     *                     B
+     *
+     * The input matrix array (A) is fed into the top of the systolic array. With each column
+     * being sent to a different column in the array:
+     *
+     *        |a_31 a_32 a_33|
+     *        |a_21 a_22 a_23|
+     *        |a_11 a_12 a_13|
+     *           v    v    v
+     *           B >  I  > I
+     *                v    v
+     *                B  > I
+     *                     v
+     *                     B
+     *
+     * Each B and I PE calculates the value of a single element in R
+     * corresponding to their position in the array. So element B_ij calclates R-ij. Calculating
+     * this value requires all of A to be fed into the array and processed. So each PE will need
+     * execute K actions to calculate its element of R. Each row has a joiner actor that collects
+     * all the elements in the row R and reasembles the matrix. We do not process the rows further,
+     * we just print them out as this is a proof of concept.
+     *
+     * The above paper describes how to get the R matrix but not the Q matrix. How to do this is
+     * vaguely covered in other papers. Basically to generate Q, extend the triangluar array
+     * with a KxK square array of the I processing elements and feed the identity matrix into it.
+     * These are the same I elements used everywhere. The array looks as follows:
+     *        |a_31 a_32 a_33| |0   0   1|
+     *        |a_21 a_22 a_23| |0   1   0|
+     *        |a_11 a_12 a_13| |1   0   0|
+     *           v    v    v    v   v   v
+     *           B >  I  > I  > I > I > I
+     *                v    v    v   v   v
+     *                B  > I  > I > I > I
+     *                     v    v   v   v
+     *                     B  > I > I > I
+     *
+     * Each I PE in the square portion of the array calculates one element in the Q matrix. However
+     * it is transposed. So element I_ij calculates Q_ji. We use also use joiners to collect the Q
+     * array but we collect them per column to undo the transpose.
+     *
+     * @section 2: CORDIC Rotation Method
+     *
+     * The boundary actors require a sqrt algorithm implementation. This is very difficult in
+     * hardware. Instead we will apply the CORDIC algorithm to compute the sqrt function. CORDIC is
+     * an iterative method primarily for calculating trigonometric functions using only additions,
+     * multiplications and bitshifts. It has also been extended to calculate square roots in certain
+     * instances.
+     *
+     * I examined this article when implementing CORDIC:
+     * "Fixed-Point CORDIC-Based QR Decomposition by Givens Rotations on FPGA," 2011 International
+     * Conference on Reconfigurable Computing and FPGAs, Cancun, Mexico, 2011, pp. 327-332,
+     * doi: https://doi.org/10.1109/ReConFig.2011.38“
+     * This article also extends the CORDIC algorithm to the inner actors to remove all division
+     * operations. I only use CORDIC for the boundary actor which retains one division.
+     *
+     * An additional article that I though explained things well can be found here:
+     * "Zhang, Jianfeng, Paul Chow, and Hengzhu Liu. "Cordic-based enhanced systolic array
+     * architecture for qr decomposition." ACM Transactions on Reconfigurable Technology and
+     * Systems (TRETS) 9.2 (2015): 1-22. Doi: https://doi.org/10.1145/2827700"
+     * I did not implement their method, I rather just read their background.
+     *
+     * @section 3: Fixed point representation
+     *
+     * This implementation represents numbers in fixed point format as this is often better suited
+     * to hardware synthesis. Fixed point numbers are represented in Qm.n format where m represents
+     * the number of integer bits (+ sign bit) and n represents the number of fractional bits.
+     * Fixed point representation requires a special implementation of multiplication and division.
+     * This file defines the functions fixedPointMultiply(...) and fixedPointDivide(...) precisely
+     * to do this. Additionally, a printFixedPoint(...) procedure is created that prints out
+     * the value of the floating point number.
+     *
+     * The fixed point numbers are just stored in regular integers of size m+n bits. We
+     * define constants as regular integers but expect that they will be interpreted as floating
+     * point numbers. For example, we can set a variable to 4, but in Q3.19 form, it is interpreted
+     * as 0.0000076.
+     *
+     * All fixed point functions and constants are defined in the "Fixed Point Constants and
+     * Functions" section below.
+     *
+     * @section 4: Extended QR Decomposition on Rectangular Matrices
+     * 
+     * In all the above papers, we have assumed a KxK matrix - this is also what has been dealt
+     * with in previous papers. We can modify the architecture slightly to handle MxN matrices.
+     * For an MxN matrix, the square portion goes from KxK to N rows and M columns in length.
+     * The output of each of these inner cells in the rectangualr portion is on element in the MxN
+     * extended Q array. The R element is still NxN elements long.
+     *
+     *        |a_51 a_52 a_53| |0   0   0   0   1|
+     *        |a_41 a_42 a_43| |0   0   0   1   0|
+     *        |a_31 a_32 a_33| |0   0   1   0   0|
+     *        |a_21 a_22 a_23| |0   1   0   0   0|
+     *        |a_11 a_12 a_13| |1   0   0   0   0|
+     *           v    v    v    v   v   v   v   v
+     *           B >  I  > I  > I > I > I > I > I
+     *                v    v    v   v   v   v   v
+     *                B  > I  > I > I > I > I > I
+     *                     v    v   v   v   v   v
+     *                     B  > I > I > I > I > I
+     */
+
+    // If the source actor generates matrices using randInt, then this line needs to be uncommented.
+    // Please see the comments in the Source actor before uncommenting this line
+    // import var System.math.randInt;
+
+    // ==== Modifyable Constants: Start ===
+
+    // The number of matrices that the Source actor will generate.
+    uint num_matrices=3;
+
+    // The size of the input matrix (MxN matrix)
+    uint M = 4;
+    uint N = 4;
+
+    // The maximum number of tokens that can be stored in the FIFOS between actors.
+    uint buffer_size= 1;
+
+    // The number of iterations of the CORDIC algorithm. More gives greater prescision
+    // but decreases latency and throughput.
+    uint num_CORDIC_iterations = 16;
+
+    // ==== Modifyable Constants: End ===
+
+    // The Source actor needs to feed actors in an entire row from left to right. It takes 
+    // K firings from the first firing on the left before the last actor on the right fires.
+    // So to prevent the Source actor stalling while this value propogates, we set the 
+    // buffers from the source actor to be > K (number of actor in the row). 
+    uint source_buffer_size = buffer_size + N;
+
+    // ==== Fixed Point Constants: Start ===
+
+    // Fixed point number represented by Qm.n where m is the number of integer bits + sign bit
+    // and n is the fractional component.
+    uint m = 3;
+    uint n = 19;
+
+    // Fixed Point Constants - These are useful constants that we need to define
+    // here to get the correct value when interpreting them as fixed points.
+    int(size = m+n) fixed_point_one = 524288;
+    int(size = m+n) fixed_point_minus_one = -524288;
+    int(size = m+n) nearZeroBoundaryP = 26; // 0.0000495911 in Q3.19 representation
+    int(size = m+n) nearZeroBoundaryN = -26; // -0.0000495911 in Q3.19 representation
+    int(size = m+n) fp_increment = 57671; // 0.1099987030 in Q3.19 format
+
+    // The constant value that we need to multiply the results of the CORDIC algorithm by
+    // k = 0.607252956441381. The fixed point equivalent of this is:
+    int(size = m+n) k_CORDIC_constant = 318375; // 0.6072521210 in Q3.19 format
+
+    // ==== Fixed Point Constants: End ===
+    // ==== Fixed Point Functions: Start ===
+
+    /**
+     * Multiply two fixed point numbers of format Qm.n.
+     *
+     * If both operands are of format Qm.n. Then the result is Q(2m).(2n). To get this
+     * back to Qm.n, shift the result to the right by n bits (result >> n) and then truncate
+     * the MSB m bits. Truncation of the MSB bits happens automatically in CAL if you
+     * define your types correctly.
+     *
+     * @input a - The first operand.
+     * @input b - The second operand.
+     * @return - The result of a*b
+     */
+    function fixedPointMultiply(int(size = m+n) a, int(size = m+n) b) --> int(size = m+n)
+        // If we just multiply a*b, then the result is treated as int(size = m+n) and automatic
+        // truncation occurs before we bit shift throwing away necessary information. By defining
+        // this variable and assigning a to it, the result of the multiplication of this with b
+        // is of type int(size = 2*m+2*n), meaning that no information is thrown away before the
+        // bitshift.
+        var int(size = 2*m+2*n) temp = a:
+        temp*b >> n
+    end
+
+    /**
+     * Divide one fixed point numbers of format Qm.n by another of the same format.
+     *
+     * The results of division get bitshifted to the right by n. To compensate for this
+     * we first shift the dividend to the left. (a << n) and then we divide (a >> n)/b. This
+     * keeps the decimal point in the correct place.
+     *
+     * @input a - The dividend.
+     * @input b - The divisor.
+     * @return - The quotient (result of a/b)
+     */
+    function fixedPointDivide(int(size = m+n) a, int(size = m+n) b) --> int(size = m+n)
+        // If we just bitshift a<<n, then the result is treated as int(size = m+n) and automatic
+        // truncation occurs before we divide throwing away necessary information. By defining
+        // this variable and assigning a to it, the result of the bitshift by n
+        // is of type int(size = 2*m+2*n), meaning that no information is thrown away before the
+        // division.
+        var int(size = 2*m+2*n) temp = a:
+        (temp << n)/b
+    end
+
+    /**
+     * Procedure that prints out a Qm.n floating point number.
+     *
+     * The number is converted to a float and multiplied by the scaling
+     * factor 2^(-n).
+     *
+     * @input fixedPointNumber - The fixed point number with m integer bits and
+     *                           n fractional bits to print.
+     */
+    procedure printFixedPoint(int(size = m+n) fixedPointNumber)
+    var
+        float output,
+        float shift := 1
+    begin
+        foreach uint i in 0..n-1 do
+            shift := shift / 2;
+        end
+        output := fixedPointNumber * shift;
+        print("" + output);
+    end
+
+    // ==== Fixed Point Functions: End ===
+
+    /**
+     * Inner Cell PE of the systolic array (often just refered to as the I PE).
+     *
+     * The Inner cell contains a state variable R, after M firings (A is a MxN matrix), the variable
+     * R is equal to the value of a single element in the Q or R matrix (more detail in the top
+     * comment).
+     *
+     * The I PE can be visualized as follows:
+     *                                                     State Variable: r = 0 (initial value)
+     *                   x_in
+     *                    v                                Equations applied each firing:
+     *           s_in > | I | > s_out                          x_out = - s_in * r + c_in * x_in
+     *           c_in > | PE| > c_out                          r = c_in * r + s_in * x_in
+     *                    v  \                                 r_out = r;
+     *                  x_out \                                c_out = c_in;
+     *                         v                               s_out = s_in;
+     *                       r_out
+     *
+     *
+     * @parameter  M - the number of rows in matrix A.
+     * @parameter  N - the number of columns in matrix A.
+     * @inputport  x_in - Input port connected to above element in systolic array.
+     * @inputport  c_in - Input port for c value from element to the left in systolic array.
+     * @inputport  s_in - Input port for s value from element to the left in systolic array.
+     * @outputport x_out - Output port connected to below element in systolic array.
+     * @outputport c_out - Output port to send c value to the element to the right in systolic array.
+     * @outputport s_out - Output port to send s value to the element to the right in systolic array.
+     * @outputport r_out - Output port to send the state variable r out. Is sent to joiner
+     *                     actors that are not part of the systolic array.
+     */
+    actor InnerCell(uint M, uint N) int(size = 32) x_in, uint(size = num_CORDIC_iterations) cordic_angles_in ==> int(size = 32) x_out, int(size = 32) r_out, uint(size = num_CORDIC_iterations) cordic_angles_out:
+        int(size = m+n) r := 0;
+        uint count := 0;
+        
+        action x_in:[x_in], cordic_angles_in:[rotation_angles]  ==> x_out:[x_out], cordic_angles_out:[rotation_angles]
+        guard
+            count < M
+        var 
+            int(size = m+n) x_out,
+            int(size = m+n) x_j,
+            int(size = m+n) x_j_plus_1,
+            int(size = m+n) x_j_shifted,
+            int(size = m+n) y_j,
+            int(size = m+n) y_j_plus_1,
+            int(size = m+n) y_j_shifted
+        do
+            // Reset R after K firings
+            if count = 0 then
+                r := 0;
+            end
+
+            x_j := x_in;
+            y_j := r;
+            foreach uint(size=8) j in 0..num_CORDIC_iterations-1 do
+                //x_j >> j is same as 2^(-j) * x
+                y_j_shifted := (y_j >> j);
+                x_j_shifted := (x_j >> j);
+
+                if (rotation_angles >> j & 1) = 1 then
+                    // phi_j = -1
+                    x_j_plus_1 := x_j + y_j_shifted;
+                    y_j_plus_1 := y_j - x_j_shifted;
+                else
+                    // phi_j = 1
+                    x_j_plus_1 := x_j - y_j_shifted;
+                    y_j_plus_1 := y_j + x_j_shifted;
+                end
+                x_j := x_j_plus_1;
+                y_j := y_j_plus_1;
+            end
+
+            x_out := fixedPointMultiply(k_CORDIC_constant, y_j);
+            r := fixedPointMultiply(k_CORDIC_constant, x_j);
+
+            // 4. Track the number of processed samples
+            count := count + 1;
+        end
+
+        action ==> r_out:[r]
+        guard
+            count = M
+        do
+            count := 0;
+        end
+    end
+
+    /**
+     * Boundary Cell PE of the systolic array (often just refered to as the B PE).
+     *
+     * The Boundary cell contains a state variable R, after K firings (A is a MxN matrix), the variable
+     * R is equal to the value of a single element in the R matrix (more detail in the top
+     * comment).
+     *
+     * The I PE can be visualized as follows:
+     *                                              State Variable: r = 0 (initial value)
+     *            x_in
+     *             v                                Standard equations applied each firing:
+     *           | I | > s_out                          c_out = r/sqrt(r^2 + x_in^2)
+     *           | PE| > c_out                          s_out = x_in/sqrt(r^2 + x_in^2)
+     *              \                                   r = sqrt(r^2 + x_in^2)
+     *               v                                  r_out = r;
+     *              r_out
+     *
+     * The above equations make use of the sqrt function which can be expensive.
+     * A better method to calculate sqrt(r^2 + x_in^2) without expensive divisions
+     * is the CORDIC algorithm (sources in top comment). The algorithm
+     * is iterative and applies the following steps per each iterations:
+     *  x[j+1] = x[j] - phi[j]*2^(-j)*y[j];
+     *  y[j+1] = y[j] - phi[j]*2^(-j)*x[j];
+     * Where:
+     *  - 2^(-j) is just a power of 2 value that can be obtained by bit shifting to the right in
+     *    fixed point representation. (2^-j = 1 >> j)
+     *  - phi[j] is -1 if x[j]y[j]  1 or else it is 1
+     *  - y[0]=r
+     *  - x[0]=x_in
+     * This algorithm iterates "num_CORDIC_iterations" times. The number of iterations trades
+     * off throughput and latency for accuracy. After "num_CORDIC_iterations". The value of
+     * y[end] ~= 0 and x[end]~=K*sqrt(r^2 + x_in^2) where K = 1.6467602. By defining k = 1/K.
+     * We can determine sqrt = k * x[end].
+     *
+     *
+     * @parameter  M - the number of rows in matrix A.
+     * @parameter  N - the number of columns in matrix A.
+     * @inputport  x_in - Input port connected to above element in systolic array.
+     * @outputport c_out - Output port to send c value to the element to the right in systolic array.
+     * @outputport s_out - Output port to send s value to the element to the right in systolic array.
+     * @outputport r_out - Output port to send the state variable r out. Is sent to joiner
+     *                     actors that are not part of the systolic array.
+     */
+    actor BoundaryCell(uint M, uint N) int(size = 32) x_in ==> int(size = 32) r_out, uint(size = num_CORDIC_iterations) cordic_angles_out:
+        int(size = m+n) r := 0;
+        uint count := 0;
+        
+        action x_in:[x_in]  ==> cordic_angles_out:[rotation_angles]
+        guard
+            count < M
+        var
+            int(size = m+n) x_j,
+            int(size = m+n) x_j_plus_1,
+            int(size = m+n) x_j_shifted,
+            int(size = m+n) y_j,
+            int(size = m+n) y_j_plus_1,
+            int(size = m+n) y_j_shifted,
+            uint(size = num_CORDIC_iterations) rotation_angles := 0
+        do
+            // 1. Reset R after K firings
+            if count = 0 then
+                r := 0;
+            end
+
+            // 2. Apply CORDIC algorithm to determine sqrt values
+            x_j := x_in;
+            y_j := r;
+
+            foreach uint(size=8) j in 0..num_CORDIC_iterations-1 do
+                //x_j >> j is same as 2^(-j) * x
+                y_j_shifted := (y_j >> j);
+                x_j_shifted := (x_j >> j);
+                // To determine phi_j, find sign of x_j * y_j. To avoid
+                // more expensive multiplication, we just check the sign
+                // of both variables
+                if(x_j > 0 and y_j > 0 or x_j < 0 and y_j < 0) then
+                    // phi_j = -1; Adjusted equations to account for this
+                    x_j_plus_1 := x_j + y_j_shifted;
+                    y_j_plus_1 := y_j - x_j_shifted;
+                    rotation_angles := rotation_angles | (1 << j);
+                else
+                    // phi_j = +1; Adjusted equations to account for this
+                    x_j_plus_1 := x_j - y_j_shifted;
+                    y_j_plus_1 := y_j + x_j_shifted;
+                end
+                x_j := x_j_plus_1;
+                y_j := y_j_plus_1;
+            end
+
+            // Todo comment here
+            r := fixedPointMultiply(x_j, k_CORDIC_constant);
+
+            // 4. Track the number of processed samples
+            count := count + 1;
+        end
+
+        action ==> r_out:[r]
+        guard
+            count = M
+        do
+            count := 0;
+        end
+    end
+
+    /**
+     * Actor that generates sample source matrix A of size M*N.
+     *
+     * The values in the array multiples of 0.11 incrementing along a row. This was a
+     * very arbitrary choice. The values are also always < 1, so if the multiple goes
+     * above 1, only the fraction is kept. Each *column* is output on a different port
+     * as this is how the systolic array expects to see it. For example in a 3x3 array:
+     *
+     * Generated A:
+     *        0.11 0.22 0.33
+     *        0.44 0.55 0.66
+     *        0.77 0.88 0.99
+     * (the next element would have been 0.1 (0.99+0.11-1) in a larger matrix)
+     *          
+     * Port output:
+     *     Out[0]: 0.11 0.44 0.77
+     *     Out[1]: 0.22 0.55 0.88
+     *     Out[2]: 0.33 0.66 0.99
+     *
+     * This matrix is produced "num_matrices" times
+     *
+     * @parameter  M - the number of rows in matrix A.
+     * @parameter  N - the number of columns in matrix A.
+     * @outputport Out[K] - An array of ports that matrix BA is output on.
+     *                      Each column of the matrix is output on a different
+     *                      port in the port array.
+     */
+    actor Source(uint M, uint N) ==> int(size = m+n) Out[N]:
+        int row_index := 0;
+        int matrix_number := 0;
+
+        int(size = m+n) next := fp_increment;
+
+        transmit: action ==> Out[0..N-1]:[output]
+        guard matrix_number < num_matrices
+        var 
+            List(type:int(size = m+n), size = N) output
+        do
+            print("A"+matrix_number+": row " + row_index + ": ");
+            foreach uint(size=8) index in 0..N-1 do
+
+                // ======= Generated Source Value: Start =======
+
+                // Randint is used for generating varied source matrices. This function is not
+                // implemented for all CAL backends, so it is commented out. You can uncomment
+                // it if your backend supports the randInt function. Remember to uncomment
+                // "import var System.math.randInt;" at the top of this file if you do it.
+                // Also comment out the "output[index] := next;" after this line.
+                // See comments in compile_software.sh to ensure the randInt function
+                // is imported during compilation. This is a very manual process, so consider it
+                // experimental
+                // output[index] := randInt(fixed_point_one*2 - 400) - (fixed_point_one - 200);
+                output[index] := next;
+
+                // ======= Generated Source Value: Start =======
+
+                // ======= Print Generated Source Values: Start =======
+
+                // Uncomment these two lines if you want to print the value
+                // interpreted as a real value instead of as an integer
+                // printFixedPoint(output[index]);
+                // print(" ");
+                // And comment this line out
+                print("" + output[index] + " ");
+                next := next + fp_increment;
+
+                // ======= Print Generated Source Values: End =======
+
+                if (next >= fixed_point_one) then
+                    next := next - fixed_point_one - fixed_point_one;
+                end
+            end
+            row_index := row_index + 1;
+            println("");
+            
+            if(row_index = M) then
+                row_index := 0;
+                next := fp_increment;
+                matrix_number := matrix_number + 1;
+            end
+        end
+    end
+
+    /**
+     * Actor that generates a column of the I matrix required as input to the rectangular portion
+     * of the systolic array.
+     *
+     * The pattern of each column is regular and independant of the other columns in the I matrix
+     * as such we can split the generation of the I matrix into multiple actors. I suspect that this
+     * will be better for compilation to hardware as it allows the placer and router more flexibility
+     * in where it can put the different components of the I matrix generator.
+     *
+     * The I matrix generation follows along the diagram below:
+     *
+     *      Actor:         IG1 | IG2 | IG3
+     *                      v     v     v
+     *      Tokens: Time 2: 0  |  0  |  I
+     *              Time 1: 0  |  I  |  0
+     *              Time 0: I  |  0  |  0
+     *
+     * @parameter  K - the number of rows and columns in the I matrix (i is a KxK matrix).
+     * @parameter  col_index - The column in the I matrix that this IGenerator generates
+     * @outputport Out - The port that outputs the generated column vector of the I matrix.
+     */
+    actor IGenerator(uint col_index, uint K) ==> int(size = 32) Out:
+        uint row_index := 0;
+        uint total_rows := 0;
+        uint total_actions = K*num_matrices;
+
+        action ==> Out:[outVal]
+        guard
+            total_rows < total_actions // Guard that limits the number of I matrices generated.
+        var
+            int(size = m+n) outVal := 0
+        do
+            if(row_index = col_index) then
+                outVal := fixed_point_one;
+            end
+
+            row_index := (row_index + 1) mod K;
+            total_rows := total_rows + 1;
+        end
+
+    end
+
+    /**
+     * A joiner actor that collects the output from the systolic array to produce a
+     * single row in the R matrix.
+     *
+     * This joiner just prints out the row as this is a demonstrative example. This can be modified
+     * to transmit the matrix further in future applications. There needs to exist one of these
+     * per row to collect the entire R matrix
+     *
+     * If we have the systolic array:
+     *     B I I I
+     *       B I I
+     *         B I
+     *           B
+     * The diagram below shows how a single row (row two in this case) has its output sent
+     * to the joiner:
+     *         B         I         I                    JoinerRowR
+     *         v         v         v                     actor
+     * r_out(1)| r_out(2)| r_out(3)\------->| print(    |
+     *         |         \----------------->|   r_out(1)|
+     *         \--------------------------->|   r_out(2)|
+     *                                      |   r_out(3)|
+     *                                      | )         |
+     *
+     * The number of ports in the joiner changes depending on the row, as each row generating R
+     * has a different number of values.
+     *
+     * @parameter  K - the number columns in the R matrix.
+     * @parameter  row_index - The index of the row that this joiner collects.
+     * @parameter  ports_in_row - The number of ports in the row that this joiner needs to
+     *                            collect data from (can also be calculated from K and row_index
+     *                            parameters, I was just lazy).
+     * @inputports r_in[ports_in_row] - Array of ports to collect r value from the PEs. One
+     *                                  port is required per PE in the row.
+     */
+    actor JoinerRowR(uint K, uint row_index, uint ports_in_row) int(size = 32) r_in[ports_in_row] ==> int(size = 32) r_out:
+        uint matrix_number := 0;
+
+        action r_in[0..ports_in_row-1]:[input] ==> r_out:[input] repeat ports_in_row
+        do
+            print("R"+matrix_number+": row " + row_index + ": ");
+            if(row_index != 0) then
+                foreach uint(size=8) index in 0..(K-ports_in_row)-1 do
+                    print("0 ");
+                end
+            end
+            foreach uint(size=8) index in 0..ports_in_row-1 do
+                // Uncomment these two lines if you want to print the value
+                // interpreted as a real value instead of as an integer
+                // printFixedPoint(input[index]);
+                // print(" ");
+                // And comment this line out
+                print("" + input[index] + " ");
+            end
+            println("");
+            matrix_number := matrix_number + 1;
+        end
+    end
+
+    /**
+     * A joiner actor that collects the output from the systolic array to produce a
+     * single row in the Q matrix.
+     *
+     * This joiner just prints out the row as this is a demonstrative example. This can be modified
+     * to transmit the matrix further in future applications. There needs to exist one of these
+     * per row to collect the entire Q matrix
+     *
+     * This operates in a manner very similar to the JoinerRowR actor. So see that actors comments
+     * for more detail. The only difference is that the number of ports is the same for every
+     * JoinerRowQ instantiated while it is different for every JoinerRowR.
+     *
+     * @parameter  K - the number of columns in Q matrix.
+     * @parameter  row_index - The index of the row that this joiner collects.
+     * @inputports r_in[ports_in_row] - Array of ports to collect r value from the PEs. One
+     *                                  port is required per PE in the row.
+     */
+    actor JoinerRowQ(uint K, uint row_index) int(size = 32) r_in[K] ==> int(size = 32) q_out:
+        uint matrix_number := 0;
+
+        action r_in[0..K-1]:[input] ==> q_out:[input] repeat K
+        do
+            print("Q"+matrix_number+": row " + row_index + ": ");
+            foreach uint(size=8) index in 0..K-1 do
+                // Uncomment these two lines if you want to print the value
+                // interpreted as a real value instead of as an integer
+                //printFixedPoint(input[index]);
+                //print(" ");
+                // And comment this line out
+                print("" + input[index] + " ");
+            end
+            println("");
+            matrix_number := matrix_number + 1;
+        end
+    end
+
+    /**
+     * This actor is mean to be attached to unused output ports, consuming tokens from the FIFO
+     * to prevent the buffers filling up and the pipelining stalling. I do not know if these are 
+     * actually necessary in all cases but some CAL backends we test with are not so mature
+     * so maybe its best to have them here just in case.
+     *
+     * @parameter  index - Not used for anything, just a workaround for a compiler bug.
+     * @inputport  In - A port that takes consumes any tokens in the buffer immediatly.
+     */ 
+    actor Cap(uint index) int(size = 32) In ==>:
+        receive: action In:[t] ==> end
+    end
+
+
+     /**
+     * Top network connecting all the above actors into a systolic array
+     * as described in the top comment of this file.
+     *
+     * The network has a source actor "source" generating the input matrix A. It
+     * also has "iGenerator" actors generating the I matrix required to calculate
+     * the Q matrix.
+     *
+     * These A and I matrices are fed into the Inner and Boundary PE actors making up
+     * the core processing portion of the algorithm.
+     *
+     * The network also has a joiner actors to
+     * collect and output the Q and R matrices as the individual elements
+     * are scattered around the Inner and Boundary actors
+     */
+    network Top() ==> :
+    var 
+        function getInnerCellIndex(int row_index, int col_index) --> int : 
+            (N*(N-1)/2) - (N-row_index)*((N-row_index)-1)/2 + col_index - row_index - 1 end
+    entities
+        // Input Actors: Actors that generate input data
+        source = Source(M=M,N=N);
+        //iGeneratorSource=[IGenerator(col_index=index, K=K): for index in 0..K-1];
+        iGenerator=[IGenerator(col_index=index, K=M): for index in 0..M-1];
+        
+        // Processing Actors: Actors that perform the actual QR decomposition
+        boundaryCells=[BoundaryCell(M=M,N=N): for index in 0..N-1];
+        innerCells_r=[InnerCell(M=M,N=N): for index in 0..(N-1)*(N)/2-1];
+        innerCells_q=[InnerCell(M=M,N=N): for index in 0..(N)*(M)-1];
+        
+        // Output Actors: Actors that assemble the Q and R matrices produced from the boundary and
+        // inner cells for printing out.
+        joinersPerRow_r=[JoinerRowR(K=N, row_index=index, ports_in_row=(N-index)): for index in 0..N-1];
+        joinersPerRow_q=[JoinerRowQ(K=N, row_index=index): for index in 0..M-1];
+
+        // Caps for unused ports 
+        caps_cordic=[Cap(index=0): for index in 0..N-1];
+        caps_x=[Cap(index=0): for index in 0..M-1];
+
+        caps_q=[Cap(index=0): for index in 0..M-1];
+        caps_r=[Cap(index=0): for index in 0..N-1];
+    structure
+        // 1. Connect the triangular part of the array
+        foreach uint r in 0..N-1 do // Iterate along rows in triangle
+            foreach uint c in r..N-1 do // Iterate along columns in the triangle
+
+                // 1.1 Connect the source actor to the network
+                if r=0 && c=0 then
+                    source.Out[0] --> boundaryCells[0].x_in {bufferSize = source_buffer_size;};
+                    //iGeneratorSource[0].Out --> boundaryCells[0].x_in {bufferSize = source_buffer_size;};
+                end
+
+                if r=0 && c!=0 then
+                    source.Out[c] --> innerCells_r[c-1].x_in {bufferSize = source_buffer_size;};
+                    //iGeneratorSource[c].Out --> innerCells_r[c-1].x_in {bufferSize = source_buffer_size;};
+                end
+
+                // 1.2 Connect all the inner cell output ports to their respective input ports
+                if c > r then
+                    if c = N-1 then
+                        innerCells_r[getInnerCellIndex(r,c)].cordic_angles_out --> innerCells_q[r*(M)].cordic_angles_in {bufferSize = buffer_size;};
+                    else
+                        innerCells_r[getInnerCellIndex(r,c)].cordic_angles_out --> innerCells_r[getInnerCellIndex(r,c+1)].cordic_angles_in {bufferSize = buffer_size;};
+                    end
+
+                    if c = r+1 then
+                        innerCells_r[getInnerCellIndex(r,c)].x_out --> boundaryCells[r+1].x_in {bufferSize = buffer_size;};
+                    else
+                        innerCells_r[getInnerCellIndex(r,c)].x_out --> innerCells_r[getInnerCellIndex(r+1,c)].x_in {bufferSize = buffer_size;};
+                    end
+
+                    innerCells_r[getInnerCellIndex(r,c)].r_out --> joinersPerRow_r[r].r_in[c-r] {bufferSize = 1;};
+                end
+
+                // 1.3 Connect all the boundary cell output ports to their respective input ports
+                if r = c then
+                    if(r = N - 1) then // The last boundary in the chain
+                        boundaryCells[r].cordic_angles_out --> innerCells_q[r*M].cordic_angles_in {bufferSize = buffer_size;};
+                    else
+                        boundaryCells[r].cordic_angles_out --> innerCells_r[getInnerCellIndex(r,c+1)].cordic_angles_in {bufferSize = buffer_size;};
+                    end
+
+                    boundaryCells[r].r_out -->  joinersPerRow_r[r].r_in[0] {bufferSize = 1;};
+                end
+
+            end
+        end
+
+        // 2. Connect the square part of the array
+        foreach uint r in 0..N-1 do // Iterate along rows in the square
+            foreach uint c in 0..M-1 do // Iterate along columns in the square
+                // 2.1  Connect iGenerator to the array
+                if r = 0 then
+                    iGenerator[c].Out --> innerCells_q[r*M + c].x_in {bufferSize = buffer_size;};
+                end
+                
+                // 2.2 Connect the actors in a column together
+                if r = N-1 then
+                    innerCells_q[r*M + c].x_out --> caps_x[c].In {bufferSize = 1;};
+                else
+                    innerCells_q[r*M + c].x_out --> innerCells_q[(r+1)*M + c].x_in {bufferSize = buffer_size;};
+                end
+ 
+                // 2.3 Connect all actors in a row together
+                if(c = M-1) then
+                    innerCells_q[r*M + c].cordic_angles_out --> caps_cordic[r].In {bufferSize = 1;};
+                else
+                    innerCells_q[r*M + c].cordic_angles_out --> innerCells_q[r*M + c + 1].cordic_angles_in {bufferSize = buffer_size;};
+                end
+
+                // 2.4 Connect the generated Q matrix values to the joiner. The generated matrix is
+                // Q^T, so we connect each column to each joiner row to transpose back to Q
+                innerCells_q[r*M + c].r_out --> joinersPerRow_q[c].r_in[r] {bufferSize = 1;};
+            end
+        end
+
+        // 3. Connect joiners to output ports
+        foreach uint r in 0..N-1 do
+            joinersPerRow_r[r].r_out --> caps_r[r].In {bufferSize = N;};
+        end
+
+        foreach uint c in 0..M-1 do
+            joinersPerRow_q[c].q_out --> caps_q[c].In {bufferSize = N;};
+        end
+    end
+
+    // network TopCapped() ==> :
+    // entities
+    //     top = Top();
+    //     caps_q=[Cap(index=0): for index in 0..M-1];
+    //     caps_r=[Cap(index=0): for index in 0..N-1];
+    // structure
+    //     foreach uint r in 0..N-1 do
+    //         top.R_matrix[r] --> caps_r[r].In {bufferSize = N;};
+    //     end
+
+    //     foreach uint r in 0..M-1 do
+    //         top.Q_matrix[r] --> caps_q[r].In {bufferSize = N;};
+    //     end
+    // end
+end
