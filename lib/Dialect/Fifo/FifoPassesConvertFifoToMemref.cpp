@@ -537,8 +537,8 @@ static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
         // time
         auto memRefType_data =
             MemRefType::get(mlir::ShapedType::kDynamic, elementType);
-        auto memRefType_metadata = MemRefType::get(2, elementType);
         auto i32Type = mlir::IntegerType::get(context, 32);
+        auto memRefType_metadata = MemRefType::get(2, i32Type);
         auto tupleType = TupleType::get(
             context, {memRefType_data, memRefType_metadata, i32Type});
         return tupleType;
@@ -551,8 +551,8 @@ static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
         // time
         auto memRefType_data =
             MemRefType::get(mlir::ShapedType::kDynamic, elementType);
-        auto memRefType_metadata = MemRefType::get(2, elementType);
         auto i32Type = mlir::IntegerType::get(context, 32);
+        auto memRefType_metadata = MemRefType::get(2, i32Type);
         auto tupleType = TupleType::get(
             context, {memRefType_data, memRefType_metadata, i32Type});
         return tupleType;
