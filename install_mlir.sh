@@ -42,7 +42,7 @@ cmake -G Ninja ../llvm \
 # - check-mlir: Builds MLIR binaries and runs tests.
 # - lli: LLVM interpreter used for running JIT-compiled LLVM IR during the tests.
 # - clang: Required for compiling GPU kernels via MLIR's GPU dialect.
-cmake --build . --target "lli;check-mlir;clang"
+cmake --build . --target "opt;lli;check-mlir;clang"
 
 # Post-build: Recommend environment variable setup to access binaries and libraries
 echo ""

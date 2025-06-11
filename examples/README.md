@@ -10,6 +10,8 @@ Each subdirectory is self-contained and showcases a specific use case or workflo
 |--------------------------|-----------------------------------------------------------------------------|
 | `merge`                  | A minimal example demonstrating how to implement and run a CAL+FIFO-based MLIR program entirely by hand. Shows how to define actors, FIFOs, and a simple merge network directly in MLIR. |
 | `streamblocks-toolchain` | A tutorial showing how to use the **Streamblocks frontend** to compile a `.cal` source file into MLIR, and how to lower and run it. Demonstrates end-to-end usage of the toolchain with a `PassThrough` network example. |
+| `qr-decomposition-in-CAL` | A benchmark-focused tutorial showing how to compile a complex CAL implementation of QR decomposition (using a CORDIC-based systolic array) into MLIR using the **Streamblocks frontend**, and how to lower and run the result. Demonstrates end-to-end compilation flow. |
+
 
 ## Usage
 

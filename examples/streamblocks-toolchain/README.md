@@ -63,8 +63,6 @@ If successful, the output should display a series of transmit (`Tx`) and receive
   - `git`
   - `mvn` (Maven)
 
-- Ensure that the following tools from your CAL MLIR dialect are available in your environment:
-  - `cal-opt`
-  - `cal-translate`
+The `cal-opt` and `cal-translate` tools need to be installed. They should have been installed when you ran the [install_mlir.sh](../../install_mlir.sh) and [install_cal_dialect.sh](../../install_cal_dialect.sh) scripts. The scripts above will add the expected build locations to your PATH variable in order to locate them.
 
-- The generated MLIR file will be located at: [myproject/code-gen/main.mlir](myproject/code-gen/main.mlir)
+The generated MLIR file will be located at: [myproject/code-gen/main.mlir](myproject/code-gen/main.mlir)

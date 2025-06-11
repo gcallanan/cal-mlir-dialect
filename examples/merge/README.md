@@ -37,6 +37,8 @@ The network structure:
 - **[`run.sh`](merge.mlir)**  
   A helper script that compiles and executes `merge.mlir`. It converts it to LLVM-IR and then runs the LLVM interpreter on the LLVM-IR
 
+
+
 ## How to Run
 
 You can run the program in either of the following ways:
@@ -46,7 +48,16 @@ You can run the program in either of the following ways:
 bash run.sh
 ```
 
+This script will execute tools installed when you ran [install_mlir.sh](../../install_mlir.sh) and [install_cal_dialect.sh](../../install_cal_dialect.sh). It will add the expected build locations to your PATH variable.
+
 ### Option 2: Run manually
 ```bash
 cal-opt --lower-cal-to-llvm merge.mlir | cal-translate --mlir-to-llvmir | lli
+```
+
+If you run this manually, the path to cal-opt needs to be in your PATH variable. You can do this with the following commands:
+
+```bash
+PATH="../../llvm-project/build/bin:$PATH"
+PATH="$PATH:../../build/bin"
 ```

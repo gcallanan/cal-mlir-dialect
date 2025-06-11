@@ -13,7 +13,7 @@ The example copies an existing implementation found here: [qrd_systolic_cordic_f
 Make sure the following tools are installed and available in your environment:
 
 - `streamblocks` - The [streamblocks-toolchain](../streamblocks-toolchain/) example discusses how to install streamblocks. Make sure to add the `streamblocks` binary to your path
-- `cal-opt`
+- `cal-opt` - This tool and all the remaining tools in this list should have been installed when you ran the [install_mlir.sh](../../install_mlir.sh) and [install_cal_dialect.sh](../../install_cal_dialect.sh). The scripts below will add the expected build locations to your PATH variable in order to locate them.
 - `cal-translate`
 - `llc`
 - `clang`
@@ -44,3 +44,9 @@ This will:
 - Lower the MLIR to LLVM IR (main.ll)
 - Generate a binary object file (main.o)
 - Link it into an executable (main_executable)
+
+### 3. Running the binary
+
+```bash
+./main_executable
+```

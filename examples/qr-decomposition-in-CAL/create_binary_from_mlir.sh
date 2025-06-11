@@ -1,6 +1,11 @@
+#!/bin/bash
+
 set -e 
 
-rm -f main.ll main.o main_executable
+PATH="../../llvm-project/build/bin:$PATH"
+PATH="$PATH:../../build/bin"
+
+rm -f main.ll main.o main_executable main.opt.ll
 
 cal-opt --lower-cal-to-llvm myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > main.ll
 opt -O3 main.ll -o main.opt.ll

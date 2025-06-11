@@ -1,3 +1,5 @@
+#!/bin/bash
+
 set -e
 
 echo "Cloning Required Streamblocks Directories"
