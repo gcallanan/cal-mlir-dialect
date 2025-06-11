@@ -135,7 +135,7 @@ namespace qrd:
     // ==== Modifyable Constants: Start ===
 
     // The number of matrices that the Source actor will generate.
-    uint num_matrices=3;
+    uint num_matrices=1;
 
     // The size of the input matrix (MxN matrix)
     uint M = 4;
@@ -190,14 +190,14 @@ namespace qrd:
      * @input b - The second operand.
      * @return - The result of a*b
      */
-    function fixedPointMultiply(int(size = m+n) a, int(size = m+n) b) --> int(size = m+n)
+    function fixedPointMultiply(int(size = m+n) a, int(size = m+n) b) --> int(size = m+n):
         // If we just multiply a*b, then the result is treated as int(size = m+n) and automatic
         // truncation occurs before we bit shift throwing away necessary information. By defining
         // this variable and assigning a to it, the result of the multiplication of this with b
         // is of type int(size = 2*m+2*n), meaning that no information is thrown away before the
         // bitshift.
-        var int(size = 2*m+2*n) temp = a:
-        temp*b >> n
+        //var int(size = 2*m+2*n) temp = a:
+        a*b >> n
     end
 
     /**
@@ -274,7 +274,7 @@ namespace qrd:
      * @outputport r_out - Output port to send the state variable r out. Is sent to joiner
      *                     actors that are not part of the systolic array.
      */
-    actor InnerCell(uint M, uint N) int(size = 32) x_in, uint(size = num_CORDIC_iterations) cordic_angles_in ==> int(size = 32) x_out, int(size = 32) r_out, uint(size = num_CORDIC_iterations) cordic_angles_out:
+    actor InnerCell(uint M, uint N) int(size = m + n) x_in, uint(size = num_CORDIC_iterations) cordic_angles_in ==> int(size = m + n) x_out, int(size = m + n) r_out, uint(size = num_CORDIC_iterations) cordic_angles_out:
         int(size = m+n) r := 0;
         uint count := 0;
         
@@ -373,7 +373,7 @@ namespace qrd:
      * @outputport r_out - Output port to send the state variable r out. Is sent to joiner
      *                     actors that are not part of the systolic array.
      */
-    actor BoundaryCell(uint M, uint N) int(size = 32) x_in ==> int(size = 32) r_out, uint(size = num_CORDIC_iterations) cordic_angles_out:
+    actor BoundaryCell(uint M, uint N) int(size = m + n) x_in ==> int(size = m + n) r_out, uint(size = num_CORDIC_iterations) cordic_angles_out:
         int(size = m+n) r := 0;
         uint count := 0;
         
@@ -538,7 +538,7 @@ namespace qrd:
      * @parameter  col_index - The column in the I matrix that this IGenerator generates
      * @outputport Out - The port that outputs the generated column vector of the I matrix.
      */
-    actor IGenerator(uint col_index, uint K) ==> int(size = 32) Out:
+    actor IGenerator(uint col_index, uint K) ==> int(size = m + n) Out:
         uint row_index := 0;
         uint total_rows := 0;
         uint total_actions = K*num_matrices;
@@ -593,7 +593,7 @@ namespace qrd:
      * @inputports r_in[ports_in_row] - Array of ports to collect r value from the PEs. One
      *                                  port is required per PE in the row.
      */
-    actor JoinerRowR(uint K, uint row_index, uint ports_in_row) int(size = 32) r_in[ports_in_row] ==> int(size = 32) r_out:
+    actor JoinerRowR(uint K, uint row_index, uint ports_in_row) int(size = m + n) r_in[ports_in_row] ==> int(size = m + n) r_out:
         uint matrix_number := 0;
 
         action r_in[0..ports_in_row-1]:[input] ==> r_out:[input] repeat ports_in_row
@@ -634,7 +634,7 @@ namespace qrd:
      * @inputports r_in[ports_in_row] - Array of ports to collect r value from the PEs. One
      *                                  port is required per PE in the row.
      */
-    actor JoinerRowQ(uint K, uint row_index) int(size = 32) r_in[K] ==> int(size = 32) q_out:
+    actor JoinerRowQ(uint K, uint row_index) int(size = m + n) r_in[K] ==> int(size = m + n) q_out:
         uint matrix_number := 0;
 
         action r_in[0..K-1]:[input] ==> q_out:[input] repeat K
@@ -662,7 +662,11 @@ namespace qrd:
      * @parameter  index - Not used for anything, just a workaround for a compiler bug.
      * @inputport  In - A port that takes consumes any tokens in the buffer immediatly.
      */ 
-    actor Cap(uint index) int(size = 32) In ==>:
+    actor Cap(uint index) int(size = m + n) In ==>:
+        receive: action In:[t] ==> end
+    end
+
+    actor Cap_Iterations(uint index) int(size = num_CORDIC_iterations) In ==>:
         receive: action In:[t] ==> end
     end
 
@@ -703,7 +707,7 @@ namespace qrd:
         joinersPerRow_q=[JoinerRowQ(K=N, row_index=index): for index in 0..M-1];
 
         // Caps for unused ports 
-        caps_cordic=[Cap(index=0): for index in 0..N-1];
+        caps_cordic=[Cap_Iterations(index=0): for index in 0..N-1];
         caps_x=[Cap(index=0): for index in 0..M-1];
 
         caps_q=[Cap(index=0): for index in 0..M-1];
