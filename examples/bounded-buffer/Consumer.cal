@@ -1,0 +1,65 @@
+namespace bndBuffer:
+    //import System.math.log;
+    //import System.math.exp;
+
+    // @author: Gareth Callanan
+    //
+    // Consumer that requests items and processes them once received.
+    //
+    // Parameters:
+    //     consCost - Indicates the amount of processing that must be performed to simulate
+    //              - the consumption of an item. This does not relate to clock time, it just
+    //              - indicates the amount of computationally heavy loops that must be executed.
+    //
+    // Ports:
+    //     In - Port where requested items are recieved.
+    //     Out - Port where requests for items are transmitted out on.
+    actor Consumer (int consCost) float In ==> uint(size=2) Out:
+
+        // A persistent value stored across the generation of items.
+        float consItem := 0.0;
+
+        // Procedure to simulate the consumtion of an item. This is based on the processItem(...)
+        // function defined in bndbuffer/ProdConsBoundedBufferConfig.java of the Savina
+        // benchmark suit. As far as I can tell its mostly just meaningless computation
+        // designed to consume CPU cycels.
+        procedure processRxItem(float dataItem)
+        var 
+            float tempOut := 0.0
+        begin
+            tempOut := dataItem + consItem;
+
+            if consCost > 0 then
+                foreach int i in 0..consCost-1 do
+                    foreach int j in 0..100 do
+                        tempOut := tempOut + 1; //(abs(randDouble()) + 0.01);
+                    end
+                end
+            end
+            
+            consItem := tempOut;
+        end
+
+        // Action that sends out a request for a new work item on the Out port.
+        // The value of the output token is not important, only its existence.
+        sendWorkRequest: action ==> Out: [1] 
+        do
+            //println("Consumer requesting work");
+        end
+
+        // Process a received work item when one is available on the In port.
+        getItems: action In:[dataItem] ==>
+        do
+            processRxItem(dataItem);
+            // println("Consumer doing work");
+        end
+
+        // FSM governing when a work request can be sent. A getItems action can
+        // only occur if a SendRequest has been transmitted first requesting the item.
+        schedule fsm SendRequest:
+            SendRequest  (sendWorkRequest)--> ProcessItem;
+            ProcessItem  (getItems)--> SendRequest;
+        end
+
+    end
+end

@@ -1,0 +1,13 @@
+namespace bndBuffer: 
+    //import var System.math.randInt;
+
+    function abs( float x ) --> float :
+        if x < 0 then - x else x end
+    end
+
+    // As implemented in src/main/java/edu/rice/habanero/benchmarks/PseudoRandom.java of savina benchmark suite
+    // Some slight changes
+    //function randDouble() --> float:
+    //    1.0/randInt(65536)
+    //end
+end

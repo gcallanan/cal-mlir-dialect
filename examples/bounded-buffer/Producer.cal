@@ -1,0 +1,76 @@
+namespace bndBuffer:
+    //import System.math.log;
+    //import System.math.exp;
+
+    // @author: Gareth Callanan
+    //
+    // Producer that produces items upon request. The producer will stop 
+    // responding to a request if a set threshold of produced items is reached.
+    //
+    // Parameters:
+    //     numItemsPerProducer - The total number of items this producer will generate
+    //                         - Variable controlling the processing cost of producing an item.
+    //     prodCost - Indicates the amount of processing that must be performed to simulate
+    //              - the production of an item. This does not relate to clock time, it just
+    //              - indicates the amount of computationally heavy loops that must be executed.
+    //
+    // Ports:
+    //     In - Port where requests for items are received 
+    //     Out - Port where produced items are transmitted out on.
+    actor Producer (int numItemsPerProducer, int prodCost) uint(size=2) In ==> float Out:
+        
+        // Track the number of sent items
+        int numSent := 0;
+        
+        // A persistent value stored across the generation of items.
+        float prodItem := 0.0;
+
+        // Procedure to produce an item before sending it. This is based on the processItem(...)
+        // function defined in bndbuffer/ProdConsBoundedBufferConfig.java of the Savina
+        // benchmark suit. As far as I can tell its mostly just meaningless computation
+        // designed to consume CPU cycles.
+        procedure processTxItem()
+        var 
+            float tempOut := 0.0
+        begin
+            tempOut := prodItem;
+
+            if prodCost > 0 then
+                foreach int i in 0..prodCost-1 do
+                    foreach int j in 0..100 do
+                        tempOut := tempOut + 0.444;//(abs(randDouble()) + 0.01);
+                    end
+                end
+            end
+            
+            prodItem := tempOut;
+        end
+
+        // Action that produces an output item.
+        //
+        // An item will only be produced if the threshold of sent items is less than
+        // numItemsPerProducer
+        sendItem: action ==> Out: [prodItem]
+        guard
+            numSent < numItemsPerProducer
+        do
+            processTxItem(); // Do work to pass time
+            numSent := numSent + 1;
+            //println("Num Sent: " + numSent + " Prod Item: " + prodItem);
+        end
+
+        // Action that receives an item request. The value of the received token does not matter,
+        // just receiving it is enough to indicate a new item is requested.
+        getItemRequest: action In:[token] ==> end
+
+        // FSM that governs when items are produced. An item will only be produced if
+        // a getItemRequest action is performed moving to a state where the sendItem action
+        // can be executed.
+        schedule fsm GetRequest:
+            GetRequest  (getItemRequest)--> SendItem;
+            SendItem  (sendItem)--> GetRequest;
+        end
+
+    end
+
+end

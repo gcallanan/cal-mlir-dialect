@@ -1,0 +1,28 @@
+namespace bndBuffer:
+    // @author: Gareth Callanan
+    //
+    // Entity that creates the P prodcuer actors, C consumer actors and connects them all to a
+    // central buffer actors.
+    network BndBufferNetwork() ==> :
+    entities
+        producers = [Producer(numItemsPerProducer=numItemsPerProducer, prodCost=prodCost) {partition = "hw";}: for i in 0..P-1];
+        consumers = [Consumer(consCost=consCost) {partition = "hw";}: for i in 0..C-1];
+        bufferActor = BufferActor(B=B, P=P, C=C, numItemsPerProducer=numItemsPerProducer) {partition = "hw";};
+        sink = Sink();
+    structure
+        foreach uint i in 0..P-1 do
+            producers[i].Out --> bufferActor.FromProducer[i];
+            bufferActor.ToProducer[i] --> producers[i].In;
+        end
+
+        foreach uint i in 0..C-1 do
+            consumers[i].Out --> bufferActor.FromConsumer[i];
+            bufferActor.ToConsumer[i] --> consumers[i].In;
+        end
+
+        bufferActor.sumProducersPort --> sink.sumProducersPort;
+        bufferActor.sumConsumersPort --> sink.sumConsumersPort;
+        bufferActor.totalItemsFromProducers --> sink.totalItemsFromProducersPort;
+        bufferActor.totalItemsFromConsumers --> sink.totalItemsFromConsumersPort;
+    end
+end
