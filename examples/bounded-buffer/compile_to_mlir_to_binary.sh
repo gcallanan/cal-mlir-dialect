@@ -1,34 +1,45 @@
 #!/bin/bash
 
-echo "Compiling big actor network to MLIR -> LLVM -> Binary"
+echo "Compiling producer consumer with bounded buffer network to MLIR -> LLVM -> Binary"
 echo "This script takes in command line arguments:"
 echo " -O (default 3) Set the llvm optimisation level, valid values between 0 and 3."
-echo " -M (default 8) Set the number of messenger actors in the network."
-echo " -P (default 10000) Set the number of ping messages sent by each Messenger actor"
+echo " -C (default 3) The number of consumers."
+echo " -P (default 3) The number of producers"
+echo " -B (default 50) The amount of slots in the buffer actors"
+echo " -N (default 10000) The number of items produced by each producer"
 echo
 set -e
 
 # 1. Interpret command line arguments
 O=3
-M=8
-P=10000
+C=3
+P=3
+B=50
+N=10000
 
-while getopts O:M:P: flag
+while getopts O:C:P:B:N: flag
 do
     case "${flag}" in
         O) O=${OPTARG};;
-        M) M=${OPTARG};;
+        C) C=${OPTARG};;
         P) P=${OPTARG};;
+        B) B=${OPTARG};;
+        N) N=${OPTARG};;
     esac
 done
 
 set -e
 
-#echo "namespace big:
-#    uint numMessengers = $M;
-#    uint numPingPongs = $P;
-#end
-#" > config.cal
+echo "namespace bndBuffer:
+    uint B = $B; // Buffer size
+    uint P = $P; // Number of producers
+    uint C = $C; // Number of consumers
+    uint numItemsPerProducer = $N;
+    uint prodCost = 5; // Cost to perform action by producer
+    uint consCost = 5; // Cost to perform action by consumer
+end
+
+" > config.cal
 
 PATH="../../llvm-project/build/bin:$PATH"
 PATH="$PATH:../../build/bin"

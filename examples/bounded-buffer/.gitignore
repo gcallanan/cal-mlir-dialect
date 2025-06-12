@@ -1,3 +1,8 @@
 myproject
 main_executable_from_cpp
 main_executable_from_mlir
+results.csv
+cpp_output.txt
+cpp_output_filtered.txt
+mlir_output.txt
+mlir_output_filtered.txt
