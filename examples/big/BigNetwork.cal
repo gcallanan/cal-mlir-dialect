@@ -1,0 +1,70 @@
+namespace big:
+    // @author: Gareth Callanan
+    //
+    // Entity that creates the network of messengers to implement the big benchmark.
+    //
+    // The N messenger actors and single sink actor are created and connected to each other.
+    //
+    // numMessengers and numPingPongs defined in config.cal
+    //
+
+    network BigNetwork() ==> :
+    entities
+        messengers = [Messenger(N=numMessengers, P=numPingPongs, index=i) {partition = "hw";}: for i in 0..numMessengers-1];
+        sink = Sink(N=numMessengers, P=numPingPongs);
+    structure
+        // Link messenger actor ports to each other
+        foreach uint i in 0..numMessengers-1 do
+            foreach uint j in i..numMessengers-2 do // -2 as the each actor has N-1 Out/In ports.
+                messengers[i].Out[j] --> messengers[j+1].In[i] {bufferSize = 5;};
+                messengers[j+1].Out[i] --> messengers[i].In[j] {bufferSize = 5;};
+            end
+        end
+
+        // Link the OutToSink port on each messenger actor to the sink actor.
+        foreach uint i in 0..numMessengers-1 do
+            messengers[i].OutToSink --> sink.In[i] {bufferSize = 5;};
+        end
+    end
+
+    // To help understand what is happening above, when template substitution and port enumeration is performed on the
+    // above code for N=5 it transforms to this:
+    // network BigNetwork()  ==> int(size = 32) Done:
+    // entity
+    //     messengers_4 = big.Messenger_10()
+    //     messengers_3 = big.Messenger_8()
+    //     messengers_0 = big.Messenger_0()
+    //     messengers_2 = big.Messenger_6()
+    //     sink = big.Sink_12()
+    //     messengers_1 = big.Messenger_4()
+    // structure
+    //     messengers_0.Out__0__ --> messengers_1.In__0__
+    //     messengers_1.Out__0__ --> messengers_0.In__0__
+    //     messengers_0.Out__1__ --> messengers_2.In__0__
+    //     messengers_2.Out__0__ --> messengers_0.In__1__
+    //     messengers_0.Out__2__ --> messengers_3.In__0__
+    //     messengers_3.Out__0__ --> messengers_0.In__2__
+    //     messengers_0.Out__3__ --> messengers_4.In__0__
+    //     messengers_4.Out__0__ --> messengers_0.In__3__
+    //     messengers_1.Out__1__ --> messengers_2.In__1__
+    //     messengers_2.Out__1__ --> messengers_1.In__1__
+    //     messengers_1.Out__2__ --> messengers_3.In__1__
+    //     messengers_3.Out__1__ --> messengers_1.In__2__
+    //     messengers_1.Out__3__ --> messengers_4.In__1__
+    //     messengers_4.Out__1__ --> messengers_1.In__3__
+    //     messengers_2.Out__2__ --> messengers_3.In__2__
+    //     messengers_3.Out__2__ --> messengers_2.In__2__
+    //     messengers_2.Out__3__ --> messengers_4.In__2__
+    //     messengers_4.Out__2__ --> messengers_2.In__3__
+    //     messengers_3.Out__3__ --> messengers_4.In__3__
+    //     messengers_4.Out__3__ --> messengers_3.In__3__
+    //
+    //     sink.Done --> Done
+    //     messengers_0.OutToSink --> sink.In__0__
+    //     messengers_1.OutToSink --> sink.In__1__
+    //     messengers_2.OutToSink --> sink.In__2__
+    //     messengers_3.OutToSink --> sink.In__3__
+    //     messengers_4.OutToSink --> sink.In__4__
+    // end
+
+end

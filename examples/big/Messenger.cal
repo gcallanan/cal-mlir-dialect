@@ -1,0 +1,115 @@
+namespace big:
+    
+    // import var System.math.randInt;
+    // Messenger actor that sends P ping messages other messenger actors in a network. When this actor receives a ping
+    // from another actor it must send a pong message in response. 
+    //
+    // This actor cannot send another ping while it is waiting for a corresponding pong from the previous ping message.
+    // It can however still respond to pong messages.
+    // 
+    // Once P pong messages have been sent, send a done message to a sink actor.
+    //
+    // Parameters:
+    //     P - Number of ping messages to send.
+    //     N - Number of messenger actors in the network
+    //     index - The index of this actor in the N messenger actors 
+    //
+    // Ports:
+    //     In - An array of N-1 ports connected to the other messenger actors. Used to send ping and pong messages
+    //     Out - An array of N-1 ports connected to the other messenger actors. Used to receive ping and pong messages    
+    //     OutToSink - Port connecting this actor to the sink actor.
+    actor Messenger (uint N, uint P, uint index) int(size=8) In[N-1] ==> int(size=8) Out[N-1], int(size=32) OutToSink:
+        // Track number of pings sent (and pongs received). We expect to terminate at numPingsComplete = P.
+        uint numPingsComplete := 0;
+        
+        // Next destination to transmit a ping to.
+        int nextDestination := index mod (N-1);//randInt(N - 1);
+                
+        // Guards managing when we read the next received token. If we receive a ping, we must respond with a pong
+        // before reading the next received. When equal to -1 this guard indicates that there are no pings to respond
+        // to. Otherwise pingReceived equals to the port index that the ping was received on.
+        int pingReceived := -1;
+
+        // Indicates that a ping has been sent and a new ping must not be sent until the corresponding pong has been
+        // received.
+        int pingInFlight := 0; 
+        
+        // Send a done message to the sink actor once all ping messages have been sent and corresponding messages
+        // received
+        done: action ==> OutToSink:[index]
+        guard
+            numPingsComplete = P
+        do
+            //println("Actor " + index + " done! Sending message to sink actor");
+            numPingsComplete := numPingsComplete + 1; // Makes the guard disabled
+        end
+
+        // For every port in the Out/In port arrays, we need to generate the following 3 actions in order to handle the
+        // ping/pong TX and RX
+        foreach uint i in 0..N-2 generate
+            
+            // Action taken to transmit a ping.
+            //
+            // This action triggers when the nextDestination corresponds to the specific port number of this action,
+            // and will not be triggered while waiting for a response from the previous ping (pingInFlight guard).
+            //
+            // If numPingsComplete = P, then we are done transmitting and this action will never trigger.
+            //
+            // If a ping has been received, this action will not execute until a pongResponse action triggers, giving
+            // priority to pongs over pings (pingReceived guard).
+            transmitPing: action ==> Out[i]:[0]
+            guard
+                nextDestination = i && pingInFlight = 0 && numPingsComplete < P && pingReceived = -1
+            do
+                //println("Actor: " + index + " sent " + (numPingsComplete+1) + " of " + P + " pings to destination port: " + nextDestination);
+                pingInFlight := 1;
+            end
+            
+            // Action taken when a token is recieved.
+            //
+            // This action receives either a 0 or a 1 value (stored in pingOrPong). A 0 indicates that a ping has been
+            // received and a 1 indicates that a pong has been received. 
+            //
+            // If a ping is received, then this action cannot trigger again until this actor executes the corresponding
+            // pongResponse action (pingReceived flag)
+            receiveToken: action In[i]:[pingOrPong] ==>
+            guard
+                pingReceived = -1 //&& pingOrPong = 0
+            do
+                if pingOrPong = 0 then
+                    pingReceived := i;
+                    //println("Actor: " + index + " received ping on port " + i + "!");
+                else
+                    pingInFlight := 0;
+                    numPingsComplete := numPingsComplete + 1;
+                    nextDestination :=  nextDestination mod (N-1); //randInt(N - 1);
+                    //println("Actor: " + index + " received pong " + numPingsComplete + " of " + P + " on port " + i + "! Next destination: " + nextDestination);
+                end
+            end
+
+            
+            // This action responds to a pong
+            pongResponse: action ==> Out[i]:[1]
+            guard
+                pingReceived = i
+            do
+                pingReceived := -1;
+                //println("Actor: " + index + " sent pong to destination port " + i);
+            end
+        end
+    end
+
+    // Network that wraps the Messenger actor with fixed parameters for when testing the Messenger actor in a standalone
+    // manner.
+    /*network MessengerWrapper() int(size=8) In[numMessengers-1] ==> int(size=8) Out[numMessengers-1], int(size=32) OutToSink:
+    entities
+        messenger = Messenger(N=numMessengers, P=numPingPongs, index=0);
+    structure
+        foreach uint i in 0..numMessengers-2 do // -2 as for N actors, we transmit to N-1 actors and then we range from 0 to N-1-1
+            In[i] --> messenger.In[i];
+            messenger.Out[i] --> Out[i];
+        end
+        messenger.OutToSink --> OutToSink;
+    end*/
+
+end

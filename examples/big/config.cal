@@ -1,0 +1,5 @@
+namespace big:
+    uint numMessengers = 8;
+    uint numPingPongs = 1000000;
+end
+

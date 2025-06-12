@@ -1,0 +1,28 @@
+namespace big:
+
+    actor Sink (uint N, uint P) int(size=32) In[N] ==> :
+        uint completedPingsCount := 0;
+
+        // Final action to execute once a pingComplete message has been received from all actors.
+        // The exepected output value should equal N.
+        donePings: action ==> 
+        guard
+            completedPingsCount = N
+        do
+            println("Finished processing pings from " + completedPingsCount + " messengers");
+            completedPingsCount := completedPingsCount + 1; // End guard
+        end
+
+        // Generate a pingComplete action for every messenger actor.
+        foreach uint i in 0..N-1 generate
+            // Action that is triggered when a token is received from messenger actor i indicating it has completed its
+            // tasks. The value of the token does not matter, only that it exists.
+            pingComplete: action In[i]:[throwawayToken] ==>
+            do
+                completedPingsCount := completedPingsCount + 1;
+            end
+        end
+
+    end
+
+end
