@@ -31,12 +31,12 @@ namespace bndBuffer:
         var 
             float tempOut := 0.0
         begin
-            tempOut := dataItem + consItem;
+            tempOut := 1/dataItem;
 
             if consCost > 0 then
                 foreach int i in 0..consCost-1 do
                     foreach int j in 0..100 do
-                        tempOut := tempOut + 1; //(abs(randDouble()) + 0.01);
+                        tempOut := tempOut + 0.33; //(abs(randDouble()) + 0.01);
                     end
                 end
             end
@@ -60,10 +60,8 @@ namespace bndBuffer:
             request_token = 0
         do
             request_token := 1;
-            //println("In: " + dataItem);
             processRxItem(dataItem);
-            //println("Out: " + consItem);
-            // println("Consumer doing work");
+            //println("Consumer doing work");
         end
     end
 end

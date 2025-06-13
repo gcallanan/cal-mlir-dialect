@@ -55,19 +55,17 @@ check_outputs_match() {
     # Compare producer sums
     if ! floats_equal "$prod1" "$prod2"; then
         echo "ERROR: Producer item sums differ: $prod1 vs $prod2"
-        exit 1
+        return 1
     fi
 
     # Compare consumer sums
     if ! floats_equal "$cons1" "$cons2"; then
         echo "ERROR: Consumer item sums differ: $cons1 vs $cons2"
-        exit 1
+        return 1
     fi
 
     echo "$prod1,$cons1,$prod2,$cons2" #"For O=$O and P=$P. Producer sum: $prod1 == $prod2 and Consumer sum: $cons1 == $cons2"
 }
-
-set -e
 
 # CSV header
 echo "OptLevel,NumProducers,NumConsumers,Backend,RunNumber,TimeInSeconds,Prod Value,Cons Value" > results.csv
@@ -79,7 +77,7 @@ RUNS=3
 ITEMS=10000
 
 # Number of consumers
-C=1
+C=3
 
 # Sweep through optimization levels
 for O in {0..3}; do
@@ -95,12 +93,13 @@ for O in {0..3}; do
         ./main_executable_from_cpp > cpp_output.txt
         ./main_executable_from_mlir > mlir_output.txt
 
-        cat mlir_output.txt
-        echo ""
-        cat cpp_output.txt
-        
         # Compare the errors and error out if there is a problem
+        if ! check_outputs_match cpp_output.txt mlir_output.txt "$O" "$P"; then
+            echo "Match check failed"
+            exit 1
+        fi
         values=$(check_outputs_match cpp_output.txt mlir_output.txt "$O" "$P")
+
         cppValues=$(echo "$values" | cut -d',' -f1-2)
         mlirValues=$(echo "$values" | cut -d',' -f3-4)
 

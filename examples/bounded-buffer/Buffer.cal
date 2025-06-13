@@ -30,6 +30,7 @@ namespace bndBuffer:
         // marked as busy (value set to 1), and no new requests will be sent to it until an
         // item is received and it is marked as not busy again (value set to 0).
         List(type: uint(size=1), size=P) busyProducers;
+        List(type: uint(size=1), size=C) freeConsumers;
         
         // Start: Variables related to the ring buffer
         // A ring buffer to store all items received from the producers. This buffer is a queue
@@ -61,10 +62,19 @@ namespace bndBuffer:
         // For every consumer, we need to generate an action that transmits an item to the consumer
         // once i request for the item has been received.
         foreach uint i in 0..C-1 generate
-            
+            requestFromConsumer: action FromConsumer[i]:[token] ==>
+            do
+                sumConsumers := sumConsumers + token;
+                totalItemsFromConsumers := totalItemsFromConsumers + 1;
+                freeConsumers[i] := 1;
+
+                // Useful debugging print.
+                //println("Received request from consumer " + i + " " + totalItemsFromConsumers + " vs " + numItemsPerProducer);
+            end
+
             // If there is at least one item on the buffer and Consumer i requests an item, then
             // pop that item from the buffer and transmit it to the consumer.
-            requestFromConsumer: action FromConsumer[i]:[token] ==> ToConsumer[i]:[poppedItem]
+            sendToConsumer: action ==> ToConsumer[i]:[poppedItem]
             guard
                 itemsOnBuffer > 0
             var
@@ -76,12 +86,10 @@ namespace bndBuffer:
                 bufferFrontLocation := (bufferFrontLocation + 1) mod B;
                 itemsOnBuffer := itemsOnBuffer - 1;
                 // End: pop from front of buffer
-                
-                sumConsumers := sumConsumers + token;
-                totalItemsFromConsumers := totalItemsFromConsumers + 1;
+                freeConsumers[i] := 0;
 
                 // Useful debugging print.
-                // println("Sending item to consumer " + i + " bufferSize: " + itemsOnBuffer + " Item: " + poppedItem + " bufferFrontLocal: " + bufferFrontLocation);
+                //println("Sending item to consumer " + i + " bufferSize: " + itemsOnBuffer + " Item: " + poppedItem + " bufferFrontLocal: " + bufferFrontLocation);
             end
 
         end
@@ -151,9 +159,9 @@ namespace bndBuffer:
         // everything is complete.)
         outputValues: action ==> sumProducersPort:[sumProducers], sumConsumersPort:[sumConsumers],
                                  totalItemsFromProducers:[totalItemsFromProducers],
-                                 totalItemsFromConsumers:[totalItemsFromConsumers - 1] // Subtract one as we add one to prevent action executing again
+                                 totalItemsFromConsumers:[totalItemsFromConsumers-1] // Subtract one as we add one to prevent action executing again
         guard
-            P * numItemsPerProducer = totalItemsFromConsumers
+            P * numItemsPerProducer + C = totalItemsFromConsumers
         do
             totalItemsFromConsumers := totalItemsFromConsumers + 1;
             //println("Producers items sum: " + sumProducers);
