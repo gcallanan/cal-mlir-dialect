@@ -22,8 +22,8 @@ func.func @main() -> i32 {
     //CHECK: Value: 53.54
 
     // f32s need to be explicitly cast to f64 or else they are interpreted incorrectly
-    fifo.print("Value: %e\0A\00", %c63p56) : (f32)
-    //CHECK: Value: 5.511646e-315
+    fifo.print("Value: %.2f\0A\00", %c63p56) : (f32)
+    //CHECK: Value: 63.56
 
     func.return %constant0 : i32
 }

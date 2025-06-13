@@ -1,8 +1,10 @@
 namespace bndBuffer:
     uint B = 50; // Buffer size
-    uint P = 1; // Number of producers
+    uint P = 8; // Number of producers
     uint C = 1; // Number of consumers
     uint numItemsPerProducer = 1000000;
-    uint prodCost = 1; // Cost to perform action by producer
-    uint consCost = 1; // Cost to perform action by consumer
+    uint prodCost = 5; // Cost to perform action by producer
+    uint consCost = 5; // Cost to perform action by consumer
 end
+
+

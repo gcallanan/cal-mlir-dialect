@@ -74,10 +74,18 @@ class ConvertPrintToLLVMPrint : public OpConversionPattern<PrintOp> {
 
     mlir::Operation::operand_range args = op.getArgs();
 
-    // Create a SmallVector and add the format specifier.
+    // Create a vecotr of operands to the printf, including the format string
+    // All f32 need to be converted to f64 or else printf does not generate nice data
     llvm::SmallVector<mlir::Value, 8> combinedOperands;
     combinedOperands.push_back(formatSpecifierCst);
-    combinedOperands.append(args.begin(), args.end());
+    for (auto arg : args) {
+      if (mlir::isa<FloatType>(arg.getType()) &&
+          mlir::cast<FloatType>(arg.getType()).getWidth() == 32) {
+        auto f64Ty = rewriter.getF64Type();
+        arg = rewriter.create<LLVM::FPExtOp>(loc, f64Ty, arg);
+      }
+      combinedOperands.push_back(arg);
+    }
 
     rewriter.create<LLVM::CallOp>(loc, getPrintfType(getContext()), printfRef,
                                   combinedOperands);
