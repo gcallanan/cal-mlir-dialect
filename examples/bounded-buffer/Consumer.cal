@@ -14,7 +14,11 @@ namespace bndBuffer:
     // Ports:
     //     In - Port where requested items are recieved.
     //     Out - Port where requests for items are transmitted out on.
-    actor Consumer (int consCost) float In ==> uint(size=2) Out:
+    actor Consumer (int consCost) float In ==> float Out:
+
+        // State variable determining if the consumer can request a token or not.
+        // Switched between one and zero by the sendWorkRequest and getItem actions.
+        int request_token := 1;
 
         // A persistent value stored across the generation of items.
         float consItem := 0.0;
@@ -42,24 +46,24 @@ namespace bndBuffer:
 
         // Action that sends out a request for a new work item on the Out port.
         // The value of the output token is not important, only its existence.
-        sendWorkRequest: action ==> Out: [1] 
+        sendWorkRequest: action ==> Out: [consItem]
+        guard
+            request_token = 1
         do
+            request_token := 0;
             //println("Consumer requesting work");
         end
 
         // Process a received work item when one is available on the In port.
         getItems: action In:[dataItem] ==>
+        guard
+            request_token = 0
         do
+            request_token := 1;
+            //println("In: " + dataItem);
             processRxItem(dataItem);
+            //println("Out: " + consItem);
             // println("Consumer doing work");
         end
-
-        // FSM governing when a work request can be sent. A getItems action can
-        // only occur if a SendRequest has been transmitted first requesting the item.
-        schedule fsm SendRequest:
-            SendRequest  (sendWorkRequest)--> ProcessItem;
-            ProcessItem  (getItems)--> SendRequest;
-        end
-
     end
 end

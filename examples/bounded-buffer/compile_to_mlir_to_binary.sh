@@ -35,8 +35,8 @@ echo "namespace bndBuffer:
     uint P = $P; // Number of producers
     uint C = $C; // Number of consumers
     uint numItemsPerProducer = $N;
-    uint prodCost = 5; // Cost to perform action by producer
-    uint consCost = 5; // Cost to perform action by consumer
+    uint prodCost = 50; // Cost to perform action by producer
+    uint consCost = 50; // Cost to perform action by consumer
 end
 
 " > config.cal

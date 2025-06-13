@@ -26,3 +26,4 @@ To run the examples, ensure that the following tools are installed and available
 - `cal-opt`
 - `cal-translate`
 - `git`, `mvn` (for the `streamblocks-toolchain` example)
+- `streamblocks` - The `streamblocks-toolchain` shows you how to install streamblocks which can generate mlir from CAL. Follow the instructions there. Make sure to add streamblocks to your path if you want to use it in the other examples.

@@ -56,7 +56,7 @@ This will:
 ## Prerequisites
 
 The same tools are required as listed in the main README:
-- `streamblocks`
+- `streamblocks` - The [streamblocks-toolchain](../streamblocks-toolchain/) example discusses how to install streamblocks. Make sure to add the `streamblocks` binary to your PATH
 - `cal-opt`
 - `cal-translate`
 - `llc`

@@ -8,7 +8,7 @@ namespace bndBuffer:
         printValues: action sumProducersPort:[sumProducers], sumConsumersPort:[sumConsumers], totalItemsFromProducersPort:[totalItemsFromProducers], totalItemsFromConsumersPort:[totalItemsFromConsumers] ==>
         do
             println("Producers items sum: " + sumProducers);
-            println("Consumer tokens sum: " + sumConsumers);
+            println("Consumer items sum: " + sumConsumers);
         end
 
     end

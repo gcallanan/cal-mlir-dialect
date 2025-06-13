@@ -20,7 +20,7 @@ namespace bndBuffer:
     //     ToConsumers - Port array connected to each consumer. Transmits the requested items to the
     //                   consumers.
     actor BufferActor(uint B, uint P, uint C, uint numItemsPerProducer)
-        float FromProducer[P], uint(size=2) FromConsumer[C]
+        float FromProducer[P], float FromConsumer[C]
         ==>
         uint(size=2) ToProducer[P],  float ToConsumer[C], float sumProducersPort, float sumConsumersPort,
         uint totalItemsFromProducers, uint totalItemsFromConsumers

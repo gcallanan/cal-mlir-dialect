@@ -19,6 +19,10 @@ namespace bndBuffer:
     //     Out - Port where produced items are transmitted out on.
     actor Producer (int numItemsPerProducer, int prodCost) uint(size=2) In ==> float Out:
         
+        // State variable determining if the producer can produce a token or not.
+        // Switched between one and zero by the getItemRequest and sendItem actions.
+        int can_send := 1;
+
         // Track the number of sent items
         int numSent := 0;
         
@@ -52,25 +56,23 @@ namespace bndBuffer:
         // numItemsPerProducer
         sendItem: action ==> Out: [prodItem]
         guard
-            numSent < numItemsPerProducer
+            numSent < numItemsPerProducer,
+            can_send = 1
         do
             processTxItem(); // Do work to pass time
             numSent := numSent + 1;
+            can_send := 0;
             //println("Num Sent: " + numSent + " Prod Item: " + prodItem);
         end
 
         // Action that receives an item request. The value of the received token does not matter,
         // just receiving it is enough to indicate a new item is requested.
-        getItemRequest: action In:[token] ==> end
-
-        // FSM that governs when items are produced. An item will only be produced if
-        // a getItemRequest action is performed moving to a state where the sendItem action
-        // can be executed.
-        schedule fsm GetRequest:
-            GetRequest  (getItemRequest)--> SendItem;
-            SendItem  (sendItem)--> GetRequest;
+        getItemRequest: action In:[token] ==>
+        guard
+            can_send = 0
+        do
+            can_send := 1;
         end
-
     end
 
 end
