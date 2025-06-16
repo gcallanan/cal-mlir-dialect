@@ -15,6 +15,7 @@ This example implements and evaluates the Producer-Consumer benchmark from the S
 | `config.cal` | Configuration file defining network parameters (auto-generated) |
 | `compile_to_cpp_then_to_binary.sh` | Compiles the CAL code to C++ and then to a binary |
 | `compile_to_mlir_then_to_binary.sh` | Compiles the CAL code to MLIR and then to a binary |
+| `compile_to_c_then_to_binary.sh` | This uses the original Tÿcho compiler to generate C code and then a binary from CAL. Unless you are very interested, you do not need to worry about this, as it is not used by default in the other scripts. |
 | `compare_streamblocks_mlir_to_cpp_backends.sh` | Script to benchmark both compilation paths |
 
 ## Parameters
@@ -41,6 +42,12 @@ To compile using the MLIR backend:
 ```bash
 ./compile_to_mlir_then_to_binary.sh -O 3 -P 4 -C 4 -B 32 -N 10000
 ./main_executable_from_mlir
+```
+
+To compile using the Tÿcho C backend (note, you will need to have installed the streamblocks-tycho compiler and have the `tychoc` binary in your path):
+```bash
+./compile_to_c_then_to_binary.sh -O 3 -P 4 -C 4 -B 32 -N 10000
+./main_executable_from_c
 ```
 
 ### 2. Run Performance Comparison

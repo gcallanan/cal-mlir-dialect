@@ -1,5 +1,33 @@
 #!/bin/bash
 
+echo "Script that compares the performance of the bounded-buffer benchmark with"
+echo "different compilation paths and optimisation flags. Primarily compares"
+echo "the streamblocks multicore backend and streamblocks mlir backend but"
+echo "you can optionally choose to also compare the performance of the original"
+echo "tÿcho C backend."
+echo " -t Enable the tycho backend."
+echo
+
+# Interpret command line arguments
+use_tycho=false
+
+while getopts t flag
+do
+    case "${flag}" in
+        t) use_tycho=true;;
+    esac
+done
+
+# Number of runs per configuration
+RUNS=1
+
+# Number of items produced by each producer
+ITEMS=30000
+
+# Number of consumers
+C=3
+
+
 # Compares two floating-point numbers a and b for approximate equality
 # within a *relative* error tolerance of 1e-5.
 #
@@ -70,28 +98,27 @@ check_outputs_match() {
 # CSV header
 echo "OptLevel,NumProducers,NumConsumers,Backend,RunNumber,TimeInSeconds,Prod Value,Cons Value" > results.csv
 
-# Number of runs per configuration
-RUNS=3
-
-# Number of items produced by each producer
-ITEMS=10000
-
-# Number of consumers
-C=3
-
 # Sweep through optimization levels
 for O in {0..3}; do
     # Sweep through number of messengers (powers of 2)
-    for P in 1 2 3 4 5 6 7 8 9 10; do
+    for P in 2 3 4 5 6 7 8; do
         echo "Testing O=$O P=$P"
         
         # Compile both versions
         bash compile_to_cpp_to_binary.sh -O "$O" -P "$P" -C "$C" -N "$ITEMS"
         bash compile_to_mlir_to_binary.sh -O "$O" -P "$P" -C "$C" -N "$ITEMS"
+        if [ "$use_tycho" = true ]; then
+            bash compile_to_c_to_binary.sh -O "$O" -P "$P" -C "$C" -N "$ITEMS"
+        fi
 
-        # Compare outputs
+        # Compare outputs - find the differences between the values to see
+        # if there is a problem
         ./main_executable_from_cpp > cpp_output.txt
         ./main_executable_from_mlir > mlir_output.txt
+        if [ "$use_tycho" = true ]; then
+            ./main_executable_from_c > c_output.txt
+            cat c_output.txt
+        fi
 
         # Compare the errors and error out if there is a problem
         if ! check_outputs_match cpp_output.txt mlir_output.txt "$O" "$P"; then
@@ -103,11 +130,19 @@ for O in {0..3}; do
         cppValues=$(echo "$values" | cut -d',' -f1-2)
         mlirValues=$(echo "$values" | cut -d',' -f3-4)
 
-        rm -f cpp_output.txt mlir_output.txt
+        if [ "$use_tycho" = true ]; then
+            if ! check_outputs_match c_output.txt mlir_output.txt "$O" "$P"; then
+                echo "Match check failed"
+                exit 1
+            fi
+            values=$(check_outputs_match c_output.txt mlir_output.txt "$O" "$P")
+            cValues=$(echo "$values" | cut -d',' -f1-2)
+        fi
+
+        rm -f c_output.txt mlir_output.txt c_output.txt
         
         # Run each version multiple times to get timing information
         for run in $(seq 1 $RUNS); do
-
             # Time CPP version
             cpp_time=$( { /usr/bin/time -f "%e" ./main_executable_from_cpp 1>/dev/null; } 2>&1)
             echo "$O,$P,$C,CPP ,$run,$cpp_time,$cppValues" >> results.csv
@@ -119,6 +154,14 @@ for O in {0..3}; do
             echo "$O,$P,$C,MLIR,$run,$mlir_time,$mlirValues" >> results.csv
 
             sleep 5
+
+            if [ "$use_tycho" = true ]; then
+                # Time C version
+                mlir_time=$( { /usr/bin/time -f "%e" ./main_executable_from_c 1>/dev/null; } 2>&1)
+                echo "$O,$P,$C,C   ,$run,$mlir_time,$cValues" >> results.csv
+
+                sleep 5
+            fi
         done
     done
 done
