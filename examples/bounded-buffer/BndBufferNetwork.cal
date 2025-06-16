@@ -11,18 +11,18 @@ namespace bndBuffer:
         sink = Sink();
     structure
         foreach uint i in 0..P-1 do
-            producers[i].Out --> bufferActor.FromProducer[i];
-            bufferActor.ToProducer[i] --> producers[i].In;
+            producers[i].Out --> bufferActor.FromProducer[i] {bufferSize = 1;};
+            bufferActor.ToProducer[i] --> producers[i].In {bufferSize = 1;};
         end
 
         foreach uint i in 0..C-1 do
-            consumers[i].Out --> bufferActor.FromConsumer[i];
-            bufferActor.ToConsumer[i] --> consumers[i].In;
+            consumers[i].Out --> bufferActor.FromConsumer[i] {bufferSize = 1;};
+            bufferActor.ToConsumer[i] --> consumers[i].In {bufferSize = 1;};
         end
 
-        bufferActor.sumProducersPort --> sink.sumProducersPort;
-        bufferActor.sumConsumersPort --> sink.sumConsumersPort;
-        bufferActor.totalItemsFromProducers --> sink.totalItemsFromProducersPort;
-        bufferActor.totalItemsFromConsumers --> sink.totalItemsFromConsumersPort;
+        bufferActor.sumProducersPort --> sink.sumProducersPort {bufferSize = 1;};
+        bufferActor.sumConsumersPort --> sink.sumConsumersPort {bufferSize = 1;};
+        bufferActor.totalItemsFromProducers --> sink.totalItemsFromProducersPort {bufferSize = 1;};
+        bufferActor.totalItemsFromConsumers --> sink.totalItemsFromConsumersPort {bufferSize = 1;};
     end
 end
