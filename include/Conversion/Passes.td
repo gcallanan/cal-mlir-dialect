@@ -53,7 +53,8 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
     `cal.state`, `cal.get`, and `cal.set`, to equivalent operations in the MemRef
     dialect. The transformation replaces CAL state definitions with `memref.alloc`
     operations, and rewrites `cal.get` and `cal.set` into `memref.load` and
-    `memref.store`, respectively.
+    `memref.store`, respectively. It also creates `memref.dealloc` operations
+    at the end of the region to deallocate allocated memory
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];

@@ -78,10 +78,10 @@ void registerLowerCalToLLVMPipeline() {
         // 1. FIFO/CAL-specific lowering
         pm.addPass(mlir::cal::insertCalPortPredicates());
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
-        pm.addPass(mlir::lowerCalStateToMemref());
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertCalToFuncPass());
+        pm.addPass(mlir::lowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());

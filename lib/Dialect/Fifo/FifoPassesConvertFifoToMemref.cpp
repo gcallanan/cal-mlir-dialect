@@ -51,6 +51,7 @@ namespace mlir::fifo {
 //    - `%alloc_0` allocates a memory buffer for storing metadata (with 2 `i32`
 //    elements). Position 0 stores the read index and position 1 stores the
 //    write index in this metadata memory buffer.
+//    - These elements are also deallocated at the end of the region.
 //
 // 2. Create a tuple to hold both memory buffers (`%alloc`, `%alloc_0`) and the
 // size `11`.
@@ -116,6 +117,16 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
     rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index0);
     rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index1);
 
+    // 5. We also need to be sure to free the memrefs at the end of the region
+    // that they were allocated in.
+    Block *parentBlock = op->getBlock();
+    Operation *terminator = parentBlock->getTerminator();
+
+    rewriter.setInsertionPoint(terminator);
+    rewriter.create<memref::DeallocOp>(loc, alloc_data);
+    rewriter.create<memref::DeallocOp>(loc, alloc_metadata);
+
+    // 6. Now make sure to replace the opearation correctly.
     rewriter.replaceOp(op,
                        {make_tuple_op.getResult(), make_tuple_op.getResult()});
 

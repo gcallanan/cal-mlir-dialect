@@ -19,20 +19,18 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#include "Conversion/Passes.h"
 #include "Conversion/CalStateToMemref/CalStateToMemref.h"
-
-
+#include "Conversion/Passes.h"
 
 namespace mlir {
-  
+
 using namespace cal;
 
 #define GEN_PASS_DEF_LOWERCALSTATETOMEMREF
 #include "Conversion/Passes.h.inc"
 
 // Converts the `cal.create_state_var` operation into a memref allocation of
-// size 1
+// size 1. Also inserts deallocation at the end of the region.
 //
 // This transformation lowers a `cal.create_state_var` on a state reference of
 // element type `T` to a `memref.alloc` of shape `<1 x T>`.
@@ -50,11 +48,26 @@ class ConvertCalCreateStateVarOpToMemref
   matchAndRewrite(CreateStateVarOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
 
-    // llvm::outs() << "Hi\n";
+    // 1. Here we create the alloc operations
     mlir::Location loc = op.getLoc();
     auto stateType = op.getStateType();
     auto memRefType_data = MemRefType::get(1, stateType);
     auto alloc_state = rewriter.create<memref::AllocOp>(loc, memRefType_data);
+
+    // 2. Here we create the dealloc operation, we add right at the end of the
+    // region this alloc operation was called in as this is the lifetime of
+    // memref
+
+    // Get the terminator of the parent block.
+    // Allocations are usually at the beginning/middle of a block,
+    // and deallocations should happen before the return/branch.
+    Block *parentBlock = op->getBlock();
+    Operation *terminator = parentBlock->getTerminator();
+
+    // Insert the dealloc operation right before the terminator.
+    rewriter.setInsertionPoint(terminator);
+    rewriter.create<memref::DeallocOp>(loc, alloc_state);
+
     rewriter.replaceOp(op, alloc_state);
 
     return success();
