@@ -44,7 +44,7 @@ echo "2. Generating a binary from the C++ files"
 
 mkdir -p  myproject/build/
 cd myproject/build/
-cmake .. -DCMAKE_CXX_FLAGS="-O$O" # 2> /dev/null
+cmake .. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS="-O$O" # 2> /dev/null
 cmake --build . -j24 2> /dev/null
 cd ../..
 cp myproject/bin/BigNetwork main_executable_from_cpp

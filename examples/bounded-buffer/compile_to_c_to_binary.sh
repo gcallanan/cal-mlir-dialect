@@ -55,11 +55,4 @@ echo "2. Generating a binary from the C files"
 
 cc myproject/*.c -O$O -o main_executable_from_c
 
-#mkdir -p  myproject/build/
-#cd myproject/build/
-#cmake .. -DCMAKE_CXX_FLAGS="-O$O" # 2> /dev/null
-#cmake --build . -j24 2> /dev/null
-#cd ../..
-#cp myproject/bin/BndBufferNetwork main_executable_from_cpp
-
 echo "3. Binary 'main_executable_from_c' Generated succesfully"

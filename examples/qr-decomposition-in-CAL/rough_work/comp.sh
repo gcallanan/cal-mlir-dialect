@@ -67,9 +67,33 @@ cmake .. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS
 echo "Building Cpp 3 Done: $cppBuild0Time"
 cd ../.. && cp myproject/bin/Top main_executable
 cppRun3Time=$( { /usr/bin/time -f "%e" ./main_executable > temp7.txt ; } 2>&1)
-echo "Running Cpp 0 Done: $cppRun3Time"
+echo "Running Cpp 3 Done: $cppRun3Time"
 
+echo "Compiling with Tycho to C"
 
+rm -rf myproject && mkdir myproject
+tychoc --set experimental-network-elaboration=on --set reduction-algorithm=ordered-condition-checking --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
+
+echo "Multicore C Generated - Generating Binaries now"
+cc myproject/*.c -O0 -o main_executable
+echo "Building C 0 Done: $cBuild0Time"
+cRun0Time=$( { /usr/bin/time -f "%e" ./main_executable > temp8.txt ; } 2>&1)
+echo "Running C 0 Done: $cRun0Time"
+
+cc myproject/*.c -O1 -o main_executable
+echo "Building C 1 Done: $cBuild1Time"
+cRun1Time=$( { /usr/bin/time -f "%e" ./main_executable > temp9.txt ; } 2>&1)
+echo "Running C 1 Done: $cRun1Time"
+
+cc myproject/*.c -O2 -o main_executable
+echo "Building C 2 Done: $cBuild2Time"
+cRun2Time=$( { /usr/bin/time -f "%e" ./main_executable > temp10.txt ; } 2>&1)
+echo "Running C 2 Done: $cRun2Time"
+
+cc myproject/*.c -O3 -o main_executable
+echo "Building C 3 Done: $cBuild3Time"
+cRun3Time=$( { /usr/bin/time -f "%e" ./main_executable > temp11.txt ; } 2>&1)
+echo "Running C 3 Done: $cRun3Time"
 
 echo "MLIR O1"
 diff temp0.txt temp1.txt
@@ -80,16 +104,6 @@ echo
 echo "MLIR O3"
 diff temp0.txt temp3.txt
 echo
-# echo "CPP O0"
-# diff temp0.txt temp4.txt
-# echo "CPP O1"
-# diff temp0.txt temp5.txt
-# echo
-# echo "CPP O2"
-# diff temp0.txt temp6.txt
-# echo
-# echo "CPP O3"
-# diff temp0.txt temp7.txt
 
 
 echo "OptimisationFlag,0,1,2,3"
@@ -97,5 +111,6 @@ echo "MlirCompilationTime,$mlirBuild0Time,$mlirBuild1Time,$mlirBuild2Time,$mlirB
 echo "CppCompilationTime,$cppBuild0Time,$cppBuild1Time,$cppBuild2Time,$cppBuild3Time"
 echo "MlirRunningTime,$mlirRun0Time,$mlirRun1Time,$mlirRun2Time,$mlirRun3Time"
 echo "CppRunningTime,$cppRun0Time,$cppRun1Time,$cppRun2Time,$cppRun3Time"
+echo "CRunningTime,$cRun0Time,$cRun1Time,$cRun2Time,$cRun3Time"
 
 

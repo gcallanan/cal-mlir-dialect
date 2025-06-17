@@ -1,4 +1,6 @@
 myproject
 main_executable_from_cpp
 main_executable_from_mlir
+main_executable_from_c
+main_executable
 results.csv
