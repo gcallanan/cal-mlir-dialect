@@ -17,6 +17,7 @@ The example copies an existing implementation found here: [qrd_systolic_cordic_f
 | `create_binary_from_mlir.sh`   | Compiles the generated MLIR into an LLVM binary executable.                 |
 | `execute_qrd_and_check.sh`     | Executes the generated binary, saves the results and runs them through the `error_checker.py` script to verify correctness. |
 | `error_checker.py`     | Converts the fixed point output of the executed cal program to floating point and verifies that it executes correctly. |
+| `rough_work`           | This directory contains rough scripts,etc. It is not guarenteed to work |
 
 ## Prerequisites
 

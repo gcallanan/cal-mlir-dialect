@@ -4,3 +4,4 @@ main.o
 main_executable
 main.opt.ll
 output_from_qrd_program.txt
+temp*.txt
