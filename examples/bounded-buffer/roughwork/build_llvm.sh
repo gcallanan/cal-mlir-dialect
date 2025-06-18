@@ -1,7 +1,12 @@
-P=10
+P=3
 C=1
 O=3
 N=1000000
+
+opt_levels=(0 1 2 3)
+cpp_times=()
+mlir_times=()
+c_times=()
 
 # Build and Run CPP project
 
@@ -9,19 +14,35 @@ rm -rf myproject
 bash compile_to_cpp_to_binary.sh -C $C -O $O -P $P -N $N
 sleep 15
 
-echo "Time taken to execute CPP binary:"
-time ./main_executable_from_cpp
+for O in "${opt_levels[@]}"; do
 
-#cp myproject/generated/main.ll roughwork/main_MLIR_C${C}_P${P}_O${O}.ll
+  mkdir -p  myproject/build/
+  cd myproject/build/
+  cmake .. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS="-O$O" # 2> /dev/null
+  cmake --build . -j24 2> /dev/null
+  cd ../..
+  cp myproject/bin/BndBufferNetwork main_executable_from_cpp
+  sleep 10
+
+  echo "Running CPP binary..."
+  cpp_time=$(/usr/bin/time -f "%e" ./main_executable_from_cpp 2>&1 1>/dev/null)
+  echo "CPP time: $cpp_time seconds"
+  cpp_times+=("$cpp_time")
+done
+
 
 # Build and Run MLIR project
 
-rm -rf myproject
-bash compile_to_mlir_to_binary.sh -C $C -O $O -P $P -N $N
-sleep 15
+for O in "${opt_levels[@]}"; do
+    rm -rf myproject
+    bash compile_to_mlir_to_binary.sh -C $C -O $O -P $P -N $N
+    sleep 15
 
-echo "Time taken to execute MLIR binary:"
-time ./main_executable_from_mlir
+    echo "Running MLIR binary..."
+    mlir_time=$(/usr/bin/time -f "%e" ./main_executable_from_mlir 2>&1 1>/dev/null)
+    echo "MLIR time: $mlir_time seconds"
+    mlir_times+=("$mlir_time")
+done
 
 #cp myproject/generated/main.ll roughwork/main_MLIR_C${C}_P${P}_O${O}.ll
 
@@ -32,7 +53,34 @@ mkdir myproject
 tychoc --set experimental-network-elaboration=on --set reduction-algorithm=ordered-condition-checking --source-path config.cal:BndBufferNetwork.cal:Buffer.cal:Sink.cal:Producer.cal:Consumer.cal:helperFunctions.cal --target-path myproject bndBuffer.BndBufferNetwork
 sleep 15
 
-clang -O$O myproject/*.c -march=native -o main_executable_from_c
-#clang -S -emit-llvm myproject/*.c -o myproject/output.ll
-echo "Time taken to execute C binary:"
-time ./main_executable_from_c
+for O in "${opt_levels[@]}"; do
+  clang myproject/*.c -O$O -o main_executable_from_c
+  sleep 10
+  #clang -S -emit-llvm myproject/*.c -o myproject/output.ll
+  echo "Running C binary..."
+  c_time=$(/usr/bin/time -f "%e" ./main_executable_from_c 2>&1 1>/dev/null)
+  echo "C time: $c_time seconds"
+  c_times+=("$c_time")
+done
+
+
+# Print header
+echo -n "Opt Level,"
+printf "%s," "${opt_levels[@]}"
+echo
+
+# Function to join array with commas
+join_by_comma() {
+  local IFS=","
+  echo "$*"
+}
+
+# Print results
+echo -n "CPP,"
+join_by_comma "${cpp_times[@]}"
+
+echo -n "MLIR,"
+join_by_comma "${mlir_times[@]}"
+
+echo -n "C,"
+join_by_comma "${c_times[@]}"

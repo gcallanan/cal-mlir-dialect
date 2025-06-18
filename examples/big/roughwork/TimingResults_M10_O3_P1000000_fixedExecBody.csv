@@ -1,0 +1,40 @@
+Opt Level,0,3
+CPP,,6.788
+MLIR,,0.824
+C,,0.123
+
+3. Binary 'main_executable_from_cpp' Generated succesfully
+Time taken to execute CPP binary:
+Finished processing pings from 5 messengers
+
+real	0m1,806s
+user	0m1,802s
+sys	0m0,004s
+Compiling big actor network to MLIR -> LLVM -> Binary
+This script takes in command line arguments:
+ -O (default 3) Set the llvm optimisation level, valid values between 0 and 3.
+ -M (default 8) Set the number of messenger actors in the network.
+ -P (default 10000) Set the number of ping messages sent by each Messenger actor
+
+1. Generating MLIR from .cal files
+
+Picked up _JAVA_OPTIONS: -Xmx45000m
+info: StreamBlocks MLIR code-generator for making use of the MLIR/CIRCT toolchain for HW/SW generation.
+info: Identifier, big.BigNetwork
+info: Target Path, myproject
+2. Generating a binary from the mlir file
+3. Binary 'main_executable_from_mlir' Generated succesfully
+Time taken to execute MLIR binary:
+Finished processing pings from 5 messengers
+
+real	0m0,174s
+user	0m0,170s
+sys	0m0,004s
+Picked up _JAVA_OPTIONS: -Xmx45000m
+2. Generating a binary from the C files
+Time taken to execute C binary:
+Finished processing pings from 5 messengers
+
+real	0m0,123s
+user	0m0,123s
+sys	0m0,000s
