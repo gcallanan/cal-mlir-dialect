@@ -10,10 +10,86 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir::cal {
 #define GEN_PASS_DEF_CONVERTCALACTIONSTOEXECUTIONBODIES
 #include "Dialect/Cal/CalPasses.h.inc"
+
+/**
+ * @brief Caches and reuses equivalent predicate-related operations in CAL and FIFO dialects.
+ *
+ * This utility class tracks specific operation types—`cal::StateGetOp`, `fifo::SpaceOp`,
+ * and `fifo::SizeOp`—and ensures that only one instance of each semantically equivalent
+ * operation is emitted. It maintains small vectors of previously seen ops, and when a new
+ * operation is encountered, it checks if an equivalent one already exists:
+ *
+ * - If a match is found (based on operand equality), the cached result `Value` is returned.
+ * - If no match is found, the operation is stored for future comparisons, and an empty
+ *   `mlir::Value` is returned.
+ *
+ * This enables canonicalization and reuse of results, reducing redundant computation and
+ * simplifying downstream IR.
+ *
+ * @note The caller is responsible for replacing the new operation with the cached result
+ * and erasing the duplicate if needed.
+ */
+class StateAndFifoPredicateOpCache {
+public:
+  mlir::Value cacheOrFind(mlir::Operation *op) {
+    return llvm::TypeSwitch<mlir::Operation *, mlir::Value>(op)
+        .Case<cal::StateGetOp>(
+            [&](cal::StateGetOp getOp) { return cacheOrFind(getOp); })
+        .Case<fifo::SpaceOp>(
+            [&](fifo::SpaceOp spaceOp) { return cacheOrFind(spaceOp); })
+        .Case<fifo::SizeOp>(
+            [&](fifo::SizeOp sizeOp) { return cacheOrFind(sizeOp); })
+        .Default([](mlir::Operation *) {
+          return mlir::Value(); // Return null value if not matched
+        });
+  }
+
+  mlir::Value cacheOrFind(cal::StateGetOp op) {
+    for (auto cached : cachedGetOps) {
+      if (cached.getStateRef() == op.getStateRef()) {
+        //llvm::outs() << "StateGetOp in cache!\n";
+        return cached.getResult();
+      }
+    }
+    //llvm::outs() << "StateGetOp not in cache!\n";
+    cachedGetOps.push_back(op);
+    return mlir::Value(); // Return null if not found
+  }
+
+  mlir::Value cacheOrFind(fifo::SpaceOp op) {
+    for (auto cached : cachedSpaceOps) {
+      if (cached.getInputPort() == op.getInputPort()) {
+        //llvm::outs() << "SpaceOp in cache!\n";
+        return cached.getResult();
+      }
+    }
+    //llvm::outs() << "SpaceOp not in cache!\n";
+    cachedSpaceOps.push_back(op);
+    return mlir::Value(); // Return null if not found
+  }
+
+  mlir::Value cacheOrFind(fifo::SizeOp op) {
+    for (auto cached : cachedSizeOps) {
+      if (cached.getOutputPort() == op.getOutputPort()) {
+        //llvm::outs() << "SpaceOp in cache!\n";
+        return cached.getResult();
+      }
+    }
+    //llvm::outs() << "SpaceOp not in cache!\n";
+    cachedSizeOps.push_back(op);
+    return mlir::Value(); // Return null if not found
+  }
+
+private:
+  llvm::SmallVector<cal::StateGetOp, 4> cachedGetOps;
+  llvm::SmallVector<fifo::SpaceOp, 4> cachedSpaceOps;
+  llvm::SmallVector<fifo::SizeOp, 4> cachedSizeOps;
+};
 
 // This transformation rewrites each `cal.actor` by lowering its `cal.action`
 // operations into a single `cal.execution_body` region. Each action's execution
@@ -112,8 +188,9 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
     rewriter.setInsertionPointToStart(execBlock);
 
     // 3.2 Construct nested SCF if statements for each action
+    StateAndFifoPredicateOpCache cache;
     Value result = constructNestedSCFIfStatements(0, actionOps, rewriter,
-                                                  execBodyOp.getLoc());
+                                                  execBodyOp.getLoc(), cache);
 
     // 4. After all actions have been processed, we need to yield the result of
     // the last action's firing condition. This will be used to determine if
@@ -152,7 +229,8 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
    */
   Value managePredicateConditions(mlir::cal::ActionOp actionOp,
                                   mlir::Block *execBlock,
-                                  mlir::PatternRewriter &rewriter) const {
+                                  mlir::PatternRewriter &rewriter,
+                                  StateAndFifoPredicateOpCache &cache) const {
 
     llvm::SmallVector<mlir::Value, 4> predicateResults;
 
@@ -172,7 +250,12 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
           predicateResults.push_back(resultOp.getEvaluationResult());
           rewriter.eraseOp(op);
         } else {
-          op->moveBefore(execBlock, execBlock->end());
+          if (mlir::Value cached = cache.cacheOrFind(op)) {
+            op->getResult(0).replaceAllUsesWith(cached);
+            rewriter.eraseOp(op);
+          } else {
+            op->moveBefore(execBlock, execBlock->end());
+          }
         }
       }
       opsToErase.push_back(predicate);
@@ -216,13 +299,15 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
    * @return The `Value` result of the top-level `scf.if` chain, indicating
    * whether any action fired.
    */
-  Value constructNestedSCFIfStatements(
-      size_t listIndex, llvm::SmallVector<cal::ActionOp> &actions,
-      PatternRewriter &rewriter, mlir::Location loc) const {
+  Value
+  constructNestedSCFIfStatements(size_t listIndex,
+                                 llvm::SmallVector<cal::ActionOp> &actions,
+                                 PatternRewriter &rewriter, mlir::Location loc,
+                                 StateAndFifoPredicateOpCache &cache) const {
 
     auto actionOp = actions[listIndex];
     auto condition = managePredicateConditions(
-        actionOp, rewriter.getInsertionBlock(), rewriter);
+        actionOp, rewriter.getInsertionBlock(), rewriter, cache);
 
     auto ifOp = rewriter.create<mlir::scf::IfOp>(
         loc, rewriter.getI1Type(), condition, /*withElseRegion=*/true);
@@ -241,8 +326,8 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
 
     Value elseResult;
     if (listIndex + 1 < actions.size()) {
-      elseResult = constructNestedSCFIfStatements(
-          listIndex + 1, actions, rewriter, loc);
+      elseResult = constructNestedSCFIfStatements(listIndex + 1, actions,
+                                                  rewriter, loc, cache);
       rewriter.setInsertionPointToEnd(&ifOp.getElseRegion().back());
     } else {
       elseResult = rewriter.create<mlir::arith::ConstantOp>(

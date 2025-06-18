@@ -164,18 +164,17 @@ cal.actor @src(%arg0: i32, %arg1: i32)
     //CHECK-NEXT:     %8 = fifo.size(%arg1 : !fifo.output_port<i32>) : index
     //CHECK-NEXT:     %9 = arith.index_cast %8 : index to i32
     //CHECK-NEXT:     %10 = arith.cmpi sge, %9, %c1_i32 : i32
-    //CHECK-NEXT:     %11 = fifo.space(%arg2 : !fifo.input_port<i32>) : index
-    //CHECK-NEXT:     %12 = arith.index_cast %11 : index to i32
-    //CHECK-NEXT:     %13 = arith.cmpi sge, %12, %c1_i32 : i32
-    //CHECK-NEXT:     %14 = arith.andi %13, %10 : i1
-    //CHECK-NEXT:     %15 = scf.if %14 -> (i1) {
-    //CHECK-NEXT:       %16 = fifo.pop(%arg1 : !fifo.output_port<i32>) : i32
-    //CHECK-NEXT:       fifo.push(%arg2 : !fifo.input_port<i32>, %16 : i32)
+    //CHECK-NEXT:     %11 = arith.index_cast %3 : index to i32
+    //CHECK-NEXT:     %12 = arith.cmpi sge, %11, %c1_i32 : i32
+    //CHECK-NEXT:     %13 = arith.andi %12, %10 : i1
+    //CHECK-NEXT:     %14 = scf.if %13 -> (i1) {
+    //CHECK-NEXT:       %15 = fifo.pop(%arg1 : !fifo.output_port<i32>) : i32
+    //CHECK-NEXT:       fifo.push(%arg2 : !fifo.input_port<i32>, %15 : i32)
     //CHECK-NEXT:       scf.yield %true : i1
     //CHECK-NEXT:     } else {
     //CHECK-NEXT:       scf.yield %false : i1
     //CHECK-NEXT:     }
-    //CHECK-NEXT:     scf.yield %15 : i1
+    //CHECK-NEXT:     scf.yield %14 : i1
     //CHECK-NEXT:   }
     //CHECK-NEXT:   cal.action_done %7 : i1
     //CHECK-NEXT: }
