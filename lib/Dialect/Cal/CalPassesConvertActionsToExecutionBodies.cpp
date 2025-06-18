@@ -35,13 +35,10 @@ namespace mlir::cal {
 // Transformation Details:
 //   1. Collect all `cal.action` operations from the actor.
 //   2. Create a new `cal.execution_body` at the end of the actor.
-//   3. Move each action's `cal.predicate` operations into the execution body,
-//      capturing their results and combining them using `cmpi eq` to produce a
-//      firing condition.
-//   4. Sort actions by `priority` attribute (higher priority first).
-//   5. Wrap each action body in a nested `scf.if` region controlled by its
+//   3. Sort actions by `priority` attribute (higher priority first).
+//   4. Wrap each action body in a nested `scf.if` region controlled by its
 //      predicate condition. Only the first true condition will result in
-//      execution, yielding `true`; all others fall through.
+//      action execution, yielding `true`; all others fall through.
 //   6. Yield the result of the conditional chain to `cal.action_done`.
 //   7. Erase the original `cal.action` operations.
 //
@@ -96,63 +93,13 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
     auto *execBlock = new mlir::Block();
     execBodyOp.getBody().push_back(execBlock);
 
-    // Going to need a true value in many places, insert it here
-    rewriter.setInsertionPointToEnd(execBlock);
-    auto trueVal = rewriter.create<mlir::arith::ConstantOp>(
-        actor.getLoc(), rewriter.getI1Type(), rewriter.getBoolAttr(true));
-
-    // 3. Move all the predicate operations from the action ops to the
-    // execution body. The results from each predicate will be ORed together
-    // per action, and the result will be used to determine if the action
-    // should be executed. This result will be stored in the
-    // actionFiringConditions map, which maps each action to its firing
-    // condition.
-    llvm::DenseMap<cal::ActionOp, Value> actionFiringConditions;
-    for (auto actionOp : actionOps) {
-      llvm::SmallVector<mlir::Value, 4> predicateResults;
-
-      rewriter.setInsertionPointToEnd(execBlock);
-
-      // 3.1 Extract and move predicate ops from the action to the execution
-      // body. Once moved, we will erase the original predicate ops.
-      llvm::SmallVector<mlir::Operation *> opsToErase;
-      actionOp->walk([&](mlir::cal::Predicate predicate) {
-        auto &region = predicate.getRegion();
-        if (region.empty())
-          return;
-
-        auto &block = region.front();
-        while (!block.empty()) {
-          auto *op = &block.front();
-          if (auto resultOp = llvm::dyn_cast<cal::PredicateResultOp>(op)) {
-            predicateResults.push_back(resultOp.getEvaluationResult());
-            rewriter.eraseOp(op);
-          } else {
-            op->moveBefore(execBlock, execBlock->end());
-          }
-        }
-        opsToErase.push_back(predicate);
-      });
-
-      for (auto *op : opsToErase)
-        rewriter.eraseOp(op);
-
-      // 3.2 Combine predicate results using equality comparisons
-      Value combinedResult = trueVal;
-      for (auto predResult : predicateResults) {
-        combinedResult = rewriter
-                             .create<mlir::arith::AndIOp>(
-                                 actor.getLoc(), predResult, combinedResult)
-                             .getResult();
-      }
-      actionFiringConditions[actionOp] = combinedResult;
-    }
-
-    // 4. Move all action bodies to the execution body. Only one action may
+    // 3. Move all action bodies to the execution body. Only one action may
     // fire per execution body invocation, so we will nest these actions in
     // SCF if statements. (These nestings are ordered by the action priority)
+    // Within each nest we will check, the predicate conditions to see if an
+    // actor can fire.
 
-    // 4.1 Sort actions by priority
+    // 3.1 Sort actions by priority
     std::sort(actionOps.begin(), actionOps.end(),
               [](const cal::ActionOp &a, const cal::ActionOp &b) {
                 auto aAttr = a->getAttrOfType<mlir::IntegerAttr>("priority");
@@ -162,24 +109,92 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
                 return aPriority > bPriority; // Descending order
               });
 
-    // 4.2 Construct nested SCF if statements for each action
-    Value result = constructNestedSCFIfStatements(
-        0, actionOps, actionFiringConditions, rewriter, execBlock,
-        execBodyOp.getLoc());
+    rewriter.setInsertionPointToStart(execBlock);
 
-    // 5. After all actions have been processed, we need to yield the result of
+    // 3.2 Construct nested SCF if statements for each action
+    Value result = constructNestedSCFIfStatements(0, actionOps, rewriter,
+                                                  execBodyOp.getLoc());
+
+    // 4. After all actions have been processed, we need to yield the result of
     // the last action's firing condition. This will be used to determine if
     // the actor performed any action during this execution.
     rewriter.setInsertionPointToEnd(execBlock);
     rewriter.create<cal::ActionDoneOp>(actor.getLoc(), result);
 
-    // 6. Finally, we need to erase the original action operations, as they have
+    // 5. Finally, we need to erase the original action operations, as they have
     // been moved to the execution body and are no longer needed.
     for (auto actionOp : actionOps) {
       rewriter.eraseOp(actionOp);
     }
 
     return success();
+  }
+
+  /**
+   * @brief Moves predicate operations from a CAL action into an execution block
+   * and combines their results into a single boolean condition.
+   *
+   * This function processes all `cal::Predicate` regions associated with the
+   * given `cal::ActionOp`. It moves each predicate's internal operations
+   * (except for `cal::PredicateResultOp`) into the specified execution block.
+   * The results of all `PredicateResultOp`s are collected and combined using a
+   * chain of `arith::AndIOp`, starting from a constant `true` value.
+   *
+   * After relocation, the original predicate operations and result ops are
+   * erased. The final combined predicate value represents the overall firing
+   * condition for the action.
+   *
+   * @param actionOp The `cal::ActionOp` whose predicates are being processed.
+   * @param execBlock The block into which predicate operations are moved.
+   * @param rewriter The `PatternRewriter` used to manipulate the IR.
+   *
+   * @return A `Value` representing the logical AND of all predicate results.
+   */
+  Value managePredicateConditions(mlir::cal::ActionOp actionOp,
+                                  mlir::Block *execBlock,
+                                  mlir::PatternRewriter &rewriter) const {
+
+    llvm::SmallVector<mlir::Value, 4> predicateResults;
+
+    rewriter.setInsertionPointToEnd(execBlock);
+
+    // Collect and move all predicate operations into execBlock
+    llvm::SmallVector<mlir::Operation *> opsToErase;
+    actionOp->walk([&](mlir::cal::Predicate predicate) {
+      auto &region = predicate.getRegion();
+      if (region.empty())
+        return;
+
+      auto &block = region.front();
+      while (!block.empty()) {
+        auto *op = &block.front();
+        if (auto resultOp = llvm::dyn_cast<mlir::cal::PredicateResultOp>(op)) {
+          predicateResults.push_back(resultOp.getEvaluationResult());
+          rewriter.eraseOp(op);
+        } else {
+          op->moveBefore(execBlock, execBlock->end());
+        }
+      }
+      opsToErase.push_back(predicate);
+    });
+
+    // Erase old predicate operations
+    for (auto *op : opsToErase)
+      rewriter.eraseOp(op);
+
+    // Combine predicate results using a chain of AndIOps
+    auto trueVal = rewriter.create<mlir::arith::ConstantOp>(
+        actionOp.getLoc(), rewriter.getI1Type(), rewriter.getBoolAttr(true));
+    mlir::Value combinedResult = trueVal;
+    for (auto predResult : predicateResults) {
+      combinedResult = rewriter
+                           .create<mlir::arith::AndIOp>(
+                               actionOp.getLoc(), predResult, combinedResult)
+                           .getResult();
+    }
+
+    // Store final condition associated with the action
+    return combinedResult;
   }
 
   /**
@@ -194,13 +209,8 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
    * @param listIndex The index of the current action to process in the
    * `actions` list.
    * @param actions The list of `cal::ActionOp`s to process.
-   * @param actionFiringConditions A map from `cal::ActionOp` to the
-   * corresponding condition `Value` used to decide whether the action should
-   * fire.
    * @param rewriter The `PatternRewriter` used to create and manipulate
    * operations.
-   * @param execBlock A pointer to the execution block where this SCF logic is
-   * being inserted.
    * @param loc The MLIR location used for newly created operations.
    *
    * @return The `Value` result of the top-level `scf.if` chain, indicating
@@ -208,12 +218,11 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
    */
   Value constructNestedSCFIfStatements(
       size_t listIndex, llvm::SmallVector<cal::ActionOp> &actions,
-      llvm::DenseMap<cal::ActionOp, Value> &actionFiringConditions,
-      PatternRewriter &rewriter, mlir::Block *execBlock,
-      mlir::Location loc) const {
+      PatternRewriter &rewriter, mlir::Location loc) const {
 
     auto actionOp = actions[listIndex];
-    auto condition = actionFiringConditions[actionOp];
+    auto condition = managePredicateConditions(
+        actionOp, rewriter.getInsertionBlock(), rewriter);
 
     auto ifOp = rewriter.create<mlir::scf::IfOp>(
         loc, rewriter.getI1Type(), condition, /*withElseRegion=*/true);
@@ -232,9 +241,8 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
 
     Value elseResult;
     if (listIndex + 1 < actions.size()) {
-      elseResult = constructNestedSCFIfStatements(listIndex + 1, actions,
-                                                  actionFiringConditions,
-                                                  rewriter, execBlock, loc);
+      elseResult = constructNestedSCFIfStatements(
+          listIndex + 1, actions, rewriter, loc);
       rewriter.setInsertionPointToEnd(&ifOp.getElseRegion().back());
     } else {
       elseResult = rewriter.create<mlir::arith::ConstantOp>(
