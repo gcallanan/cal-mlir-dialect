@@ -17,22 +17,25 @@ namespace mlir::cal {
 #include "Dialect/Cal/CalPasses.h.inc"
 
 /**
- * @brief Caches and reuses equivalent predicate-related operations in CAL and FIFO dialects.
+ * @brief Caches and reuses equivalent predicate-related operations in CAL and
+ * FIFO dialects.
  *
- * This utility class tracks specific operation types—`cal::StateGetOp`, `fifo::SpaceOp`,
- * and `fifo::SizeOp`—and ensures that only one instance of each semantically equivalent
- * operation is emitted. It maintains small vectors of previously seen ops, and when a new
- * operation is encountered, it checks if an equivalent one already exists:
+ * This utility class tracks specific operation types—`cal::StateGetOp`,
+ * `fifo::SpaceOp`, and `fifo::SizeOp`—and ensures that only one instance of
+ * each semantically equivalent operation is emitted. It maintains small vectors
+ * of previously seen ops, and when a new operation is encountered, it checks if
+ * an equivalent one already exists:
  *
- * - If a match is found (based on operand equality), the cached result `Value` is returned.
- * - If no match is found, the operation is stored for future comparisons, and an empty
- *   `mlir::Value` is returned.
+ * - If a match is found (based on operand equality), the cached result `Value`
+ * is returned.
+ * - If no match is found, the operation is stored for future comparisons, and
+ * an empty `mlir::Value` is returned.
  *
- * This enables canonicalization and reuse of results, reducing redundant computation and
- * simplifying downstream IR.
+ * This enables canonicalization and reuse of results, reducing redundant
+ * computation and simplifying downstream IR.
  *
- * @note The caller is responsible for replacing the new operation with the cached result
- * and erasing the duplicate if needed.
+ * @note The caller is responsible for replacing the new operation with the
+ * cached result and erasing the duplicate if needed.
  */
 class StateAndFifoPredicateOpCache {
 public:
@@ -52,11 +55,11 @@ public:
   mlir::Value cacheOrFind(cal::StateGetOp op) {
     for (auto cached : cachedGetOps) {
       if (cached.getStateRef() == op.getStateRef()) {
-        //llvm::outs() << "StateGetOp in cache!\n";
+        // llvm::outs() << "StateGetOp in cache!\n";
         return cached.getResult();
       }
     }
-    //llvm::outs() << "StateGetOp not in cache!\n";
+    // llvm::outs() << "StateGetOp not in cache!\n";
     cachedGetOps.push_back(op);
     return mlir::Value(); // Return null if not found
   }
@@ -64,11 +67,11 @@ public:
   mlir::Value cacheOrFind(fifo::SpaceOp op) {
     for (auto cached : cachedSpaceOps) {
       if (cached.getInputPort() == op.getInputPort()) {
-        //llvm::outs() << "SpaceOp in cache!\n";
+        // llvm::outs() << "SpaceOp in cache!\n";
         return cached.getResult();
       }
     }
-    //llvm::outs() << "SpaceOp not in cache!\n";
+    // llvm::outs() << "SpaceOp not in cache!\n";
     cachedSpaceOps.push_back(op);
     return mlir::Value(); // Return null if not found
   }
@@ -76,11 +79,11 @@ public:
   mlir::Value cacheOrFind(fifo::SizeOp op) {
     for (auto cached : cachedSizeOps) {
       if (cached.getOutputPort() == op.getOutputPort()) {
-        //llvm::outs() << "SpaceOp in cache!\n";
+        // llvm::outs() << "SpaceOp in cache!\n";
         return cached.getResult();
       }
     }
-    //llvm::outs() << "SpaceOp not in cache!\n";
+    // llvm::outs() << "SpaceOp not in cache!\n";
     cachedSizeOps.push_back(op);
     return mlir::Value(); // Return null if not found
   }
@@ -278,6 +281,100 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
 
     // Store final condition associated with the action
     return combinedResult;
+  }
+
+  /**
+   * @brief Moves predicate operations from a CAL action into an execution block
+   * and combines their results into a single boolean condition. This function
+   * is differnt to managePredicateConditions as it checks one condition and
+   * skips over the others for the same action if it is false. This resulted
+   * in decreased performance in my tests
+   *
+   * @param actionOp The `cal::ActionOp` whose predicates are being processed.
+   * @param execBlock The block into which predicate operations are moved.
+   * @param rewriter The `PatternRewriter` used to manipulate the IR.
+   *
+   * @return A `Value` representing the logical AND of all predicate results.
+   */
+  Value managePredicateConditionsSingleCheck(mlir::cal::ActionOp actionOp,
+                                  mlir::Block *execBlock,
+                                  mlir::PatternRewriter &rewriter,
+                                  StateAndFifoPredicateOpCache &cache) const {
+
+    llvm::SmallVector<mlir::Value, 4> predicateResults;
+
+    rewriter.setInsertionPointToEnd(execBlock);
+
+    auto falseVal = rewriter.create<mlir::arith::ConstantOp>(
+        actionOp.getLoc(), rewriter.getI1Type(), rewriter.getBoolAttr(false));
+    auto trueVal = rewriter.create<mlir::arith::ConstantOp>(
+        actionOp.getLoc(), rewriter.getI1Type(), rewriter.getBoolAttr(true));
+
+    bool firstCond = true;
+    mlir::Value toReturn;
+    mlir::Block *currentBlock = execBlock;
+
+    // Collect and move all predicate operations into execBlock
+    llvm::SmallVector<mlir::Operation *> opsToErase;
+    actionOp->walk([&](mlir::cal::Predicate predicate) {
+      mlir::Value predicateResult;
+
+      auto &region = predicate.getRegion();
+      if (region.empty())
+        return;
+
+      auto &block = region.front();
+      while (!block.empty()) {
+        // Step 1: Insert all predicate operations to current location
+        auto *op = &block.front();
+        if (auto resultOp = llvm::dyn_cast<mlir::cal::PredicateResultOp>(op)) {
+          predicateResult = resultOp.getEvaluationResult();
+          rewriter.eraseOp(op);
+        } else {
+          // if (mlir::Value cached = cache.cacheOrFind(op)) {
+          //   op->getResult(0).replaceAllUsesWith(cached);
+          //   rewriter.eraseOp(op);
+          // } else {
+          op->moveBefore(rewriter.getInsertionBlock(),
+                         rewriter.getInsertionPoint());
+          //}
+        }
+      }
+
+      // Step 2: Insert a scf if, if the result is true, evaluate the next
+      // predicate, if its false, return false
+      auto ifOp = rewriter.create<mlir::scf::IfOp>(
+          actionOp.getLoc(), rewriter.getI1Type(), predicateResult,
+          /*withElseRegion=*/true);
+
+      if (firstCond == true) {
+        firstCond = false;
+        toReturn = ifOp.getResult(0);
+      } else {
+        rewriter.create<mlir::scf::YieldOp>(actionOp.getLoc(),
+                                            ifOp.getResult(0));
+      }
+
+      rewriter.setInsertionPointToEnd(&ifOp.getElseRegion().back());
+      rewriter.create<mlir::scf::YieldOp>(actionOp.getLoc(),
+                                          falseVal.getResult());
+
+      rewriter.setInsertionPointToEnd(&ifOp.getThenRegion().back());
+
+      opsToErase.push_back(predicate);
+    });
+
+    // We need a final true value for the innermost block:
+    rewriter.create<mlir::scf::YieldOp>(actionOp.getLoc(), trueVal.getResult());
+
+    // Erase old predicate operations
+    for (auto *op : opsToErase)
+      rewriter.eraseOp(op);
+
+    rewriter.setInsertionPointToEnd(execBlock);
+
+    // Store final condition associated with the action
+    return toReturn;
   }
 
   /**
