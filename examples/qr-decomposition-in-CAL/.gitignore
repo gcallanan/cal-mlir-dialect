@@ -5,3 +5,5 @@ main_executable
 main.opt.ll
 output_from_qrd_program.txt
 temp*.txt
+main_executable_from_cpp
+main_executable_from_c
