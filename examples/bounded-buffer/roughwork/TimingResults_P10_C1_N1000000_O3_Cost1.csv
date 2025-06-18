@@ -1,0 +1,64 @@
+O Flag,3,3
+CPP,17.983,18.014
+MLIR,3.994,3.998
+C,2.511,2.513
+
+[100%] Built target BndBufferNetwork
+3. Binary 'main_executable_from_cpp' Generated succesfully
+Time taken to execute CPP binary:
+Producers items sum: 7.66789e+13
+Consumer items sum: 3.21593e+08
+
+real	0m17,983s
+user	0m17,955s
+sys	0m0,012s
+Compiling producer consumer with bounded buffer network to MLIR -> LLVM -> Binary
+This script takes in command line arguments:
+ -O (default 3) Set the llvm optimisation level, valid values between 0 and 3.
+ -C (default 3) The number of consumers.
+ -P (default 3) The number of producers
+ -B (default 50) The amount of slots in the buffer actors
+ -N (default 10000) The number of items produced by each producer
+
+1. Generating MLIR from .cal files
+
+Picked up _JAVA_OPTIONS: -Xmx45000m
+info: StreamBlocks MLIR code-generator for making use of the MLIR/CIRCT toolchain for HW/SW generation.
+info: Identifier, bndBuffer.BndBufferNetwork
+info: Target Path, myproject
+2. Generating a binary from the mlir file
+3. Binary 'main_executable_from_mlir' Generated succesfully
+Time taken to execute MLIR binary:
+Producers items sum: 76678889996288.000000
+Consumer items sum: 321592608.000000
+
+real	0m3,994s
+user	0m3,990s
+sys	0m0,004s
+Picked up _JAVA_OPTIONS: -Xmx45000m
+Time taken to execute C binary:
+Producers items sum: 7.66789e+13
+Consumer items sum: 3.21593e+08
+
+real	0m2,511s
+user	0m2,511s
+sys	0m0,000s
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/bounded-buffer$ time ./main_executable_from_cpp && sleep 5 && time ./main_executable_from_mlir && sleep 5 && time ./main_executable_from_c
+Producers items sum: 7.66789e+13
+Consumer items sum: 3.21593e+08
+
+real	0m18,014s
+user	0m17,940s
+sys	0m0,029s
+Producers items sum: 76678889996288.000000
+Consumer items sum: 321592608.000000
+
+real	0m3,998s
+user	0m3,994s
+sys	0m0,001s
+Producers items sum: 7.66789e+13
+Consumer items sum: 3.21593e+08
+
+real	0m2,513s
+user	0m2,508s
+sys	0m0,005s

@@ -1,7 +1,0 @@
-Bounded-Buffer,C=3,P=3,N=10000
-OptimisationFlag,0,1,2,3
-MLIR,0.375,0.352,0.343,0.342
-C - Gcc - OCC,1.531,1.183,1.183,1.182
-C - Clang - OCC,1.720,1.183,1.182,1.188
-C - Clang - OCC - -march=native,1.614,1.183,1.182,1.182
-CPP - OCC,1.645,1.202,1.203,1.201

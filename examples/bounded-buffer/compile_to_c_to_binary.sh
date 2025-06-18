@@ -53,6 +53,6 @@ tychoc --set experimental-network-elaboration=on --set reduction-algorithm=order
 
 echo "2. Generating a binary from the C files"
 
-cc myproject/*.c -O$O -o main_executable_from_c
+clang myproject/*.c -O$O -o main_executable_from_c
 
 echo "3. Binary 'main_executable_from_c' Generated succesfully"

@@ -12,6 +12,7 @@ echo "Installing the frontend: streamblocks-tycho"
 echo ""
 
 cd streamblocks-tycho
+git checkout orderedConditionCheckingReducer
 mvn install -DskipTests
 
 echo "Installing the backend: streamblocks-platforms"
