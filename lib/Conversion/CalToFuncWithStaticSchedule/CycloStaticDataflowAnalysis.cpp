@@ -5,14 +5,42 @@
 
 namespace mlir {
 
+void printScheduleGraph(ScheduleGraph &graph) {
+  llvm::outs() << "ScheduleGraph for actor: " << graph.actor.getSymName()
+               << "\n";
+
+  for (size_t i = 0; i < graph.nodes.size(); ++i) {
+    auto &node = graph.nodes[i];
+    llvm::outs() << "  Node " << i << ": "
+                 << node.action.getActionNameAttr().getValue() << "\n";
+
+    if (node.outgoingEdge) {
+      llvm::outs() << "    → Next: Node " << node.outgoingEdge->nodeIndex;
+
+      switch (node.outgoingEdge->type) {
+      case ScheduleEdgeType::Next:
+        llvm::outs() << " (Next)";
+        break;
+      case ScheduleEdgeType::WrapAround:
+        llvm::outs() << " (WrapAround)";
+        break;
+      }
+
+      llvm::outs() << "\n";
+    } else {
+      llvm::outs() << "    → No outgoing edge\n";
+    }
+  }
+}
+
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                              const PredicateInfo &info) {
+                              const PredicateInequalityInfo &info) {
   std::string ssaName;
   llvm::raw_string_ostream ss(ssaName);
   info.stateVar.printAsOperand(ss, mlir::OpPrintingFlags().useLocalScope());
   ss.flush();
 
-  os << "PredicateInfo(" << ssaName << " ";
+  os << "PredicateInequalityInfo(" << ssaName << " ";
   switch (info.predicate) {
   case mlir::arith::CmpIPredicate::eq:
     os << "==";
@@ -50,13 +78,13 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
 }
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                              const StateVarPattern &info) {
+                              const StateVarUpdatePattern &info) {
   std::string ssaName;
   llvm::raw_string_ostream ss(ssaName);
   info.stateVar.printAsOperand(ss, mlir::OpPrintingFlags().useLocalScope());
   ss.flush();
 
-  os << "StateVarPattern(" << ssaName << " ";
+  os << "StateVarUpdatePattern(" << ssaName << " ";
   switch (info.kind) {
   case StateVarUpdateKind::ConstantAssignment:
     os << "=";
@@ -73,21 +101,44 @@ CycloStaticDataflowAnalysis::CycloStaticDataflowAnalysis(Operation *op) {
   llvm::outs() << "\n\n\nCycloStaticDataflowAnalysis\n";
   // STEP 1: Examine all predicate operations in the module calcualte the
   // inequalities for all predicates that are candidates to be state variables
-  op->walk([&](mlir::cal::Predicate predicateOp) {
-    if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
-      llvm::outs() << "Predicate: " << predicateInfo << "\n";
-      if (auto actionOp = llvm::dyn_cast_or_null<mlir::cal::ActionOp>(
-              predicateOp.getParentOp())) {
-        llvm::outs() << "Found parent ActionOp: "
-                     << actionOp.getActionNameAttr().getValue() << "\n";
-        auto temp =
-            getStateIncrementPatternOrNull(predicateInfo->stateVar, actionOp);
-        if (temp) {
-          llvm::outs() << "State Increment Pattern: " << temp << "\n";
-        }
-      }
-    }
-  });
+  //   op->walk([&](mlir::cal::Predicate predicateOp) {
+  //     if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
+  //       llvm::outs() << "Predicate: " << predicateInfo << "\n";
+  //       if (auto actionOp = llvm::dyn_cast_or_null<mlir::cal::ActionOp>(
+  //               predicateOp.getParentOp())) {
+  //         llvm::outs() << "Found parent ActionOp: "
+  //                      << actionOp.getActionNameAttr().getValue() << "\n";
+  //         auto temp =
+  //             getStateIncrementPatternOrNull(predicateInfo->stateVar,
+  //             actionOp);
+  //         if (temp) {
+  //           llvm::outs() << "State Increment Pattern: " << temp << "\n";
+  //         }
+  //       }
+  //     }
+  //   });
+
+  // Group predicates and actions by candidate state variable
+  //   llvm::DenseMap<Value,
+  //                  llvm::SmallVector<std::pair<cal::Predicate,
+  //                  cal::ActionOp>, 4>>
+  //       stateVarToPredicateActions;
+
+  //   op->walk([&](mlir::cal::Predicate predicateOp) {
+  //     if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
+  //       if (auto actionOp = llvm::dyn_cast_or_null<mlir::cal::ActionOp>(
+  //               predicateOp.getParentOp())) {
+  //         if (auto temp =
+  //         getStateIncrementPatternOrNull(predicateInfo->stateVar,
+  //                                                        actionOp)) {
+  //           stateVarToPredicateActions[predicateInfo->stateVar].emplace_back(
+  //               predicateOp, actionOp);
+  //         }
+  //       }
+  //     }
+  //   });
+
+  op->walk([&](mlir::cal::ActorOp actor) { determineActorSchedule(actor); });
 
   //   for (const auto &entry : predicateStateVariables) {
   //     llvm::outs() << "Predicate: " << entry.second << "\n";
@@ -100,6 +151,143 @@ CycloStaticDataflowAnalysis::CycloStaticDataflowAnalysis(Operation *op) {
   //     uniqueStateVars.insert(info.stateVar);
   //   }
 }
+
+void CycloStaticDataflowAnalysis::determineActorSchedule(cal::ActorOp actorOp) {
+
+  llvm::outs() << "Determining schedule for actor: "
+               << actorOp.getNameAttr().getValue() << "\n";
+
+  int actionCount = 0;
+  actorOp.walk([&](cal::ActionOp actionOp) { ++actionCount; });
+
+  if (actionCount == 1) {
+    generateSingleActionSchedule(actorOp);
+  } else {
+    generateMultiActionSchedule(actorOp);
+  }
+}
+
+void CycloStaticDataflowAnalysis::generateSingleActionSchedule(
+    cal::ActorOp actorOp) {
+  ScheduleGraph graph;
+  graph.actor = actorOp;
+  graph.type = GraphType::SingleAction;
+
+  // Find the single action
+  cal::ActionOp singleAction = nullptr;
+  actorOp.walk([&](cal::ActionOp actionOp) { singleAction = actionOp; });
+
+  // Create a single node for the action
+  ScheduleNode node;
+  node.action = singleAction;
+  node.outgoingEdge =
+      ScheduleEdge{0, ScheduleEdgeType::WrapAround}; // Loops to itself
+
+  graph.nodes.push_back(node);
+
+  // Optionally print the schedule graph
+  printScheduleGraph(graph);
+
+  // Store or process the graph as needed (not shown)
+  actorScheduleMap[actorOp] = graph;
+}
+
+void CycloStaticDataflowAnalysis::generateMultiActionSchedule(
+    cal::ActorOp actorOp) {
+
+  llvm::outs() << "Generating multi-action schedule for actor: "
+               << actorOp.getNameAttr().getValue() << "\n";
+
+  // We need to find a state variable that is guarded by the equality
+  // in a predicate and properly incremented in the corresponding action.
+  // If this state variable is used in this way across every action in the
+  // actor, then we can consider it a candidate for the scheduling variable.
+  // STEP 1: Identify the scheduling variable
+  // STEP 1.1: Find all possible candidate scheduling variables, store a list of
+  // actions that this variable is a candidate in. We will prune to the correct
+  // variable in STEp 1.2
+
+  llvm::DenseMap<mlir::Value, llvm::SmallPtrSet<mlir::Operation *, 4>>
+      actionToValues;
+  int numberOfActions = 0;
+  for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
+    numberOfActions++;
+    for (auto predicateOp : actionOp.getOps<cal::Predicate>()) {
+      if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
+        if (auto stateIncrementPattern = getStateUpdatePatternOrNull(
+                predicateInfo->stateVar, actionOp)) {
+          actionToValues[predicateInfo->stateVar].insert(actionOp);
+        }
+      }
+    }
+  }
+
+  // STEP 1.2: Prune the candidate scheduling variables to only those that are
+  // candidates in every action of the actor.
+  Value commonStateVar;
+  size_t numCommonStateVar = 0;
+  for (const auto &entry : actionToValues) {
+    if (entry.second.size() == numberOfActions) {
+      commonStateVar = entry.first;
+      numCommonStateVar++;
+    }
+  }
+
+  // If we have more than one common state variable, we cannot proceed
+  if (numCommonStateVar != 1) {
+    ScheduleGraph graph;
+    graph.actor = actorOp;
+    graph.type = GraphType::Dynamic;
+    actorScheduleMap[actorOp] = graph;
+    return;
+  }
+
+  // STEP 2: Analyse the inequalities and state updates for the common state
+  // variable across all actions to see if we can construct a
+  // schedule graph.
+
+  // What do I have to do here?
+  // 1. Construct a map of actions and SchedulingVariableInfoForAction objects
+  // 2. Pass this map to the schedule graph constructor which will attempt to
+  //    construct a schedule graph based on the information provided.
+  // 3. You will need to implement checks to ensure that there is no stepping by
+  // +ve or -ve infinity
+
+  llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction> actionInfoMap;
+  for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
+    llvm::SmallVector<PredicateInequalityInfo> predicateInfos;
+    for (auto predicateOp : actionOp.getOps<cal::Predicate>()) {
+      if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
+        if (predicateInfo->stateVar == commonStateVar) {
+          predicateInfos.push_back(*predicateInfo);
+        }
+      }
+    }
+    auto stateUpdatePattern =
+        getStateUpdatePatternOrNull(commonStateVar, actionOp);
+
+    SchedulingVariableInfoForAction infoForAction;
+    infoForAction.stateVar = commonStateVar;
+    infoForAction.predicateInequalities = std::move(predicateInfos);
+    infoForAction.updatePattern = stateUpdatePattern;
+    actionInfoMap[actionOp] = infoForAction;
+
+    int initialStateValue = findInitialAssignment(commonStateVar, actorOp);
+
+    if (auto scheduleGraph = constructScheduleGraphFromActionInfo(
+            actorOp, actionInfoMap, initialStateValue)) {
+      actorScheduleMap[actorOp] = *scheduleGraph;
+    } else {
+      ScheduleGraph graph;
+      graph.actor = actorOp;
+      graph.type = GraphType::Dynamic;
+      actorScheduleMap[actorOp] = graph;
+    }
+  }
+
+  llvm::outs() << "We have identified the variable:" << commonStateVar
+               << " for scheduling\n";
+} // namespace mlir
 
 std::optional<int64_t>
 CycloStaticDataflowAnalysis::tryGetConstantValue(Value val) {
@@ -174,7 +362,7 @@ CycloStaticDataflowAnalysis::evaluateConstantValue(Value val) {
   return std::nullopt;
 }
 
-std::optional<PredicateInfo>
+std::optional<PredicateInequalityInfo>
 CycloStaticDataflowAnalysis::candidatePredicateOrNull(
     cal::Predicate predicateOp) {
   mlir::Value lhs, rhs;
@@ -209,35 +397,33 @@ CycloStaticDataflowAnalysis::candidatePredicateOrNull(
   mlir::Value otherVar = lhsIsState ? rhs : lhs;
 
   if (auto constVal = evaluateConstantValue(otherVar)) {
-    return PredicateInfo{pred, stateVar, *constVal};
+    return PredicateInequalityInfo{pred, stateVar, *constVal};
   }
 
   return std::nullopt;
 }
 
-std::optional<StateVarPattern>
-CycloStaticDataflowAnalysis::getStateIncrementPatternOrNull(
+std::optional<StateVarUpdatePattern>
+CycloStaticDataflowAnalysis::getStateUpdatePatternOrNull(
     mlir::Value stateVar, cal::ActionOp actionOp) {
-
   int numSets = 0;
   mlir::cal::StateSetOp setOp = nullptr;
   actionOp->walk([&](mlir::cal::StateSetOp ss) {
     if (ss.getStateRef() == stateVar) {
-      llvm::outs() << "Found set operation for state variable: " << stateVar
-                   << " " << ss << "\n";
       setOp = ss;
       numSets++;
     }
   });
 
   if (auto assignedValue = evaluateConstantValue(setOp.getStateValue())) {
-    return StateVarPattern{stateVar, StateVarUpdateKind::ConstantAssignment,
-                           *assignedValue};
+    return StateVarUpdatePattern{
+        stateVar, StateVarUpdateKind::ConstantAssignment, *assignedValue};
   }
 
   if (auto increment =
           getIncrementAmount(setOp.getStateValue(), setOp.getStateRef())) {
-    return StateVarPattern{stateVar, StateVarUpdateKind::Increment, *increment};
+    return StateVarUpdatePattern{stateVar, StateVarUpdateKind::Increment,
+                                 *increment};
   }
 
   if (numSets != 1) {
@@ -335,6 +521,41 @@ CycloStaticDataflowAnalysis::getIncrementAmount(Value setValue,
     return std::nullopt; // No dependence on target state var
 
   return delta;
+}
+
+std::optional<ScheduleGraph>
+CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
+    cal::ActorOp actorOp,
+    const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+        &actionInfoMap,
+    int initialStateValue) {
+
+  llvm::outs() << "Constructing schedule graph for actor: "
+               << actorOp.getNameAttr().getValue() << "\n";
+
+  llvm::outs() << "Initial Op Value " << initialStateValue << "\n";
+
+  llvm::outs() << "This is where we pick up from\n";
+
+  return std::nullopt;
+}
+
+int CycloStaticDataflowAnalysis::findInitialAssignment(mlir::Value stateVar,
+                                                       cal::ActorOp actorOp) {
+  mlir::cal::StateSetOp initialSetOp = nullptr;
+
+  for (auto &op : actorOp.getBody().front()) {
+    if (auto setOp = llvm::dyn_cast<mlir::cal::StateSetOp>(op)) {
+      if (setOp.getStateRef() == stateVar) {
+        // Found the first assignment to the state variable
+        initialSetOp = setOp;
+        break;
+      }
+    }
+  }
+
+  return evaluateConstantValue(initialSetOp.getStateValue())
+      .value_or(0); // Return 0 if no initial assignment found
 }
 
 } // namespace mlir

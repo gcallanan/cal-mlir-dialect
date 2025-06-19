@@ -13,7 +13,37 @@
 
 namespace mlir {
 
-struct PredicateInfo {
+// ====== Start: Everything we need to store a graph describing an actor's
+// schedule
+enum class GraphType {
+  SingleAction,
+  OrderedActionsSchedule,
+  Dynamic // Dynamic Dataflow
+};
+
+enum class ScheduleEdgeType { Next, WrapAround };
+
+struct ScheduleEdge {
+  int nodeIndex;
+  ScheduleEdgeType type;
+};
+
+struct ScheduleNode {
+  mlir::cal::ActionOp action;
+  std::optional<ScheduleEdge> outgoingEdge; // only one
+};
+
+struct ScheduleGraph {
+  GraphType type;
+  mlir::cal::ActorOp actor;
+  std::vector<ScheduleNode> nodes; // All schedule nodes
+};
+
+void printScheduleGraph(const ScheduleGraph &graph);
+// ====== End: Everything we need to store a graph describing an actor's
+// schedule
+
+struct PredicateInequalityInfo {
   mlir::arith::CmpIPredicate predicate;
   mlir::Value stateVar;
   int64_t constant;
@@ -21,15 +51,23 @@ struct PredicateInfo {
 
 enum class StateVarUpdateKind { Increment, ConstantAssignment };
 
-struct StateVarPattern {
+struct StateVarUpdatePattern {
   mlir::Value stateVar;
   StateVarUpdateKind kind;
   int64_t value;
 };
 
+struct SchedulingVariableInfoForAction {
+  mlir::Value stateVar;
+  llvm::SmallVector<PredicateInequalityInfo, 4> predicateInequalities;
+  std::optional<StateVarUpdatePattern> updatePattern;
+};
+
 // Forward declare operator<<
-llvm::raw_ostream &operator<<(llvm::raw_ostream &, const PredicateInfo &);
-llvm::raw_ostream &operator<<(llvm::raw_ostream &, const StateVarPattern &);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &,
+                              const PredicateInequalityInfo &);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &,
+                              const StateVarUpdatePattern &);
 
 struct CycloStaticDataflowAnalysis {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CycloStaticDataflowAnalysis)
@@ -38,15 +76,26 @@ public:
   explicit CycloStaticDataflowAnalysis(Operation *op);
 
 private:
-  llvm::DenseMap<mlir::cal::Predicate, PredicateInfo> predicateStateVariables;
+  llvm::DenseMap<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
+
+  void determineActorSchedule(cal::ActorOp actorOp);
+  void generateSingleActionSchedule(cal::ActorOp actorOp);
+  void generateMultiActionSchedule(cal::ActorOp actorOp);
+  std::optional<ScheduleGraph> constructScheduleGraphFromActionInfo(
+      cal::ActorOp actorOp,
+      const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+          &actionInfoMap,
+      int initialStateValue);
+
   std::optional<int64_t> tryGetConstantValue(Value val);
   std::optional<int64_t> evaluateConstantValue(Value val);
-  std::optional<PredicateInfo>
+  std::optional<PredicateInequalityInfo>
   candidatePredicateOrNull(cal::Predicate predicateOp);
-  std::optional<StateVarPattern>
-  getStateIncrementPatternOrNull(mlir::Value stateVar, cal::ActionOp actionOp);
+  std::optional<StateVarUpdatePattern>
+  getStateUpdatePatternOrNull(mlir::Value stateVar, cal::ActionOp actionOp);
   std::optional<int64_t> getIncrementAmount(Value setValue,
                                             Value targetStateVar);
+  int findInitialAssignment(mlir::Value stateVar, cal::ActorOp);
 };
 
 } // namespace mlir
