@@ -1,11 +1,12 @@
+#include "Conversion/CalToFuncWithStaticSchedule/CycloStaticDataflowAnalysis.h"
+#include "Dialect/Cal/CalOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/OpImplementation.h"
-#include "Dialect/Cal/CalOps.h"
-#include "Conversion/CalToFuncWithStaticSchedule/CycloStaticDataflowAnalysis.h"
 
 namespace mlir {
 
-llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const PredicateInfo &info) {
+llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                              const PredicateInfo &info) {
   std::string ssaName;
   llvm::raw_string_ostream ss(ssaName);
   info.stateVar.printAsOperand(ss, mlir::OpPrintingFlags().useLocalScope());
@@ -13,42 +14,95 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const PredicateInfo &info) 
 
   os << "PredicateInfo(" << ssaName << " ";
   switch (info.predicate) {
-  case mlir::arith::CmpIPredicate::eq:  os << "=="; break;
-  case mlir::arith::CmpIPredicate::ne:  os << "!="; break;
-  case mlir::arith::CmpIPredicate::slt: os << "<";  break;
-  case mlir::arith::CmpIPredicate::sle: os << "<="; break;
-  case mlir::arith::CmpIPredicate::sgt: os << ">";  break;
-  case mlir::arith::CmpIPredicate::sge: os << ">="; break;
-  case mlir::arith::CmpIPredicate::ult: os << "<";  break;
-  case mlir::arith::CmpIPredicate::ule: os << "<="; break;
-  case mlir::arith::CmpIPredicate::ugt: os << ">";  break;
-  case mlir::arith::CmpIPredicate::uge: os << ">="; break;
+  case mlir::arith::CmpIPredicate::eq:
+    os << "==";
+    break;
+  case mlir::arith::CmpIPredicate::ne:
+    os << "!=";
+    break;
+  case mlir::arith::CmpIPredicate::slt:
+    os << "<";
+    break;
+  case mlir::arith::CmpIPredicate::sle:
+    os << "<=";
+    break;
+  case mlir::arith::CmpIPredicate::sgt:
+    os << ">";
+    break;
+  case mlir::arith::CmpIPredicate::sge:
+    os << ">=";
+    break;
+  case mlir::arith::CmpIPredicate::ult:
+    os << "<";
+    break;
+  case mlir::arith::CmpIPredicate::ule:
+    os << "<=";
+    break;
+  case mlir::arith::CmpIPredicate::ugt:
+    os << ">";
+    break;
+  case mlir::arith::CmpIPredicate::uge:
+    os << ">=";
+    break;
   }
-  os << " " << info.constant << ")\n";
+  os << " " << info.constant << ")";
+  return os;
+}
+
+llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                              const StateVarPattern &info) {
+  std::string ssaName;
+  llvm::raw_string_ostream ss(ssaName);
+  info.stateVar.printAsOperand(ss, mlir::OpPrintingFlags().useLocalScope());
+  ss.flush();
+
+  os << "StateVarPattern(" << ssaName << " ";
+  switch (info.kind) {
+  case StateVarUpdateKind::ConstantAssignment:
+    os << "=";
+    break;
+  case StateVarUpdateKind::Increment:
+    os << "= " << ssaName << " + ";
+    break;
+  }
+  os << " " << info.value << ")";
   return os;
 }
 
 CycloStaticDataflowAnalysis::CycloStaticDataflowAnalysis(Operation *op) {
-  llvm::outs() << "\n\n\nCycloStaticDataflowAnalysis: Analyzing operation: "
-               << op->getName() << "\n";
-
+  llvm::outs() << "\n\n\nCycloStaticDataflowAnalysis\n";
+  // STEP 1: Examine all predicate operations in the module calcualte the
+  // inequalities for all predicates that are candidates to be state variables
   op->walk([&](mlir::cal::Predicate predicateOp) {
-    if (auto predicateInfo = validPredicate(predicateOp)) {
-      predicateStateVariables[predicateOp] = *predicateInfo;
+    if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
+      llvm::outs() << "Predicate: " << predicateInfo << "\n";
+      if (auto actionOp = llvm::dyn_cast_or_null<mlir::cal::ActionOp>(
+              predicateOp.getParentOp())) {
+        llvm::outs() << "Found parent ActionOp: "
+                     << actionOp.getActionNameAttr().getValue() << "\n";
+        auto temp =
+            getStateIncrementPatternOrNull(predicateInfo->stateVar, actionOp);
+        if (temp) {
+          llvm::outs() << "State Increment Pattern: " << temp << "\n";
+        }
+      }
     }
   });
 
-  for (const auto &entry : predicateStateVariables) {
-    auto predicateOp = entry.first;
-    auto predicateInfoOpt = validPredicate(predicateOp);
-    if (predicateInfoOpt) {
-      const auto &info = *predicateInfoOpt;
-      llvm::outs() << "Predicate: " << predicateOp << "\n" << info << "\n";
-    }
-  }
+  //   for (const auto &entry : predicateStateVariables) {
+  //     llvm::outs() << "Predicate: " << entry.second << "\n";
+  //   }
+
+  // STEP 2: We need to find the
+  //   llvm::SmallPtrSet<mlir::Value, 8> uniqueStateVars;
+  //   for (const auto &entry : predicateStateVariables) {
+  //     const PredicateInfo &info = entry.second;
+  //     uniqueStateVars.insert(info.stateVar);
+  //   }
 }
 
-std::optional<int64_t> CycloStaticDataflowAnalysis::tryGetConstantValue(Value val) {
+std::optional<int64_t>
+CycloStaticDataflowAnalysis::tryGetConstantValue(Value val) {
   if (auto constantOp = val.getDefiningOp<mlir::arith::ConstantOp>()) {
     if (auto intAttr = llvm::dyn_cast<IntegerAttr>(constantOp.getValue())) {
       return intAttr.getValue().getSExtValue(); // or getZExtValue() if needed
@@ -57,7 +111,8 @@ std::optional<int64_t> CycloStaticDataflowAnalysis::tryGetConstantValue(Value va
   return std::nullopt;
 }
 
-std::optional<int64_t> CycloStaticDataflowAnalysis::evaluateConstantValue(Value val) {
+std::optional<int64_t>
+CycloStaticDataflowAnalysis::evaluateConstantValue(Value val) {
   if (!val)
     return std::nullopt;
 
@@ -119,7 +174,9 @@ std::optional<int64_t> CycloStaticDataflowAnalysis::evaluateConstantValue(Value 
   return std::nullopt;
 }
 
-std::optional<PredicateInfo> CycloStaticDataflowAnalysis::validPredicate(cal::Predicate predicateOp) {
+std::optional<PredicateInfo>
+CycloStaticDataflowAnalysis::candidatePredicateOrNull(
+    cal::Predicate predicateOp) {
   mlir::Value lhs, rhs;
   mlir::arith::CmpIPredicate pred;
   bool inValid = false;
@@ -156,6 +213,128 @@ std::optional<PredicateInfo> CycloStaticDataflowAnalysis::validPredicate(cal::Pr
   }
 
   return std::nullopt;
+}
+
+std::optional<StateVarPattern>
+CycloStaticDataflowAnalysis::getStateIncrementPatternOrNull(
+    mlir::Value stateVar, cal::ActionOp actionOp) {
+
+  int numSets = 0;
+  mlir::cal::StateSetOp setOp = nullptr;
+  actionOp->walk([&](mlir::cal::StateSetOp ss) {
+    if (ss.getStateRef() == stateVar) {
+      llvm::outs() << "Found set operation for state variable: " << stateVar
+                   << " " << ss << "\n";
+      setOp = ss;
+      numSets++;
+    }
+  });
+
+  if (auto assignedValue = evaluateConstantValue(setOp.getStateValue())) {
+    return StateVarPattern{stateVar, StateVarUpdateKind::ConstantAssignment,
+                           *assignedValue};
+  }
+
+  if (auto increment =
+          getIncrementAmount(setOp.getStateValue(), setOp.getStateRef())) {
+    return StateVarPattern{stateVar, StateVarUpdateKind::Increment, *increment};
+  }
+
+  if (numSets != 1) {
+    return std::nullopt;
+  }
+
+  return std::nullopt; // Placeholder for future implementation
+}
+
+std::optional<int64_t>
+CycloStaticDataflowAnalysis::getIncrementAmount(Value setValue,
+                                                Value targetStateVar) {
+  std::optional<int64_t> delta = 0;
+  bool foundMatchingState = false;
+
+  llvm::SmallVector<Value, 8> worklist = {setValue};
+  llvm::SmallPtrSet<Value, 8> visited;
+
+  while (!worklist.empty()) {
+    Value val = worklist.pop_back_val();
+    if (!visited.insert(val).second)
+      continue;
+
+    Operation *defOp = val.getDefiningOp();
+    if (!defOp)
+      return std::nullopt; // block argument or something else unexpected
+
+    // Handle constant
+    if (auto constOp = dyn_cast<arith::ConstantOp>(defOp)) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue())) {
+        delta = *delta + intAttr.getValue().getSExtValue();
+        continue;
+      }
+      return std::nullopt; // Non-integer constant
+    }
+
+    // Handle add or sub
+    if (auto addOp = dyn_cast<arith::AddIOp>(defOp)) {
+      worklist.push_back(addOp.getLhs());
+      worklist.push_back(addOp.getRhs());
+      continue;
+    }
+    if (auto subOp = dyn_cast<arith::SubIOp>(defOp)) {
+      worklist.push_back(subOp.getLhs());
+
+      auto constVal = evaluateConstantValue(subOp.getRhs());
+      if (!constVal)
+        return std::nullopt;
+      delta = *delta - *constVal;
+      continue;
+    }
+
+    // Handle zero-extension
+    if (auto extui = dyn_cast<arith::ExtUIOp>(defOp)) {
+      auto innerVal = extui.getIn();
+      auto constVal = evaluateConstantValue(innerVal);
+      if (!constVal)
+        return std::nullopt;
+
+      unsigned sourceWidth = innerVal.getType().cast<IntegerType>().getWidth();
+      uint64_t mask = (1ULL << sourceWidth) - 1;
+      delta = *delta + static_cast<int64_t>(*constVal & mask);
+      continue;
+    }
+
+    // Handle sign-extension
+    if (auto extsi = dyn_cast<arith::ExtSIOp>(defOp)) {
+      auto innerVal = extsi.getIn();
+      auto constVal = evaluateConstantValue(innerVal);
+      if (!constVal)
+        return std::nullopt;
+
+      unsigned sourceWidth = innerVal.getType().cast<IntegerType>().getWidth();
+      int64_t val = *constVal;
+      int64_t signBit = 1ULL << (sourceWidth - 1);
+      if (val & signBit)
+        val |= ~((1ULL << sourceWidth) - 1); // Sign extend
+      delta = *delta + val;
+      continue;
+    }
+
+    // Handle cal.get
+    if (auto getOp = dyn_cast<cal::StateGetOp>(defOp)) {
+      if (getOp.getStateRef() != targetStateVar)
+        return std::nullopt; // Other state var
+      foundMatchingState = true;
+      continue;
+    }
+
+    // Anything else — reject
+    return std::nullopt;
+  }
+
+  if (!foundMatchingState)
+    return std::nullopt; // No dependence on target state var
+
+  return delta;
 }
 
 } // namespace mlir
