@@ -6,6 +6,7 @@ add_llvm_library(CalPlugin
         DEPENDS
         CalToFunc
         CalStateToMemref
+        CalToFuncWithStaticSchedule
         MLIRCal
         MLIRFifo
         PLUGIN_TOOL
@@ -16,6 +17,7 @@ add_llvm_library(CalPlugin
         MLIRFifo
         CalToFunc
         CalStateToMemref
+        CalToFuncWithStaticSchedule
         )
 target_include_directories(
         CalPlugin

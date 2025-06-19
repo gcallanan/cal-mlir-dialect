@@ -376,10 +376,6 @@ class ConvertCalCreateInstanceToFuncCall
 class ConvertCalToFuncPass
     : public impl::ConvertCalToFuncBase<ConvertCalToFuncPass> {
 public:
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<mlir::scf::SCFDialect, mlir::func::FuncDialect>();
-  }
-
   void runOnOperation() final {
 
     // 1. Check if the module contains any `cal.action` operations.

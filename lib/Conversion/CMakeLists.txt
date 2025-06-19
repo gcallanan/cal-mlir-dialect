@@ -1,2 +1,3 @@
 add_subdirectory(CalToFunc)
 add_subdirectory(CalStateToMemref)
+add_subdirectory(CalToFuncWithStaticSchedule)

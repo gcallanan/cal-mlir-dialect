@@ -5,6 +5,7 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Conversion/CalToFunc/CalToFunc.h"
 #include "Conversion/CalStateToMemref/CalStateToMemref.h"
+#include "Conversion/CalToFuncWithStaticSchedule/CalToFuncWithStaticSchedule.h"
 
 namespace mlir {
 

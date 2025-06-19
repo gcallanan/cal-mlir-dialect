@@ -43,6 +43,7 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
         "func::FuncDialect",
         "fifo::FifoDialect",
         "cal::CalDialect",
+        "scf::SCFDialect"
     ];
 }
 
@@ -65,6 +66,22 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
     "arith::ArithDialect",
     "memref::MemRefDialect"
   ];
+}
+
+def ConvertCalToFuncWithStaticSchedule : Pass<"convert-cal-to-func-with-static-schedule"> {
+    let summary = "TODO";
+    let description = [{
+        
+    }];
+
+    let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";
+
+    let dependentDialects = [
+        "func::FuncDialect",
+        "fifo::FifoDialect",
+        "cal::CalDialect",
+        "scf::SCFDialect"
+    ];
 }
 
 #endif // CAL_MLIR_CONVERSION_PASSES
