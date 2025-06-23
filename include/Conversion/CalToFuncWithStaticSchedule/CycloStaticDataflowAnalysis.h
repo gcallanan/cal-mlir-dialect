@@ -30,7 +30,7 @@ struct ScheduleEdge {
 
 struct ScheduleNode {
   mlir::cal::ActionOp action;
-  std::optional<ScheduleEdge> outgoingEdge; // only one
+  std::optional<ScheduleEdge> outgoingEdge;
 };
 
 struct ScheduleGraph {
@@ -96,6 +96,17 @@ private:
   std::optional<int64_t> getIncrementAmount(Value setValue,
                                             Value targetStateVar);
   int findInitialAssignment(mlir::Value stateVar, cal::ActorOp);
+  std::optional<cal::ActionOp> getActionForStateValue(
+      int stateValue,
+      const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+          &actionInfoMap);
+  bool
+  allPredicatesTrueForState(int stateValue,
+                            const llvm::SmallVectorImpl<PredicateInequalityInfo>
+                                &predicateInequalities);
+
+  // bool addGraphEdge(ScheduleNode &fromNode,
+  //                      ScheduleNode &toNode);
 };
 
 } // namespace mlir
