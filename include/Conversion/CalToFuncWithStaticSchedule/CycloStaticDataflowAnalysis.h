@@ -17,7 +17,7 @@ namespace mlir {
 // schedule
 enum class GraphType {
   SingleAction,
-  OrderedActionsSchedule,
+  StateMachineSchedule,
   Dynamic // Dynamic Dataflow
 };
 

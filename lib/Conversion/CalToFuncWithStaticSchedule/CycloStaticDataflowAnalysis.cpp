@@ -548,7 +548,7 @@ CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
   // The graph contains the actor, its type, and the constructed schedule nodes.
   ScheduleGraph graph;
   graph.actor = actorOp;
-  graph.type = GraphType::OrderedActionsSchedule;
+  graph.type = GraphType::StateMachineSchedule;
   graph.nodes = std::move(scheduleNodes);
   return graph;
 
