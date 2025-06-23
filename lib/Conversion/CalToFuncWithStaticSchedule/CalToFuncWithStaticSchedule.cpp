@@ -397,14 +397,12 @@ public:
   void runOnOperation() final {
 
     auto &csdfAnalysis = getAnalysis<CycloStaticDataflowAnalysis>();
-    
-    llvm::outs() << "a: " << print_fsm_for_testing << "\n";
+
     bool printFsm = print_fsm_for_testing.getValue();
-    llvm::outs() << "b: " << printFsm << "\n";
-    if(printFsm){
-      llvm::outs() << "We emitted something!\n";
+    if (printFsm) {
+      getOperation()->walk(
+          [&](cal::ActorOp actorOp) { csdfAnalysis.printActorStateMachine(actorOp); });
     }
-    llvm::outs() << "c: " << "\n";
 
     RewritePatternSet patterns(&getContext());
     // patterns.add<ConvertCalActorToFunc>(&getContext());

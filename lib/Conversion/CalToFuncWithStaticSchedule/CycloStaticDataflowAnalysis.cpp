@@ -6,15 +6,27 @@
 namespace mlir {
 
 void printScheduleGraph(ScheduleGraph &graph) {
+  std::string scheduleType;
+  switch (graph.type) {
+  case GraphType::SingleAction:
+    scheduleType = "SingleAction";
+    break;
+  case GraphType::StateMachineSchedule:
+    scheduleType = "StateMachineSchedule";
+    break;
+  case GraphType::Dynamic:
+    scheduleType = "Dynamic";
+    break;
+  }
   llvm::outs() << "ScheduleGraph for actor: " << graph.actor.getSymName()
-               << "\n";
+               << ". Type: " << scheduleType << "\n";
 
   for (size_t i = 0; i < graph.nodes.size(); ++i) {
     auto &node = graph.nodes[i];
     llvm::outs() << "  Node " << i << ": "
                  << node.action.getActionNameAttr().getValue() << "\n";
 
-    llvm::outs() << "    → Next: Node " << node.nextNodeIndex;
+    llvm::outs() << "    -> Next: Node " << node.nextNodeIndex;
 
     switch (node.edgeTypeToNextNode) {
     case ScheduleEdgeType::Next:
@@ -94,27 +106,25 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
 }
 
 CycloStaticDataflowAnalysis::CycloStaticDataflowAnalysis(Operation *op) {
-  llvm::outs() << "\n\n\nCycloStaticDataflowAnalysis\n";
-
   op->walk([&](mlir::cal::ActorOp actor) { determineActorSchedule(actor); });
 }
 
+void CycloStaticDataflowAnalysis::printActorStateMachine(cal::ActorOp actorOp) {
+  printScheduleGraph(actorScheduleMap[actorOp]);
+}
+
 void CycloStaticDataflowAnalysis::determineActorSchedule(cal::ActorOp actorOp) {
-
-  llvm::outs() << "Determining schedule for actor: "
-               << actorOp.getNameAttr().getValue() << "\n";
-
   int actionCount = 0;
   actorOp.walk([&](cal::ActionOp actionOp) { ++actionCount; });
 
   if (actionCount == 1) {
-    generateSingleActionSchedule(actorOp);
+    actorScheduleMap[actorOp] = generateSingleActionSchedule(actorOp);
   } else {
-    generateMultiActionSchedule(actorOp);
+    actorScheduleMap[actorOp] = generateMultiActionSchedule(actorOp);
   }
 }
 
-void CycloStaticDataflowAnalysis::generateSingleActionSchedule(
+ScheduleGraph CycloStaticDataflowAnalysis::generateSingleActionSchedule(
     cal::ActorOp actorOp) {
   ScheduleGraph graph;
   graph.actor = actorOp;
@@ -132,19 +142,12 @@ void CycloStaticDataflowAnalysis::generateSingleActionSchedule(
 
   graph.nodes.push_back(node);
 
-  // Optionally print the schedule graph
-  printScheduleGraph(graph);
-
   // Store or process the graph as needed (not shown)
-  actorScheduleMap[actorOp] = graph;
+  return graph;
 }
 
-void CycloStaticDataflowAnalysis::generateMultiActionSchedule(
-    cal::ActorOp actorOp) {
-
-  llvm::outs() << "Generating multi-action schedule for actor: "
-               << actorOp.getNameAttr().getValue() << "\n";
-
+ScheduleGraph
+CycloStaticDataflowAnalysis::generateMultiActionSchedule(cal::ActorOp actorOp) {
   // We need to find a state variable that is guarded by the equality
   // in a predicate and properly incremented in the corresponding action.
   // If this state variable is used in this way across every action in the
@@ -156,7 +159,7 @@ void CycloStaticDataflowAnalysis::generateMultiActionSchedule(
 
   llvm::DenseMap<mlir::Value, llvm::SmallPtrSet<mlir::Operation *, 4>>
       actionToValues;
-  int numberOfActions = 0;
+  size_t numberOfActions = 0;
   for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
     numberOfActions++;
     for (auto predicateOp : actionOp.getOps<cal::Predicate>()) {
@@ -186,8 +189,7 @@ void CycloStaticDataflowAnalysis::generateMultiActionSchedule(
     ScheduleGraph graph;
     graph.actor = actorOp;
     graph.type = GraphType::Dynamic;
-    actorScheduleMap[actorOp] = graph;
-    return;
+    return graph;
   }
 
   // STEP 2: Analyse the inequalities and state updates for the common state
@@ -225,15 +227,13 @@ void CycloStaticDataflowAnalysis::generateMultiActionSchedule(
 
   if (auto scheduleGraph = constructScheduleGraphFromActionInfo(
           actorOp, actionInfoMap, initialStateValue)) {
-    actorScheduleMap[actorOp] = *scheduleGraph;
+    return *scheduleGraph;
   } else {
     ScheduleGraph graph;
     graph.actor = actorOp;
     graph.type = GraphType::Dynamic;
-    actorScheduleMap[actorOp] = graph;
+    return graph;
   }
-
-  printScheduleGraph(actorScheduleMap[actorOp]);
 } // namespace mlir
 
 std::optional<int64_t>
@@ -264,7 +264,7 @@ CycloStaticDataflowAnalysis::evaluateConstantValue(Value val) {
       return std::nullopt;
 
     unsigned sourceWidth =
-        extui.getIn().getType().cast<IntegerType>().getWidth();
+        mlir::cast<IntegerType>(extui.getIn().getType()).getWidth();
     return static_cast<uint64_t>(*inner) & ((1ULL << sourceWidth) - 1);
   }
 
@@ -274,7 +274,7 @@ CycloStaticDataflowAnalysis::evaluateConstantValue(Value val) {
       return std::nullopt;
 
     unsigned sourceWidth =
-        extsi.getIn().getType().cast<IntegerType>().getWidth();
+        mlir::cast<IntegerType>(extsi.getIn().getType()).getWidth();
     int64_t mask = (1ULL << (sourceWidth - 1));
     int64_t val = *inner;
     if (val & mask)
@@ -430,7 +430,8 @@ CycloStaticDataflowAnalysis::getIncrementAmount(Value setValue,
       if (!constVal)
         return std::nullopt;
 
-      unsigned sourceWidth = innerVal.getType().cast<IntegerType>().getWidth();
+      unsigned sourceWidth =
+          mlir::cast<IntegerType>(innerVal.getType()).getWidth();
       uint64_t mask = (1ULL << sourceWidth) - 1;
       delta = *delta + static_cast<int64_t>(*constVal & mask);
       continue;
@@ -443,7 +444,8 @@ CycloStaticDataflowAnalysis::getIncrementAmount(Value setValue,
       if (!constVal)
         return std::nullopt;
 
-      unsigned sourceWidth = innerVal.getType().cast<IntegerType>().getWidth();
+      unsigned sourceWidth =
+          mlir::cast<IntegerType>(innerVal.getType()).getWidth();
       int64_t val = *constVal;
       int64_t signBit = 1ULL << (sourceWidth - 1);
       if (val & signBit)
@@ -477,15 +479,16 @@ CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
         &actionInfoMap,
     int initialStateValue) {
 
-  llvm::outs() << "Constructing schedule graph for actor: "
-               << actorOp.getNameAttr().getValue() << "\n";
-
-  llvm::outs() << "Initial Op Value " << initialStateValue << "\n";
-
-  llvm::outs() << "This is where we pick up from\n";
+  // Step 1: Verify that no action increments to positive infinity. If it does
+  // we cannot generate a schedule
+  for (const auto &entry : actionInfoMap) {
+    if (hasPositiveInfinity(entry.second)) {
+      return std::nullopt;
+    }
+  }
 
   std::vector<ScheduleNode> scheduleNodes;
-  // Step 1: Ensure the vector is large enough to hold the initial state index.
+  // Step 2: Ensure the vector is large enough to hold the initial state index.
   // This prepares the scheduleNodes vector so that we can index into it by
   // state value.
   scheduleNodes.resize(
@@ -493,11 +496,11 @@ CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
 
   int currentStateValue = initialStateValue;
 
-  // Step 2: Simulate the schedule graph construction by walking through state
+  // Step 3: Simulate the schedule graph construction by walking through state
   // values. For each state value, determine the corresponding action and the
   // next state, and build up the scheduleNodes vector accordingly.
   do {
-    // Step 2.1: For the current state value, find the action that should be
+    // Step 3.1: For the current state value, find the action that should be
     // executed.
     auto currentAction =
         getActionForStateValue(currentStateValue, actionInfoMap);
@@ -509,7 +512,7 @@ CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
     const auto &infoForAction = actionInfoMap.lookup(*currentAction);
     auto updatePattern = infoForAction.updatePattern;
 
-    // Step 2.2: Compute the next state value based on the update pattern of the
+    // Step 3.2: Compute the next state value based on the update pattern of the
     // action.
     int nextStateValue;
     if (updatePattern->kind == StateVarUpdateKind::ConstantAssignment) {
@@ -518,7 +521,7 @@ CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
       nextStateValue = currentStateValue + updatePattern->value;
     }
 
-    // Step 2.3: Add a ScheduleNode for the current state value.
+    // Step 3.3: Add a ScheduleNode for the current state value.
     // If the next state value has already been visited, create a WrapAround
     // edge. Otherwise, create a Next edge to the next state value.
     if (scheduleNodes.size() <= static_cast<size_t>(currentStateValue))
@@ -544,7 +547,7 @@ CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
     currentStateValue = nextStateValue;
   } while (true);
 
-  // Step 3: After simulating the schedule, construct and return the
+  // Step 4: After simulating the schedule, construct and return the
   // ScheduleGraph object. The graph contains the actor, its type, and the
   // constructed schedule nodes.
   ScheduleGraph graph;
@@ -630,6 +633,63 @@ bool CycloStaticDataflowAnalysis::allPredicatesTrueForState(
     }
   }
   return true;
+}
+
+bool CycloStaticDataflowAnalysis::hasPositiveInfinity(
+    const SchedulingVariableInfoForAction &info) {
+
+  // Check if the pattern is always incrementing the state variable
+  // by a positive value, which is necessary to  lead to positive infinity.
+  if (!(info.updatePattern && 
+        info.updatePattern->kind == StateVarUpdateKind::Increment &&
+        info.updatePattern->value > 0)) {
+    return false;
+  }
+
+  // Look for a predicate that is ">" or ">=" and there is no corresponding "<"
+  // or "<=" that bounds it above.
+  bool hasLowerBound = false;
+  bool hasUpperBound = false;
+  int64_t lowerBound = 0;
+  int64_t upperBound = std::numeric_limits<int64_t>::max();
+
+  for (const auto &pred : info.predicateInequalities) {
+    switch (pred.predicate) {
+    case mlir::arith::CmpIPredicate::sgt:
+    case mlir::arith::CmpIPredicate::ugt:
+      hasLowerBound = true;
+      if (pred.constant > lowerBound)
+        lowerBound = pred.constant;
+      break;
+    case mlir::arith::CmpIPredicate::sge:
+    case mlir::arith::CmpIPredicate::uge:
+      hasLowerBound = true;
+      if (pred.constant - 1 > lowerBound)
+        lowerBound = pred.constant - 1;
+      break;
+    case mlir::arith::CmpIPredicate::slt:
+    case mlir::arith::CmpIPredicate::ult:
+      hasUpperBound = true;
+      if (pred.constant - 1 < upperBound)
+        upperBound = pred.constant - 1;
+      break;
+    case mlir::arith::CmpIPredicate::sle:
+    case mlir::arith::CmpIPredicate::ule:
+      hasUpperBound = true;
+      if (pred.constant < upperBound)
+        upperBound = pred.constant;
+      break;
+    default:
+      break;
+    }
+  }
+
+  // If there is a lower bound but no upper bound, then the increment can go to
+  // infinity.
+  if (hasLowerBound && !hasUpperBound)
+    return true;
+
+  return false;
 }
 
 } // namespace mlir

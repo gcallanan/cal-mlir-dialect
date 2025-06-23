@@ -70,13 +70,14 @@ struct CycloStaticDataflowAnalysis {
 
 public:
   explicit CycloStaticDataflowAnalysis(Operation *op);
+  void printActorStateMachine(cal::ActorOp actorOp);
 
 private:
   llvm::DenseMap<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
 
   void determineActorSchedule(cal::ActorOp actorOp);
-  void generateSingleActionSchedule(cal::ActorOp actorOp);
-  void generateMultiActionSchedule(cal::ActorOp actorOp);
+  ScheduleGraph generateSingleActionSchedule(cal::ActorOp actorOp);
+  ScheduleGraph generateMultiActionSchedule(cal::ActorOp actorOp);
   std::optional<ScheduleGraph> constructScheduleGraphFromActionInfo(
       cal::ActorOp actorOp,
       const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
@@ -101,8 +102,7 @@ private:
                             const llvm::SmallVectorImpl<PredicateInequalityInfo>
                                 &predicateInequalities);
 
-  // bool addGraphEdge(ScheduleNode &fromNode,
-  //                      ScheduleNode &toNode);
+  bool hasPositiveInfinity(const SchedulingVariableInfoForAction &info);
 };
 
 } // namespace mlir
