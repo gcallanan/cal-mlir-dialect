@@ -78,31 +78,39 @@ private:
   void determineActorSchedule(cal::ActorOp actorOp);
   ScheduleGraph generateSingleActionSchedule(cal::ActorOp actorOp);
   ScheduleGraph generateMultiActionSchedule(cal::ActorOp actorOp);
-  std::optional<ScheduleGraph> constructScheduleGraphFromActionInfo(
-      cal::ActorOp actorOp,
-      const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
-          &actionInfoMap,
-      int initialStateValue);
 
-  std::optional<int64_t> tryGetConstantValue(Value val);
-  std::optional<int64_t> evaluateConstantValue(Value val);
-  std::optional<PredicateInequalityInfo>
-  candidatePredicateOrNull(cal::Predicate predicateOp);
-  std::optional<StateVarUpdatePattern>
-  getStateUpdatePatternOrNull(mlir::Value stateVar, cal::ActionOp actionOp);
-  std::optional<int64_t> getIncrementAmount(Value setValue,
-                                            Value targetStateVar);
-  int findInitialAssignment(mlir::Value stateVar, cal::ActorOp);
-  std::optional<cal::ActionOp> getActionForStateValue(
-      int stateValue,
-      const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
-          &actionInfoMap);
-  bool
-  allPredicatesTrueForState(int stateValue,
-                            const llvm::SmallVectorImpl<PredicateInequalityInfo>
-                                &predicateInequalities);
+public:
+  // Helper class to construct a schedule graph from action information
+  class ScheduleGraphBuilder {
+  public:
+    ScheduleGraphBuilder(cal::ActorOp actorOp);
+    ScheduleGraph generateSchedule();
 
-  bool hasPositiveInfinity(const SchedulingVariableInfoForAction &info);
+  private:
+    cal::ActorOp actorOp;
+
+    std::optional<ScheduleGraph> constructScheduleGraphFromActionInfo(
+        const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+            &actionInfoMap,
+        int initialStateValue);
+    std::optional<int64_t> tryGetConstantValue(Value val);
+    std::optional<int64_t> evaluateConstantValue(Value val);
+    std::optional<PredicateInequalityInfo>
+    candidatePredicateOrNull(cal::Predicate predicateOp);
+    std::optional<StateVarUpdatePattern>
+    getStateUpdatePatternOrNull(mlir::Value stateVar, cal::ActionOp actionOp);
+    std::optional<int64_t> getIncrementAmount(Value setValue,
+                                              Value targetStateVar);
+    int findInitialAssignment(mlir::Value stateVar);
+    std::optional<cal::ActionOp> getActionForStateValue(
+        int stateValue,
+        const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+            &actionInfoMap);
+    bool allPredicatesTrueForState(
+        int stateValue, const llvm::SmallVectorImpl<PredicateInequalityInfo>
+                            &predicateInequalities);
+    bool hasPositiveInfinity(const SchedulingVariableInfoForAction &info);
+  };
 };
 
 } // namespace mlir
