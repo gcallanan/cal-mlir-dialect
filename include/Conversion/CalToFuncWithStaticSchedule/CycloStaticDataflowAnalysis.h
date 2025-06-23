@@ -23,14 +23,10 @@ enum class GraphType {
 
 enum class ScheduleEdgeType { Next, WrapAround };
 
-struct ScheduleEdge {
-  int nodeIndex;
-  ScheduleEdgeType type;
-};
-
 struct ScheduleNode {
   mlir::cal::ActionOp action;
-  std::optional<ScheduleEdge> outgoingEdge;
+  size_t nextNodeIndex;
+  ScheduleEdgeType edgeTypeToNextNode;
 };
 
 struct ScheduleGraph {

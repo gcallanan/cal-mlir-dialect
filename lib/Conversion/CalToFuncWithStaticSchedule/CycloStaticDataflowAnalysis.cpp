@@ -14,22 +14,18 @@ void printScheduleGraph(ScheduleGraph &graph) {
     llvm::outs() << "  Node " << i << ": "
                  << node.action.getActionNameAttr().getValue() << "\n";
 
-    if (node.outgoingEdge) {
-      llvm::outs() << "    → Next: Node " << node.outgoingEdge->nodeIndex;
+    llvm::outs() << "    → Next: Node " << node.nextNodeIndex;
 
-      switch (node.outgoingEdge->type) {
-      case ScheduleEdgeType::Next:
-        llvm::outs() << " (Next)";
-        break;
-      case ScheduleEdgeType::WrapAround:
-        llvm::outs() << " (WrapAround)";
-        break;
-      }
-
-      llvm::outs() << "\n";
-    } else {
-      llvm::outs() << "    → No outgoing edge\n";
+    switch (node.edgeTypeToNextNode) {
+    case ScheduleEdgeType::Next:
+      llvm::outs() << " (Next)";
+      break;
+    case ScheduleEdgeType::WrapAround:
+      llvm::outs() << " (WrapAround)";
+      break;
     }
+
+    llvm::outs() << "\n";
   }
 }
 
@@ -131,8 +127,8 @@ void CycloStaticDataflowAnalysis::generateSingleActionSchedule(
   // Create a single node for the action
   ScheduleNode node;
   node.action = singleAction;
-  node.outgoingEdge =
-      ScheduleEdge{0, ScheduleEdgeType::WrapAround}; // Loops to itself
+  node.nextNodeIndex = 0;
+  node.edgeTypeToNextNode = ScheduleEdgeType::WrapAround;
 
   graph.nodes.push_back(node);
 
@@ -476,13 +472,13 @@ CycloStaticDataflowAnalysis::getIncrementAmount(Value setValue,
 
 std::optional<ScheduleGraph>
 CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
-  cal::ActorOp actorOp,
-  const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
-    &actionInfoMap,
-  int initialStateValue) {
+    cal::ActorOp actorOp,
+    const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+        &actionInfoMap,
+    int initialStateValue) {
 
   llvm::outs() << "Constructing schedule graph for actor: "
-         << actorOp.getNameAttr().getValue() << "\n";
+               << actorOp.getNameAttr().getValue() << "\n";
 
   llvm::outs() << "Initial Op Value " << initialStateValue << "\n";
 
@@ -490,68 +486,72 @@ CycloStaticDataflowAnalysis::constructScheduleGraphFromActionInfo(
 
   std::vector<ScheduleNode> scheduleNodes;
   // Step 1: Ensure the vector is large enough to hold the initial state index.
-  // This prepares the scheduleNodes vector so that we can index into it by state value.
+  // This prepares the scheduleNodes vector so that we can index into it by
+  // state value.
   scheduleNodes.resize(
-    std::max<size_t>(scheduleNodes.size(), initialStateValue + 1));
+      std::max<size_t>(scheduleNodes.size(), initialStateValue + 1));
 
   int currentStateValue = initialStateValue;
 
-  // Step 2: Simulate the schedule graph construction by walking through state values.
-  // For each state value, determine the corresponding action and the next state,
-  // and build up the scheduleNodes vector accordingly.
+  // Step 2: Simulate the schedule graph construction by walking through state
+  // values. For each state value, determine the corresponding action and the
+  // next state, and build up the scheduleNodes vector accordingly.
   do {
-  // Step 2.1: For the current state value, find the action that should be executed.
-  auto currentAction =
-    getActionForStateValue(currentStateValue, actionInfoMap);
+    // Step 2.1: For the current state value, find the action that should be
+    // executed.
+    auto currentAction =
+        getActionForStateValue(currentStateValue, actionInfoMap);
 
-  if (!currentAction) {
-    return std::nullopt; // No action found for this state value
-  }
+    if (!currentAction) {
+      return std::nullopt; // No action found for this state value
+    }
 
-  const auto &infoForAction = actionInfoMap.lookup(*currentAction);
-  auto updatePattern = infoForAction.updatePattern;
+    const auto &infoForAction = actionInfoMap.lookup(*currentAction);
+    auto updatePattern = infoForAction.updatePattern;
 
-  // Step 2.2: Compute the next state value based on the update pattern of the action.
-  int nextStateValue;
-  if (updatePattern->kind == StateVarUpdateKind::ConstantAssignment) {
-    nextStateValue = updatePattern->value;
-  } else if (updatePattern->kind == StateVarUpdateKind::Increment) {
-    nextStateValue = currentStateValue + updatePattern->value;
-  }
-  
-  
-  // Step 2.3: Add a ScheduleNode for the current state value.
-  // If the next state value has already been visited, create a WrapAround edge.
-  // Otherwise, create a Next edge to the next state value.
-  if (scheduleNodes.size() <= static_cast<size_t>(currentStateValue))
-    scheduleNodes.resize(currentStateValue + 1);
-  ScheduleNode node;
-  node.action = *currentAction;
+    // Step 2.2: Compute the next state value based on the update pattern of the
+    // action.
+    int nextStateValue;
+    if (updatePattern->kind == StateVarUpdateKind::ConstantAssignment) {
+      nextStateValue = updatePattern->value;
+    } else if (updatePattern->kind == StateVarUpdateKind::Increment) {
+      nextStateValue = currentStateValue + updatePattern->value;
+    }
 
-  // Outgoing edge set to WrapAround if we encounter an already visited
-  // state value, this is the termination condition
-  if (nextStateValue < static_cast<int>(scheduleNodes.size()) && scheduleNodes[nextStateValue].action) {
-    // We've already visited this state value, so wrap around
-    node.outgoingEdge = ScheduleEdge{nextStateValue, ScheduleEdgeType::WrapAround};
+    // Step 2.3: Add a ScheduleNode for the current state value.
+    // If the next state value has already been visited, create a WrapAround
+    // edge. Otherwise, create a Next edge to the next state value.
+    if (scheduleNodes.size() <= static_cast<size_t>(currentStateValue))
+      scheduleNodes.resize(currentStateValue + 1);
+    ScheduleNode node;
+    node.action = *currentAction;
+    node.nextNodeIndex = nextStateValue;
+
+    // Outgoing edge set to WrapAround if we encounter an already visited
+    // state value, this is the termination condition
+    if (nextStateValue < static_cast<int>(scheduleNodes.size()) &&
+        scheduleNodes[nextStateValue].action) {
+      // We've already visited this state value, so wrap around
+      node.edgeTypeToNextNode = ScheduleEdgeType::WrapAround;
+      scheduleNodes[currentStateValue] = node;
+      break;
+    } else {
+      node.edgeTypeToNextNode = ScheduleEdgeType::Next;
+    }
+
     scheduleNodes[currentStateValue] = node;
-    break;
-  } else {
-    node.outgoingEdge = ScheduleEdge{nextStateValue, ScheduleEdgeType::Next};
-  }
-  
-  scheduleNodes[currentStateValue] = node;
 
-  currentStateValue = nextStateValue;
+    currentStateValue = nextStateValue;
   } while (true);
 
-  // Step 3: After simulating the schedule, construct and return the ScheduleGraph object.
-  // The graph contains the actor, its type, and the constructed schedule nodes.
+  // Step 3: After simulating the schedule, construct and return the
+  // ScheduleGraph object. The graph contains the actor, its type, and the
+  // constructed schedule nodes.
   ScheduleGraph graph;
   graph.actor = actorOp;
   graph.type = GraphType::StateMachineSchedule;
   graph.nodes = std::move(scheduleNodes);
   return graph;
-
 }
 
 int CycloStaticDataflowAnalysis::findInitialAssignment(mlir::Value stateVar,
@@ -596,7 +596,6 @@ CycloStaticDataflowAnalysis::getActionForStateValue(
     return std::nullopt;
   }
 }
-
 
 bool CycloStaticDataflowAnalysis::allPredicatesTrueForState(
     int stateValue, const llvm::SmallVectorImpl<mlir::PredicateInequalityInfo>
