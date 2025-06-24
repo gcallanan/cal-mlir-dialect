@@ -81,6 +81,8 @@ def ConvertCalToFuncWithStaticSchedule : Pass<"convert-cal-to-func-with-static-s
             "Print out the CSDF schedule for each actor for testing purposes.">,
       Option<"print_balance_equations_for_testing", "print-balance-equations-for-testing", "bool", /*default=*/"false",
             "Print out the balance equations generated for the network.">,
+      Option<"print_solved_balance_equations_for_testing", "print-solved-balance-equations-for-testing", "bool", /*default=*/"false",
+            "Print out the balance equations generated for the network.">,
     ];
 
     let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";

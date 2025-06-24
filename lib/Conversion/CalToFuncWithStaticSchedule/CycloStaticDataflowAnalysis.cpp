@@ -4,6 +4,13 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/OpImplementation.h"
 
+#include <Eigen/Dense>
+#include <cassert>
+#include <iostream>
+#include <numeric>
+#include <unordered_map>
+#include <vector>
+
 namespace mlir {
 
 void printScheduleGraph(ScheduleGraph &graph) {
@@ -325,6 +332,97 @@ int CycloStaticDataflowAnalysis::getPortRateOverAllPhases(cal::ActorOp actorOp,
       totalRate += it->second;
   }
   return totalRate;
+}
+
+// ---- Main solver ----
+llvm::DenseMap<mlir::cal::ActorOp, int> CycloStaticDataflowAnalysis::solveBalanceEquations(
+    llvm::SmallVector<CycloStaticDataflowAnalysis::BalanceEquation, 4>
+        &equations) {
+  // Step 1: Map actors to indices
+  std::unordered_map<mlir::Operation *, int> actorIndex;
+  int index = 0;
+
+  // Map each actor to a unique index
+  for (auto &eq : equations) {
+    auto *src = eq.srcActor.getOperation();
+    auto *dst = eq.dstActor.getOperation();
+    if (!actorIndex.count(src))
+      actorIndex[src] = index++;
+    if (!actorIndex.count(dst))
+      actorIndex[dst] = index++;
+  }
+
+  int numActors = index;
+  int numEqs = equations.size();
+  Eigen::MatrixXd B = Eigen::MatrixXd::Zero(numEqs, numActors);
+
+  // Fill incidence matrix: srcRate * q[src] = dstRate * q[dst]
+  for (int i = 0; i < numEqs; ++i) {
+    auto &eq = equations[i];
+    int srcIdx = actorIndex[eq.srcActor.getOperation()];
+    int dstIdx = actorIndex[eq.dstActor.getOperation()];
+    B(i, srcIdx) = static_cast<double>(eq.srcRate);
+    B(i, dstIdx) = static_cast<double>(eq.dstRate);
+  }
+
+  // Compute nullspace using rational LU
+  Eigen::FullPivLU<Eigen::MatrixXd> lu(B);
+  Eigen::MatrixXd nullSpace = lu.kernel(); // Floating-point nullspace
+
+  if (nullSpace.cols() == 0) {
+    std::cerr << "No nontrivial solution for balance equations!\n";
+    return {};
+  }
+
+  // Convert first column to vector and scale to integers
+  Eigen::VectorXd v = nullSpace.col(0);
+  double denomLCM = 1.0;
+  const double tol = 1e-6;
+  std::vector<int> result(numActors);
+
+  for (int i = 0; i < v.size(); ++i) {
+    // Scale to nearest rational number
+    result[i] = std::round(v[i] * 10000);
+  }
+
+  // Normalize to smallest integers (divide by GCD)
+  int g = std::abs(result[0]);
+  for (int i = 1; i < result.size(); ++i)
+    g = std::gcd(g, std::abs(result[i]));
+  for (int &x : result)
+    x /= g;
+
+  llvm::DenseMap<mlir::cal::ActorOp, int> repetitionMap;
+  for (const auto &pair : actorIndex) {
+    mlir::Operation *op = pair.first;
+    mlir::cal::ActorOp actorOp = llvm::dyn_cast<mlir::cal::ActorOp>(op);
+    if (actorOp)
+      repetitionMap[actorOp] = result[pair.second];
+  }
+  return repetitionMap;
+}
+
+void CycloStaticDataflowAnalysis::
+    printFiringsPerActorFromSolvedBalanceEquations(cal::NetworkOp networkOp) {
+
+  llvm::SmallVector<BalanceEquation, 4> equations =
+      generateBalanceEquations(networkOp);
+
+  auto results = solveBalanceEquations(equations);
+
+  // Output result
+  llvm::outs() << "Number of firings of the all the CSDF phases per actor:\n";
+  // Collect results into a vector for sorting
+  std::vector<std::pair<std::string, int>> sortedResults;
+  for (auto &pair : results) {
+    sortedResults.emplace_back(pair.first.getSymName().str(), pair.second);
+  }
+  std::sort(sortedResults.begin(), sortedResults.end(),
+            [](const auto &a, const auto &b) { return a.first < b.first; });
+
+  for (const auto &entry : sortedResults) {
+    llvm::outs() << "  " << entry.first << ": " << entry.second << "\n";
+  }
 }
 
 } // namespace mlir

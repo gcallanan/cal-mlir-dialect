@@ -400,8 +400,9 @@ public:
 
     bool printFsm = print_fsm_for_testing.getValue();
     if (printFsm) {
-      getOperation()->walk(
-          [&](cal::ActorOp actorOp) { csdfAnalysis.printActorStateMachine(actorOp); });
+      getOperation()->walk([&](cal::ActorOp actorOp) {
+        csdfAnalysis.printActorStateMachine(actorOp);
+      });
     }
 
     bool printCSDFSchedule = print_csdf_schedule_for_testing.getValue();
@@ -412,8 +413,17 @@ public:
 
     bool printBalanceEquations = print_balance_equations_for_testing.getValue();
     if (printBalanceEquations) {
-      getOperation()->walk(
-          [&](cal::NetworkOp networkOp) { csdfAnalysis.printBalanceEquations(networkOp); });
+      getOperation()->walk([&](cal::NetworkOp networkOp) {
+        csdfAnalysis.printBalanceEquations(networkOp);
+      });
+    }
+
+    bool printSolvedBalanceEquations =
+        print_solved_balance_equations_for_testing.getValue();
+    if (printSolvedBalanceEquations) {
+      getOperation()->walk([&](cal::NetworkOp networkOp) {
+        csdfAnalysis.printFiringsPerActorFromSolvedBalanceEquations(networkOp);
+      });
     }
 
     RewritePatternSet patterns(&getContext());

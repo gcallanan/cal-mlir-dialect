@@ -14,4 +14,5 @@ add_mlir_conversion_library(CalToFuncWithStaticSchedule
         MLIRTransformUtils
         MLIRFuncDialect
         MLIRControlFlowDialect
+        Eigen3::Eigen
 )

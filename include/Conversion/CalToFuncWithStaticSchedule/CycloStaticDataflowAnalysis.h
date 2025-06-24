@@ -80,32 +80,34 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &,
 llvm::raw_ostream &operator<<(llvm::raw_ostream &,
                               const StateVarUpdatePattern &);
 
-
 /**
  * @brief Performs cyclo-static dataflow (CSDF) analysis on CAL actors and networks.
  *
- * The CycloStaticDataflowAnalysis struct provides utilities for analyzing CAL actors and networks
- * to extract their cyclo-static firing patterns, port rates, and to generate balance equations
- * for FIFOs in the network. It supports both single-action and multi-action actors, and can
- * construct schedule graphs representing the firing state machines of actors.
+ * The CycloStaticDataflowAnalysis struct provides utilities for analyzing CAL
+ * actors and networks to extract their cyclo-static firing patterns, port rates,
+ * and to generate and solve balance equations for FIFOs in the network. It
+ * supports both single-action and multi-action actors, and can construct
+ * schedule graphs representing the firing state machines of actors.
  *
  * Key functionalities include:
- *   - Retrieving the sequence of SDF phases for a given CAL actor, where each phase corresponds
- *     to an action and its associated port rates.
- *   - Generating balance equations for each FIFO in a CAL network, capturing the relationship
- *     between producer and consumer actors and their data rates.
- *   - Printing utilities for debugging and visualization of actor state machines, CSDF phases,
- *     and balance equations.
+ *   - Retrieving the sequence of SDF phases for a given CAL actor, where each
+ *     phase corresponds to an action and its associated port rates.
+ *   - Generating balance equations for each FIFO in a CAL network, capturing
+ *     the relationship between producer and consumer actors and their data rates.
+ *   - Solving the system of balance equations to compute actor firing rates
+ *     (repetition vectors) that ensure balanced dataflow.
+ *   - Printing utilities for debugging and visualization of actor state
+ *     machines, CSDF phases, balance equations, and computed firing rates.
  *
- * The analysis assumes that the CAL network is well-formed, with each FIFO having exactly one
- * producer and one consumer. Internally, it maintains a mapping from actors to their schedule
- * graphs, and provides helper classes for constructing these graphs from action information.
+ * The analysis assumes that the CAL network is well-formed, with each FIFO
+ * having exactly one producer and one consumer. Internally, it maintains a
+ * mapping from actors to their schedule graphs, and provides helper classes for
+ * constructing these graphs from action information.
  */
 struct CycloStaticDataflowAnalysis {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CycloStaticDataflowAnalysis)
 
 public:
-
   struct SDFPhase {
     mlir::cal::ActionOp actionOp;
     llvm::DenseMap<mlir::Value, int> portRates;
@@ -115,6 +117,7 @@ public:
     mlir::cal::ActorOp srcActor;
     mlir::Value srcPort;
     int srcRate;
+
     mlir::cal::ActorOp dstActor;
     mlir::Value dstPort;
     int dstRate;
@@ -123,19 +126,20 @@ public:
   explicit CycloStaticDataflowAnalysis(Operation *op);
 
   /**
- * @brief Retrieves the cyclo-static dataflow (CSDF) phases for a given CAL actor.
- *
- * This function analyzes the specified CAL actor operation and determines its
- * sequence of SDF phases, where each phase corresponds to an action and its
- * associated port rates. The phases collectively describe the actor's
- * cyclo-static firing pattern, including the number of tokens produced or
- * consumed on each port during each phase.
- *
- * @param actorOp The CAL actor operation to analyze.
- * @return An optional vector of SDFPhase objects, each representing a phase
- *         of the actor's firing schedule. Returns std::nullopt if the phases
- *         cannot be determined.
- */
+   * @brief Retrieves the cyclo-static dataflow (CSDF) phases for a given CAL
+   * actor.
+   *
+   * This function analyzes the specified CAL actor operation and determines its
+   * sequence of SDF phases, where each phase corresponds to an action and its
+   * associated port rates. The phases collectively describe the actor's
+   * cyclo-static firing pattern, including the number of tokens produced or
+   * consumed on each port during each phase.
+   *
+   * @param actorOp The CAL actor operation to analyze.
+   * @return An optional vector of SDFPhase objects, each representing a phase
+   *         of the actor's firing schedule. Returns std::nullopt if the phases
+   *         cannot be determined.
+   */
   std::optional<llvm::SmallVector<SDFPhase, 4>>
   getSDFPhases(cal::ActorOp actorOp);
 
@@ -161,9 +165,29 @@ public:
   llvm::SmallVector<BalanceEquation, 4>
   generateBalanceEquations(cal::NetworkOp networkOp);
 
+  /// \brief Solves a set of balance equations for cyclo-static dataflow
+  /// analysis.
+  ///
+  /// Given a collection of balance equations, this function computes the firing
+  /// rates for each actor such that the data production and consumption rates
+  /// are balanced across the dataflow graph.
+  ///
+  /// This method formulates the balance equations as a linear system, computes
+  /// the nullspace of the incidence matrix using LU decomposition, and extracts
+  /// a minimal integer solution representing the actor repetition vector.
+  ///
+  /// \param equations A vector of balance equations representing the
+  /// constraints between actors in the dataflow network.
+  ///
+  /// \return A DenseMap mapping each ActorOp to its computed firing rate (as an
+  /// int). The map contains one entry per actor involved in the equations.
+  llvm::DenseMap<mlir::cal::ActorOp, int>
+  solveBalanceEquations(llvm::SmallVector<BalanceEquation, 4> &equations);
+
   void printActorStateMachine(cal::ActorOp actorOp);
   void printCSDFPhases(cal::ActorOp actorOp);
   void printBalanceEquations(cal::NetworkOp networkOp);
+  void printFiringsPerActorFromSolvedBalanceEquations(cal::NetworkOp networkOp);
 
 private:
   llvm::DenseMap<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
