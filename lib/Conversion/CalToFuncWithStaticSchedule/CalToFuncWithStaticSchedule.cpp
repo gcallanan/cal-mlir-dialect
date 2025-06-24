@@ -410,6 +410,12 @@ public:
           [&](cal::ActorOp actorOp) { csdfAnalysis.printCSDFPhases(actorOp); });
     }
 
+    bool printBalanceEquations = print_balance_equations_for_testing.getValue();
+    if (printBalanceEquations) {
+      getOperation()->walk(
+          [&](cal::NetworkOp networkOp) { csdfAnalysis.printBalanceEquations(networkOp); });
+    }
+
     RewritePatternSet patterns(&getContext());
     // patterns.add<ConvertCalActorToFunc>(&getContext());
     // patterns.add<ConvertCalTerminatorToFuncTerminator>(&getContext());
