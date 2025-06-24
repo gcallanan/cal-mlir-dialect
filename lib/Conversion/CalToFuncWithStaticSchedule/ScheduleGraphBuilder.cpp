@@ -10,7 +10,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::ScheduleGraphBuilder(
     : actorOp(actorOp) {}
 
 ScheduleGraph
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateSchedule() {
+CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
   // We need to find a state variable that is guarded by the equality
   // in a predicate and properly incremented in the corresponding action.
   // If this state variable is used in this way across every action in the
@@ -418,6 +418,7 @@ std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
   graph.actor = actorOp;
   graph.type = GraphType::StateMachineSchedule;
   graph.nodes = std::move(scheduleNodes);
+  graph.initialStateValue = initialStateValue;
   return graph;
 }
 

@@ -404,6 +404,12 @@ public:
           [&](cal::ActorOp actorOp) { csdfAnalysis.printActorStateMachine(actorOp); });
     }
 
+    bool printCSDFSchedule = print_csdf_schedule_for_testing.getValue();
+    if (printCSDFSchedule) {
+      getOperation()->walk(
+          [&](cal::ActorOp actorOp) { csdfAnalysis.printCSDFPhases(actorOp); });
+    }
+
     RewritePatternSet patterns(&getContext());
     // patterns.add<ConvertCalActorToFunc>(&getContext());
     // patterns.add<ConvertCalTerminatorToFuncTerminator>(&getContext());

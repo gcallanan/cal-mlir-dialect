@@ -77,6 +77,8 @@ def ConvertCalToFuncWithStaticSchedule : Pass<"convert-cal-to-func-with-static-s
     let options = [
       Option<"print_fsm_for_testing", "print-fsm-for-testing", "bool", /*default=*/"false",
             "Print out the FSM for each actor for testing purposes.">,
+      Option<"print_csdf_schedule_for_testing", "print-csdf-schedule-for-testing", "bool", /*default=*/"false",
+            "Print out the CSDF schedule for each actor for testing purposes.">,
     ];
 
     let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";

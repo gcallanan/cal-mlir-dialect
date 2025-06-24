@@ -1,5 +1,6 @@
 #include "Conversion/CalToFuncWithStaticSchedule/CycloStaticDataflowAnalysis.h"
 #include "Dialect/Cal/CalOps.h"
+#include "Dialect/Fifo/FifoOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/OpImplementation.h"
 
@@ -113,6 +114,32 @@ void CycloStaticDataflowAnalysis::printActorStateMachine(cal::ActorOp actorOp) {
   printScheduleGraph(actorScheduleMap[actorOp]);
 }
 
+void CycloStaticDataflowAnalysis::printCSDFPhases(cal::ActorOp actorOp) {
+  llvm::outs() << "CSDF Phases for actor: " << actorOp.getSymName() << "\n";
+  auto phases = getSDFPhases(actorOp);
+  if (!phases) {
+    llvm::outs() << "\tNo CSDF phases available for this actor.\n";
+    return;
+  }
+
+  for (auto &phase : *phases) {
+    llvm::outs() << "\tAction: " << phase.actionOp.getActionNameAttr() << "\n";
+    // Print ports in deterministic order
+    std::vector<mlir::Value> portKeys;
+    for (const auto &portRate : phase.portRates) {
+      portKeys.push_back(portRate.first);
+    }
+    std::sort(portKeys.begin(), portKeys.end(), [](mlir::Value a, mlir::Value b) {
+      return a.getAsOpaquePointer() < b.getAsOpaquePointer();
+    });
+    for (const auto &port : portKeys) {
+      llvm::outs() << "\t\tPort: ";
+      port.print(llvm::outs());
+      llvm::outs() << " Rate: " << phase.portRates.lookup(port) << "\n";
+    }
+  }
+}
+
 void CycloStaticDataflowAnalysis::determineActorSchedule(cal::ActorOp actorOp) {
   int actionCount = 0;
   actorOp.walk([&](cal::ActionOp actionOp) { ++actionCount; });
@@ -149,7 +176,61 @@ ScheduleGraph CycloStaticDataflowAnalysis::generateSingleActionSchedule(
 ScheduleGraph
 CycloStaticDataflowAnalysis::generateMultiActionSchedule(cal::ActorOp actorOp) {
   ScheduleGraphBuilder builder(actorOp);
-  return builder.generateSchedule();
+  return builder.generateFsm();
+}
+
+std::optional<llvm::SmallVector<CycloStaticDataflowAnalysis::SDFPhase, 4>>
+CycloStaticDataflowAnalysis::getSDFPhases(cal::ActorOp actorOp) {
+
+  ScheduleGraph &graph = actorScheduleMap[actorOp];
+
+  if (graph.type == GraphType::Dynamic) {
+    return std::nullopt;
+  }
+
+  if (graph.type == GraphType::SingleAction) {
+    llvm::SmallVector<SDFPhase, 4> phases;
+    SDFPhase phase;
+    phase.actionOp = graph.nodes[0].action;
+    phase.portRates = generatePortRates(phase.actionOp);
+    phases.push_back(phase);
+    return phases;
+  }
+
+  if (graph.type == GraphType::StateMachineSchedule) {
+    llvm::SmallVector<SDFPhase, 4> phases;
+
+    ScheduleNode node = graph.nodes[graph.initialStateValue];
+    while (node.edgeTypeToNextNode != ScheduleEdgeType::WrapAround) {
+      SDFPhase phase;
+      phase.actionOp = node.action;
+      phase.portRates = generatePortRates(phase.actionOp);
+      phases.push_back(phase);
+      node = graph.nodes[node.nextNodeIndex];
+    }
+    SDFPhase phase;
+    phase.actionOp = node.action;
+    phase.portRates = generatePortRates(phase.actionOp);
+    phases.push_back(phase);
+
+    return phases;
+  }
+
+  return std::nullopt;
+}
+
+llvm::DenseMap<mlir::Value, int>
+CycloStaticDataflowAnalysis::generatePortRates(mlir::cal::ActionOp actionOp) {
+
+  llvm::DenseMap<mlir::Value, int> portRates;
+  for (auto pushOp : actionOp.getOps<fifo::Push>()) {
+    portRates[pushOp.getInputPort()] += 1;
+  }
+
+  for (auto popOp : actionOp.getOps<fifo::Pop>()) {
+    portRates[popOp.getOutputPort()] -= 1;
+  }
+  return portRates;
 }
 
 } // namespace mlir

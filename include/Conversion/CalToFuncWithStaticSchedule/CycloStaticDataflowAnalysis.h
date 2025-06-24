@@ -33,12 +33,19 @@ struct ScheduleGraph {
   GraphType type;
   mlir::cal::ActorOp actor;
   std::vector<ScheduleNode> nodes; // All schedule nodes
+  size_t initialStateValue;        // The initial state value for the FSM
 };
 
 void printScheduleGraph(const ScheduleGraph &graph);
 // ====== End: Everything we need to store a graph describing an actor's
 // schedule
 
+// ====== Start: Everything we need to store scheduling variable information
+// for an action
+
+// This stores information about the predicates of an action of they can
+// be turned into an inequality. For example: if predicate equals ==, stateVar
+// is %5 and constant equals 10, then the predicate inequality is %5 != 10.
 struct PredicateInequalityInfo {
   mlir::arith::CmpIPredicate predicate;
   mlir::Value stateVar;
@@ -47,6 +54,11 @@ struct PredicateInequalityInfo {
 
 enum class StateVarUpdateKind { Increment, ConstantAssignment };
 
+// This stores information about how a state variable is updated by an action.
+// For example, if the action increments the state variable %5 by 1
+// (%5 = %5 + 1), then the update pattern is {%5, Increment, 1}. If the
+// action assigns a constant value to the state variable (%5 = 4), then the
+// update pattern is {%5, ConstantAssignment, 4}.
 struct StateVarUpdatePattern {
   mlir::Value stateVar;
   StateVarUpdateKind kind;
@@ -59,6 +71,9 @@ struct SchedulingVariableInfoForAction {
   std::optional<StateVarUpdatePattern> updatePattern;
 };
 
+// ====== End: Everything we need to store scheduling variable information for
+// an action
+
 // Forward declare operator<<
 llvm::raw_ostream &operator<<(llvm::raw_ostream &,
                               const PredicateInequalityInfo &);
@@ -69,8 +84,18 @@ struct CycloStaticDataflowAnalysis {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CycloStaticDataflowAnalysis)
 
 public:
+  struct SDFPhase {
+    mlir::cal::ActionOp actionOp;
+    llvm::DenseMap<mlir::Value, int> portRates;
+  };
+
   explicit CycloStaticDataflowAnalysis(Operation *op);
+
+  std::optional<llvm::SmallVector<SDFPhase, 4>>
+  getSDFPhases(cal::ActorOp actorOp);
+
   void printActorStateMachine(cal::ActorOp actorOp);
+  void printCSDFPhases(cal::ActorOp actorOp);
 
 private:
   llvm::DenseMap<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
@@ -78,13 +103,16 @@ private:
   void determineActorSchedule(cal::ActorOp actorOp);
   ScheduleGraph generateSingleActionSchedule(cal::ActorOp actorOp);
   ScheduleGraph generateMultiActionSchedule(cal::ActorOp actorOp);
+  
+  llvm::DenseMap<mlir::Value, int>
+  generatePortRates(mlir::cal::ActionOp actionOp);
 
 public:
   // Helper class to construct a schedule graph from action information
   class ScheduleGraphBuilder {
   public:
     ScheduleGraphBuilder(cal::ActorOp actorOp);
-    ScheduleGraph generateSchedule();
+    ScheduleGraph generateFsm();
 
   private:
     cal::ActorOp actorOp;
