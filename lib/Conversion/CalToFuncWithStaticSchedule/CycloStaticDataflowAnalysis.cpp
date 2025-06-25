@@ -1,4 +1,5 @@
 #include "Conversion/CalToFuncWithStaticSchedule/CycloStaticDataflowAnalysis.h"
+#include "Conversion/CalToFuncWithStaticSchedule/StaticNetworkSimulator.h"
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -409,22 +410,6 @@ void CycloStaticDataflowAnalysis::printStaticSchedule(
   }
 }
 
-struct Channel {
-  cal::ActorOp srcActor;
-  cal::ActorOp dstActor;
-  fifo::CreateOp createOp; // The create operation that created this channel
-  int tokens;
-};
-
-struct Actor {
-  cal::ActorOp actorOp;
-  int currentState;
-  int numFiringsLeft;
-  ScheduleGraph fsm;
-  llvm::DenseMap<mlir::Value, Channel *> portsIn;
-  llvm::DenseMap<mlir::Value, Channel *> portsOut;
-};
-
 // Returns true if the actor can fire its current action (enough tokens, firings
 // left)
 bool canFire(Actor *actor) {
@@ -613,44 +598,6 @@ CycloStaticDataflowAnalysis::generateScheduleThroughSimulation(
       }
     }
   } while (!worklist.empty());
-
-  // llvm::outs() << "Remaining tokens in channels after simulation:\n";
-  // for (auto &channel : channels) {
-  //   llvm::outs() << "  " << channel.srcActor.getSymName() << " -> "
-  //                << channel.dstActor.getSymName() << ": " << channel.tokens
-  //                << " tokens\n";
-  // }
-
-  // do {
-
-  //   llvm::outs() << "Process Worklist\n";
-
-  //   // Process worklist first
-  //   while (!worklist.empty()) {
-  //     Actor *currentActor = worklist.back();
-  //     worklist.pop_back();
-
-  //     if (canFire(*currentActor)) {
-  //       cal::ActionOp firedAction = fire(*currentActor);
-  //       schedule.push_back(firedAction);
-  //       // queueFollowOnActorsToWorklist(*currentActor, worklist, actors);
-  //     }
-  //   }
-
-  //   llvm::outs() << "Add to worklist actors that can fire\n";
-
-  //   // If worklist is empty, scan all actors
-  //   if (worklist.empty()) {
-  //     for (auto &pair : actors) {
-  //       if (canFire(pair.second)) {
-  //         llvm::outs() << "  Actor: " << pair.second.actorOp.getSymName()
-  //                      << " can fire\n";
-  //         worklist.push_back(&pair.second);
-  //       }
-  //     }
-  //   }
-
-  // } while (!worklist.empty());
 
   return schedule;
 }
