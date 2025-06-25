@@ -427,16 +427,16 @@ struct Actor {
 
 // Returns true if the actor can fire its current action (enough tokens, firings
 // left)
-bool canFire(Actor &actor) {
+bool canFire(Actor *actor) {
 
-  if (actor.numFiringsLeft <= 0)
+  if (actor->numFiringsLeft <= 0)
     return false;
 
   // llvm::outs() << "Checking if actor can fire: " <<
-  // actor.actorOp.getSymName()
-  //              << " in state: " << actor.currentState << "\n";
+  // actor->actorOp.getSymName()
+  //              << " in state: " << actor->currentState << "\n";
 
-  auto actionOp = actor.fsm.nodes[actor.currentState].action;
+  auto actionOp = actor->fsm.nodes[actor->currentState].action;
   auto portRates = actionOp.getPortRates();
 
   // Check if there are enough tokens on input ports
@@ -449,7 +449,7 @@ bool canFire(Actor &actor) {
 
       // If there are not enough tokens in the channel to consume
       // Then it cannot fire
-      Channel *channel = actor.portsIn[port];
+      Channel *channel = actor->portsIn[port];
       if (channel->tokens < rate) {
         return false;
       }
@@ -459,15 +459,15 @@ bool canFire(Actor &actor) {
   return true;
 }
 
-cal::ActionOp fire(Actor &actor) {
-  auto actionOp = actor.fsm.nodes[actor.currentState].action;
+cal::ActionOp fire(Actor *actor) {
+  auto actionOp = actor->fsm.nodes[actor->currentState].action;
   auto portRates = actionOp.getPortRates();
 
   // Consume tokens from input ports
   for (auto &portRate : portRates) {
     auto port = portRate.first;
     int rate = std::abs(portRate.second);
-    if (auto it = actor.portsIn.find(port); it != actor.portsIn.end()) {
+    if (auto it = actor->portsIn.find(port); it != actor->portsIn.end()) {
       Channel *channel = it->second;
       if (channel->tokens < rate) {
         llvm::errs() << "Error: Not enough tokens on input port "
@@ -482,18 +482,18 @@ cal::ActionOp fire(Actor &actor) {
   for (auto &portRate : portRates) {
     auto port = portRate.first;
     int rate = std::abs(portRate.second);
-    if (auto it = actor.portsOut.find(port); it != actor.portsOut.end()) {
+    if (auto it = actor->portsOut.find(port); it != actor->portsOut.end()) {
       Channel *channel = it->second;
       channel->tokens += rate; // Produce tokens
     }
   }
 
   // Advance the actors internal state machine
-  ScheduleNode fsmNode = actor.fsm.nodes[actor.currentState];
+  ScheduleNode fsmNode = actor->fsm.nodes[actor->currentState];
   if (fsmNode.edgeTypeToNextNode == ScheduleEdgeType::WrapAround) {
-    actor.numFiringsLeft--;
+    actor->numFiringsLeft--;
   }
-  actor.currentState = fsmNode.nextNodeIndex;
+  actor->currentState = fsmNode.nextNodeIndex;
 
   return actionOp; // Return the action that was fired
 }
@@ -510,7 +510,7 @@ void queueFollowOnActorsToWorklist(
     auto it = actorsMap.find(dstActorOp);
     if (it != actorsMap.end()) {
       Actor &dstActor = it->second;
-      if (canFire(dstActor)) {
+      if (canFire(&dstActor)) {
         followOnWorklist.push_back(&dstActor);
       }
     }
@@ -536,14 +536,23 @@ CycloStaticDataflowAnalysis::generateScheduleThroughSimulation(
   llvm::DenseMap<cal::ActorOp, Actor> actorOpToActorStructMap;
   std::vector<Actor *> actors;
   for (auto &pair : actorFiringsPerCycle) {
-    Actor actor;
-    actor.actorOp = pair.first;
-    actor.currentState = actorScheduleMap[pair.first]
-                             .initialStateValue; // Start at initial state
-    actor.numFiringsLeft = pair.second; // Set number of firings per cycle
-    actor.fsm = actorScheduleMap[pair.first];
-    actorOpToActorStructMap[pair.first] = actor;
-    actors.push_back(&actor);
+    actorOpToActorStructMap[pair.first] = Actor{
+        .actorOp = pair.first,
+        .currentState = actorScheduleMap[pair.first].initialStateValue,
+        .numFiringsLeft = pair.second,
+        .fsm = actorScheduleMap[pair.first]
+    };
+  }
+
+  // Collect actor pointers and sort by actor name for deterministic order
+  std::vector<std::pair<std::string, Actor *>> sortedActors;
+  for (auto &pair : actorOpToActorStructMap) {
+    sortedActors.emplace_back(pair.first.getSymName().str(), &pair.second);
+  }
+  std::sort(sortedActors.begin(), sortedActors.end(),
+            [](const auto &a, const auto &b) { return a.first < b.first; });
+  for (const auto &entry : sortedActors) {
+    actors.push_back(entry.second);
   }
 
   // 1.3 Create channels
@@ -590,18 +599,17 @@ CycloStaticDataflowAnalysis::generateScheduleThroughSimulation(
       Actor *currentActor = worklist.front();
       worklist.erase(worklist.begin());
 
-      if (canFire(*currentActor)) {
-        cal::ActionOp firedAction = fire(*currentActor);
+      if (canFire(currentActor)) {
+        cal::ActionOp firedAction = fire(currentActor);
         schedule.push_back(firedAction);
-        queueFollowOnActorsToWorklist(*currentActor, worklist, actorOpToActorStructMap);
+        queueFollowOnActorsToWorklist(*currentActor, worklist,
+                                      actorOpToActorStructMap);
       }
     }
 
-    for (auto &pair : actorOpToActorStructMap) {
-      if (canFire(pair.second)) {
-        // llvm::outs() << "  Actor: " << pair.second.actorOp.getSymName()
-        //              << " can fire\n";
-        worklist.push_back(&pair.second);
+    for (auto *actor : actors) {
+      if (canFire(actor)) {
+        worklist.push_back(actor);
       }
     }
   } while (!worklist.empty());
