@@ -120,5 +120,92 @@ getActorAndPort(mlir::Value fifoEnd) {
   return {actorOp, port};
 }
 
+std::vector<cal::ActionOp> simulateNetwork(
+    cal::NetworkOp networkOp,
+    const llvm::DenseMap<cal::ActorOp, int> &actorFiringsPerCycle,
+    const llvm::DenseMap<cal::ActorOp, ScheduleGraph> &actorScheduleMap) {
+    
+  // Step 1: Create actors structs for each actor
+  llvm::DenseMap<cal::ActorOp, Actor> actorOpToActorStructMap;
+  std::vector<Actor *> actors;
+  for (auto &pair : actorFiringsPerCycle) {
+    actorOpToActorStructMap[pair.first] = Actor{
+        .actorOp = pair.first,
+        .currentState = actorScheduleMap.find(pair.first)->second.initialStateValue,
+        .numFiringsLeft = pair.second,
+        .fsm = actorScheduleMap.find(pair.first)->second
+    };
+  }
+
+  // Collect actor pointers and sort by actor name for deterministic order
+  std::vector<std::pair<std::string, Actor *>> sortedActors;
+  for (auto &pair : actorOpToActorStructMap) {
+    sortedActors.emplace_back(pair.first.getSymName().str(), &pair.second);
+  }
+  std::sort(sortedActors.begin(), sortedActors.end(),
+            [](const auto &a, const auto &b) { return a.first < b.first; });
+  for (const auto &entry : sortedActors) {
+    actors.push_back(entry.second);
+  }
+
+  // Step 2: Create channels and link them to actors
+  std::vector<Channel> channels;
+  for (auto createOp : networkOp.getOps<fifo::CreateOp>()) {
+    auto [srcActor, srcPort] = getActorAndPort(createOp->getResult(0));
+    auto [dstActor, dstPort] = getActorAndPort(createOp->getResult(1));
+
+    Channel channel;
+    channel.srcActor = srcActor;
+    channel.dstActor = dstActor;
+    channel.createOp = createOp;
+    channel.tokens = 0;
+
+    channels.push_back(channel);
+  }
+
+  // Link actors to channels
+  for (size_t i = 0; i < channels.size(); ++i) {
+    auto &channel = channels[i];
+    auto createOp = channel.createOp;
+    auto [srcActor, srcPort] = getActorAndPort(createOp->getResult(0));
+    auto [dstActor, dstPort] = getActorAndPort(createOp->getResult(1));
+
+    actorOpToActorStructMap[channel.srcActor].portsOut[srcPort] = &channel;
+    actorOpToActorStructMap[channel.dstActor].portsIn[dstPort] = &channel;
+  }
+
+  // Step 3: Execute the simulation
+  std::vector<cal::ActionOp> schedule;
+  std::vector<Actor *> worklist;
+
+  do {
+
+    // Step 3.1 Execute all actors that can fire on the worklist
+    // Trace the actors that they send tokens to and add them to the worklist
+    // If they can fire to - this will exhaust all actions that can fire
+    while (!worklist.empty()) {
+      Actor *currentActor = worklist.front();
+      worklist.erase(worklist.begin());
+
+      if (canFire(currentActor)) {
+        cal::ActionOp firedAction = fire(currentActor);
+        schedule.push_back(firedAction);
+        queueFollowOnActorsToWorklist(*currentActor, worklist, actorOpToActorStructMap);
+      }
+    }
+
+    // Step 3.2 Once the worklist is empty, find all actors that can fire
+    // and add them to the worklist. These are typically source actors
+    // that can fire without any dependencies. We keep them seperate to prevent
+    // the source actors from all firing first
+    for (auto *actor : actors) {
+      if (canFire(actor)) {
+        worklist.push_back(actor);
+      }
+    }
+  } while (!worklist.empty());
+
+  return schedule;
+}
 
 } // namespace mlir

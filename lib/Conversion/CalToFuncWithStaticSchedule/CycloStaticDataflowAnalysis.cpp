@@ -413,97 +413,12 @@ void CycloStaticDataflowAnalysis::printStaticSchedule(
 std::vector<cal::ActionOp>
 CycloStaticDataflowAnalysis::generateScheduleThroughSimulation(
     cal::NetworkOp networkOp) {
-
-  // 1. Initialise system - create actors and channels and solve balance
-  // equations
-
-  // 1.1 Solve Balance Equations
+  // Generate balance equations and solve for actor firings
   auto balanceEquations = generateBalanceEquations(networkOp);
   auto actorFiringsPerCycle = solveBalanceEquations(balanceEquations);
-
-  // 1.2 Create actors
-  llvm::DenseMap<cal::ActorOp, Actor> actorOpToActorStructMap;
-  std::vector<Actor *> actors;
-  for (auto &pair : actorFiringsPerCycle) {
-    actorOpToActorStructMap[pair.first] = Actor{
-        .actorOp = pair.first,
-        .currentState = actorScheduleMap[pair.first].initialStateValue,
-        .numFiringsLeft = pair.second,
-        .fsm = actorScheduleMap[pair.first]
-    };
-  }
-
-  // Collect actor pointers and sort by actor name for deterministic order
-  std::vector<std::pair<std::string, Actor *>> sortedActors;
-  for (auto &pair : actorOpToActorStructMap) {
-    sortedActors.emplace_back(pair.first.getSymName().str(), &pair.second);
-  }
-  std::sort(sortedActors.begin(), sortedActors.end(),
-            [](const auto &a, const auto &b) { return a.first < b.first; });
-  for (const auto &entry : sortedActors) {
-    actors.push_back(entry.second);
-  }
-
-  // 1.3 Create channels
-  std::vector<Channel> channels;
-  for (auto createOp : networkOp.getOps<fifo::CreateOp>()) {
-    auto [srcActor, srcPort] = getActorAndPort(createOp->getResult(0));
-    auto [dstActor, dstPort] = getActorAndPort(createOp->getResult(1));
-
-    Channel channel;
-    channel.srcActor = srcActor;
-    channel.dstActor = dstActor;
-    channel.createOp = createOp;
-    channel.tokens = 0; // Initialize tokens as needed
-
-    channels.push_back(channel);
-  }
-
-  // 1.3.1 Point actors to channels once allocation is complete
-  // This is done to handle the case where channel addresses are changed during
-  // vector resizing
-  for (size_t i = 0; i < channels.size(); ++i) {
-    auto &channel = channels[i];
-
-    // Find the corresponding ports for this channel
-    auto createOp = channel.createOp;
-    auto [srcActor, srcPort] = getActorAndPort(createOp->getResult(0));
-    auto [dstActor, dstPort] = getActorAndPort(createOp->getResult(1));
-
-    actorOpToActorStructMap[channel.srcActor].portsOut[srcPort] = &channel;
-    actorOpToActorStructMap[channel.dstActor].portsIn[dstPort] = &channel;
-  }
-
-  // 2. Simulate the schedule - find one actor that can fire, fire it and
-  // then trace the destinations of all tokens produced and consumed from
-  // this firing in a worklist. Once this worklist is empty, we try find
-  // another actor that can fire and repeat until all actors have fired.
-  // By having this worklist, I hope to keep buffer sizes small.
-
-  std::vector<cal::ActionOp> schedule;
-  std::vector<Actor *> worklist;
-
-  do {
-    while (!worklist.empty()) {
-      Actor *currentActor = worklist.front();
-      worklist.erase(worklist.begin());
-
-      if (canFire(currentActor)) {
-        cal::ActionOp firedAction = fire(currentActor);
-        schedule.push_back(firedAction);
-        queueFollowOnActorsToWorklist(*currentActor, worklist,
-                                      actorOpToActorStructMap);
-      }
-    }
-
-    for (auto *actor : actors) {
-      if (canFire(actor)) {
-        worklist.push_back(actor);
-      }
-    }
-  } while (!worklist.empty());
-
-  return schedule;
+  
+  // Delegate the simulation to StaticNetworkSimulator
+  return simulateNetwork(networkOp, actorFiringsPerCycle, actorScheduleMap);
 }
 
 } // namespace mlir
