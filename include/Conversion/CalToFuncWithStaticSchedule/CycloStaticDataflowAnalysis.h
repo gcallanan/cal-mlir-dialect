@@ -81,23 +81,29 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &,
                               const StateVarUpdatePattern &);
 
 /**
- * @brief Performs cyclo-static dataflow (CSDF) analysis on CAL actors and networks.
+ * @brief Performs cyclo-static dataflow (CSDF) analysis and scheduling networks
+ * of actors.
  *
  * The CycloStaticDataflowAnalysis struct provides utilities for analyzing CAL
- * actors and networks to extract their cyclo-static firing patterns, port rates,
- * and to generate and solve balance equations for FIFOs in the network. It
- * supports both single-action and multi-action actors, and can construct
- * schedule graphs representing the firing state machines of actors.
+ * actors and networks to extract their cyclo-static firing patterns, port
+ * rates, generate and solve balance equations for FIFOs in the network, and
+ * simulate execution schedules. It supports both single-action and multi-action
+ * actors, and can construct schedule graphs representing the firing state
+ * machines of actors.
  *
  * Key functionalities include:
  *   - Retrieving the sequence of SDF phases for a given CAL actor, where each
  *     phase corresponds to an action and its associated port rates.
  *   - Generating balance equations for each FIFO in a CAL network, capturing
- *     the relationship between producer and consumer actors and their data rates.
+ *     the relationship between producer and consumer actors and their data
+ * rates.
  *   - Solving the system of balance equations to compute actor firing rates
  *     (repetition vectors) that ensure balanced dataflow.
+ *   - Simulating the execution of a CAL network to generate a valid static
+ *     schedule of actions that respects cyclo-static dataflow semantics.
  *   - Printing utilities for debugging and visualization of actor state
- *     machines, CSDF phases, balance equations, and computed firing rates.
+ *     machines, CSDF phases, balance equations, computed firing rates, and
+ *     generated schedules.
  *
  * The analysis assumes that the CAL network is well-formed, with each FIFO
  * having exactly one producer and one consumer. Internally, it maintains a
@@ -184,10 +190,26 @@ public:
   llvm::DenseMap<mlir::cal::ActorOp, int>
   solveBalanceEquations(llvm::SmallVector<BalanceEquation, 4> &equations);
 
+  /// @brief Generates a schedule for the given network operation by simulating
+  /// its execution.
+  ///
+  /// This function performs a simulation of the provided `cal::NetworkOp` to
+  /// determine a valid execution schedule for its actions. The resulting
+  /// schedule is returned as a vector of `cal::ActionOp` objects, representing
+  /// the order in which actions should be executed to respect the network's
+  /// cyclo-static dataflow semantics.
+  ///
+  /// @param networkOp The network operation to be simulated and scheduled.
+  /// @return A vector of `cal::ActionOp` representing the computed execution
+  /// schedule.
+  std::vector<cal::ActionOp>
+  generateScheduleThroughSimulation(cal::NetworkOp networkOp);
+
   void printActorStateMachine(cal::ActorOp actorOp);
   void printCSDFPhases(cal::ActorOp actorOp);
   void printBalanceEquations(cal::NetworkOp networkOp);
   void printFiringsPerActorFromSolvedBalanceEquations(cal::NetworkOp networkOp);
+  void printStaticSchedule(cal::NetworkOp networkOp);
 
 private:
   llvm::DenseMap<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
@@ -197,8 +219,8 @@ private:
   ScheduleGraph generateMultiActionSchedule(cal::ActorOp actorOp);
   int getPortRateOverAllPhases(cal::ActorOp actorOp, mlir::Value port);
 
-  llvm::DenseMap<mlir::Value, int>
-  generatePortRates(mlir::cal::ActionOp actionOp);
+  std::tuple<cal::ActorOp, mlir::BlockArgument>
+  getActorAndPort(mlir::Value fifoEnd);
 
 public:
   // Helper class to construct a schedule graph from action information

@@ -426,6 +426,14 @@ public:
       });
     }
 
+    bool printStaticSchedule =
+        print_static_schedule_for_testing.getValue();
+    if (printStaticSchedule) {
+      getOperation()->walk([&](cal::NetworkOp networkOp) {
+        csdfAnalysis.printStaticSchedule(networkOp);
+      });
+    }
+
     RewritePatternSet patterns(&getContext());
     // patterns.add<ConvertCalActorToFunc>(&getContext());
     // patterns.add<ConvertCalTerminatorToFuncTerminator>(&getContext());
