@@ -48,73 +48,122 @@ class ConvertCalActorToActionFuncs : public OpRewritePattern<cal::ActorOp> {
   LogicalResult matchAndRewrite(cal::ActorOp op,
                                 PatternRewriter &rewriter) const override {
     mlir::Location loc = op.getLoc();
-
-    // Get the actor name
     auto actorName = op.getSymName();
-
-    // Get the argument types from the actor's entry block
     auto &actorBody = op.getBody();
     auto argumentTypes = actorBody.getArgumentTypes();
 
-    // Iterate through all cal::ActionOp in the actor
     for (auto actionOp : op.getOps<cal::ActionOp>()) {
-      // Get the action name
-      auto actionNameAttr = actionOp.getActionNameAttr();
-      if (!actionNameAttr) {
-        op.emitError("ActionOp missing symbol name attribute");
+      if (failed(createActionFunction(actionOp, actorName, argumentTypes, 
+                                     actorBody.front(), rewriter, loc))) {
         return failure();
       }
-      auto actionName = actionNameAttr.getValue();
-
-      // Compose the function name: actorName_actionName
-      std::string funcName = (actorName + "_" + actionName).str();
-      llvm::outs() << "Creating function: " << funcName << "\n";
-
-      // Function type: same arguments as actor, returns i1
-      auto i1Type = rewriter.getI1Type();
-      auto funcType = rewriter.getFunctionType(argumentTypes, {i1Type});
-
-      // Create the function op
-      auto funcOp = rewriter.create<func::FuncOp>(loc, funcName, funcType);
-
-      // Add entry block and map arguments
-      Block *entryBlock = funcOp.addEntryBlock();
-      IRMapping mapping;
-      mapping.map(actorBody.getArguments(), entryBlock->getArguments());
-
-      rewriter.setInsertionPointToStart(entryBlock);
-
-      for (auto &opToClone : actorBody.front()) {
-        // Skip ActionOps and ExecutionBody ops
-        if (mlir::isa<cal::ActionOp>(&opToClone) ||
-            mlir::isa<cal::ExecutionBody>(&opToClone))
-          continue;
-        rewriter.clone(opToClone, mapping);
-      }
-
-      // Clone the action's body into the function
-      if (actionOp.getBody().empty()) {
-        funcOp.emitError("ActionOp has empty body");
-        return failure();
-      }
-      for (auto &opToClone : actionOp.getBody().front()) {
-        if (mlir::isa<cal::Predicate>(opToClone)) {
-          continue;
-        }
-        rewriter.clone(opToClone, mapping);
-      }
-
-      rewriter.setInsertionPointToEnd(entryBlock);
-      auto trueConst = rewriter.create<mlir::arith::ConstantOp>(
-          loc, rewriter.getBoolAttr(true));
-      rewriter.create<mlir::func::ReturnOp>(loc, trueConst.getResult());
-
-      llvm::outs() << "Created function: " << funcOp << "\n";
     }
 
     rewriter.eraseOp(op);
-
     return success();
+  }
+
+private:
+  LogicalResult createActionFunction(cal::ActionOp actionOp, 
+                                   StringRef actorName,
+                                   TypeRange argumentTypes,
+                                   Block &actorBody,
+                                   PatternRewriter &rewriter,
+                                   Location loc) const {
+    auto actionNameAttr = actionOp.getActionNameAttr();
+    if (!actionNameAttr) {
+      actionOp.emitError("ActionOp missing symbol name attribute");
+      return failure();
+    }
+
+    std::string funcName = (actorName + "_" + actionNameAttr.getValue()).str();
+    auto i1Type = rewriter.getI1Type();
+    auto funcType = rewriter.getFunctionType(argumentTypes, {i1Type});
+    auto funcOp = rewriter.create<func::FuncOp>(loc, funcName, funcType);
+
+    Block *entryBlock = funcOp.addEntryBlock();
+    IRMapping mapping;
+    mapping.map(actorBody.getArguments(), entryBlock->getArguments());
+
+    rewriter.setInsertionPointToStart(entryBlock);
+    auto trueConst = rewriter.create<mlir::arith::ConstantOp>(
+        loc, rewriter.getBoolAttr(true));
+    auto falseConst = rewriter.create<mlir::arith::ConstantOp>(
+        loc, rewriter.getBoolAttr(false));
+
+    cloneActorBodyOps(actorBody, rewriter, mapping);
+    
+    if (actionOp.getBody().empty()) {
+      funcOp.emitError("ActionOp has empty body");
+      return failure();
+    }
+
+    Value combinedPredicate = processPredicates(actionOp, rewriter, mapping, 
+                                              trueConst.getResult(), loc);
+    createConditionalExecution(actionOp, rewriter, mapping, combinedPredicate,
+                              trueConst.getResult(), falseConst.getResult(),
+                              entryBlock, i1Type, loc);
+    return success();
+  }
+
+  void cloneActorBodyOps(Block &actorBody, PatternRewriter &rewriter,
+                        IRMapping &mapping) const {
+    for (auto &opToClone : actorBody) {
+      if (mlir::isa<cal::ActionOp>(&opToClone) ||
+          mlir::isa<cal::ExecutionBody>(&opToClone))
+        continue;
+      rewriter.clone(opToClone, mapping);
+    }
+  }
+
+  Value processPredicates(cal::ActionOp actionOp, PatternRewriter &rewriter,
+                         IRMapping &mapping, Value trueConst, 
+                         Location loc) const {
+    SmallVector<Value, 4> predicateResults;
+
+    for (auto &bodyOp : actionOp.getBody().front()) {
+      if (auto predicateOp = dyn_cast<cal::Predicate>(&bodyOp)) {
+        for (auto &predOp : predicateOp->getRegion(0).front()) {
+          if (isa<cal::PredicateResultOp>(predOp)) {
+            Value predResult = mapping.lookupOrDefault(predOp.getOperand(0));
+            predicateResults.push_back(predResult);
+          } else {
+            rewriter.clone(predOp, mapping);
+          }
+        }
+      }
+    }
+
+    Value combinedPredicate = trueConst;
+    for (auto predResult : predicateResults) {
+      combinedPredicate = rewriter.create<mlir::arith::AndIOp>(
+          loc, combinedPredicate, predResult);
+    }
+    return combinedPredicate;
+  }
+
+  void createConditionalExecution(cal::ActionOp actionOp, 
+                                PatternRewriter &rewriter,
+                                IRMapping &mapping, Value condition,
+                                Value trueValue, Value falseValue,
+                                Block *entryBlock, Type i1Type,
+                                Location loc) const {
+    auto ifOp = rewriter.create<mlir::scf::IfOp>(loc, i1Type, condition, true);
+    
+    rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
+    for (auto &opToClone : actionOp.getBody().front()) {
+      if (mlir::isa<cal::Predicate>(opToClone)) {
+        continue;
+      }
+      rewriter.clone(opToClone, mapping);
+    }
+    rewriter.create<mlir::scf::YieldOp>(loc, trueValue);
+    
+    rewriter.setInsertionPointToStart(&ifOp.getElseRegion().front());
+    rewriter.create<mlir::scf::YieldOp>(loc, falseValue);
+
+    rewriter.setInsertionPointToEnd(entryBlock);
+    rewriter.create<mlir::func::ReturnOp>(loc, ifOp.getResult(0));
   }
 }; // namespace mlir
 
