@@ -53,6 +53,7 @@ class ConvertCalActorToActionFuncs : public OpRewritePattern<cal::ActorOp> {
     auto argumentTypes = actorBody.getArgumentTypes();
 
     for (auto actionOp : op.getOps<cal::ActionOp>()) {
+      rewriter.setInsertionPoint(op);
       if (failed(createActionFunction(actionOp, actorName, argumentTypes, 
                                      actorBody.front(), rewriter, loc))) {
         return failure();
