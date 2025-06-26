@@ -256,15 +256,18 @@ struct AddStateAboveCreateInstance
   }
 };
 
+// Add this helper function before the pass class
+void populateHoistCalStateOutOfActorPatterns(RewritePatternSet &patterns) {
+  patterns.add<MoveInitOperationsToArguments>(patterns.getContext());
+  patterns.add<AddStateAboveCreateInstance>(patterns.getContext());
+}
+
 class HoistCalStateOutOfActorPass
     : public impl::HoistCalStateOutOfActorBase<HoistCalStateOutOfActorPass> {
 public:
   void runOnOperation() final {
     RewritePatternSet patterns(&getContext());
-
-    patterns.add<MoveInitOperationsToArguments>(&getContext());
-    patterns.add<AddStateAboveCreateInstance>(&getContext());
-
+    populateHoistCalStateOutOfActorPatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }

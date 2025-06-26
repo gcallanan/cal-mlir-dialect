@@ -20,6 +20,8 @@ std::unique_ptr<mlir::Pass> convertCalActionsToExecutionBodies();
 std::unique_ptr<mlir::Pass> hoistCalStateOutOfActor();
 std::unique_ptr<mlir::Pass> insertCalPortPredicates();
 
+void populateHoistCalStateOutOfActorPatterns(RewritePatternSet &patterns);
+
 #define GEN_PASS_DECL
 #include "Dialect/Cal/CalPasses.h.inc"
 
