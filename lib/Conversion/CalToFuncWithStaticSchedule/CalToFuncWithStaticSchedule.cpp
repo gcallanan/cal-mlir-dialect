@@ -31,15 +31,100 @@ namespace mlir {
 
 struct ConvertCalNetworkToMainFuncWithStaticSchedule
     : public OpRewritePattern<cal::NetworkOp> {
-  using OpRewritePattern::OpRewritePattern;
+
+  ConvertCalNetworkToMainFuncWithStaticSchedule(
+      MLIRContext *context, const std::vector<cal::ActionOp> &schedule)
+      : OpRewritePattern(context), staticSchedule(schedule) {}
 
   LogicalResult matchAndRewrite(cal::NetworkOp op,
                                 PatternRewriter &rewriter) const override {
 
+    // Get location and module
+    Location loc = op.getLoc();
+
+    // Set insertion point before the network op
+    rewriter.setInsertionPoint(op);
+
+    // Create the main function type (no arguments, no return)
+    auto funcType = rewriter.getFunctionType({}, {});
+    auto mainFunc = rewriter.create<func::FuncOp>(loc, "main", funcType);
+    Block *entryBlock = mainFunc.addEntryBlock();
+    rewriter.setInsertionPointToStart(entryBlock);
+
+    // Clone operations from network body, skipping CreateInstanceOp
+    IRMapping mapping;
+    for (auto &opToClone : op.getBody().front()) {
+      if (mlir::isa<cal::CreateInstanceOp>(opToClone))
+        continue;
+      rewriter.clone(opToClone, mapping);
+    }
+
+    // Create an infinite while loop using scf.WhileOp
+    auto i1Type = rewriter.getI1Type();
+    auto trueConst = rewriter.create<mlir::arith::ConstantOp>(
+        loc, rewriter.getBoolAttr(true));
+
+    // The loop carries one i1 operand/result for the condition
+    auto whileOp = rewriter.create<mlir::scf::WhileOp>(
+        loc, /*resultTypes=*/TypeRange{}, /*operands=*/ValueRange{trueConst});
+
+    // Condition block: accepts one i1 argument and yields it as condition
+    Block *condBlock = rewriter.createBlock(&whileOp.getBefore(), 
+        whileOp.getBefore().end(), {i1Type}, {loc});
+    rewriter.setInsertionPointToEnd(condBlock);
+    rewriter.create<mlir::scf::ConditionOp>(loc, condBlock->getArgument(0), ValueRange{});
+
+    // Body block: contains the schedule and yields true to continue
+    Block *bodyBlock =
+        rewriter.createBlock(&whileOp.getAfter(), whileOp.getAfter().end());
+    rewriter.setInsertionPointToEnd(bodyBlock);
+
+    llvm::outs() << "Processing static schedule for cal::NetworkOp: "
+                 << "\n";
+
+    for (auto actionOp : staticSchedule) {
+      // Prepare arguments for the action function call
+      SmallVector<Value, 4> args;
+      // // If needed, populate args from the context or mapping
+
+      // Build the function name: "<actorName>_<actionName>"
+      auto actorOp = actionOp->getParentOfType<cal::ActorOp>();
+      auto actorName = actorOp.getSymName();
+      auto actionNameAttr = actionOp.getActionNameAttr();
+      std::string funcName =
+          (actorName + "_" + actionNameAttr.getValue()).str();
+
+      llvm::outs() << "Calling action function: " << funcName << "\n";
+
+      // TODO: We need to populate the args vector with actual values
+
+      // Call the action function
+      //rewriter.create<func::CallOp>(loc, funcName, TypeRange{}, args);
+    }
+
+    llvm::outs() << "Finished processing static schedule for cal::NetworkOp: "
+                 << "\n";
+
+    rewriter.create<mlir::scf::YieldOp>(loc, ValueRange{trueConst});
+
+    // Set insertion point after the whileOp to continue building the main
+    // function
+    rewriter.setInsertionPointAfter(whileOp);
+
+    rewriter.create<func::ReturnOp>(loc);
+
+    // Erase the original network op (don't use replaceOp since we're not
+    // replacing with equivalent results)
     rewriter.eraseOp(op);
+
+    llvm::outs() << "Converted cal::NetworkOp to main function: " << mainFunc
+                 << "\n";
 
     return success();
   }
+
+private:
+  const std::vector<cal::ActionOp> &staticSchedule;
 };
 
 class ConvertCalActorToActionFuncs : public OpRewritePattern<cal::ActorOp> {
@@ -54,8 +139,8 @@ class ConvertCalActorToActionFuncs : public OpRewritePattern<cal::ActorOp> {
 
     for (auto actionOp : op.getOps<cal::ActionOp>()) {
       rewriter.setInsertionPoint(op);
-      if (failed(createActionFunction(actionOp, actorName, argumentTypes, 
-                                     actorBody.front(), rewriter, loc))) {
+      if (failed(createActionFunction(actionOp, actorName, argumentTypes,
+                                      actorBody.front(), rewriter, loc))) {
         return failure();
       }
     }
@@ -65,12 +150,11 @@ class ConvertCalActorToActionFuncs : public OpRewritePattern<cal::ActorOp> {
   }
 
 private:
-  LogicalResult createActionFunction(cal::ActionOp actionOp, 
-                                   StringRef actorName,
-                                   TypeRange argumentTypes,
-                                   Block &actorBody,
-                                   PatternRewriter &rewriter,
-                                   Location loc) const {
+  LogicalResult createActionFunction(cal::ActionOp actionOp,
+                                     StringRef actorName,
+                                     TypeRange argumentTypes, Block &actorBody,
+                                     PatternRewriter &rewriter,
+                                     Location loc) const {
     auto actionNameAttr = actionOp.getActionNameAttr();
     if (!actionNameAttr) {
       actionOp.emitError("ActionOp missing symbol name attribute");
@@ -93,22 +177,22 @@ private:
         loc, rewriter.getBoolAttr(false));
 
     cloneActorBodyOps(actorBody, rewriter, mapping);
-    
+
     if (actionOp.getBody().empty()) {
       funcOp.emitError("ActionOp has empty body");
       return failure();
     }
 
-    Value combinedPredicate = processPredicates(actionOp, rewriter, mapping, 
-                                              trueConst.getResult(), loc);
+    Value combinedPredicate = processPredicates(actionOp, rewriter, mapping,
+                                                trueConst.getResult(), loc);
     createConditionalExecution(actionOp, rewriter, mapping, combinedPredicate,
-                              trueConst.getResult(), falseConst.getResult(),
-                              entryBlock, i1Type, loc);
+                               trueConst.getResult(), falseConst.getResult(),
+                               entryBlock, i1Type, loc);
     return success();
   }
 
   void cloneActorBodyOps(Block &actorBody, PatternRewriter &rewriter,
-                        IRMapping &mapping) const {
+                         IRMapping &mapping) const {
     for (auto &opToClone : actorBody) {
       if (mlir::isa<cal::ActionOp>(&opToClone) ||
           mlir::isa<cal::ExecutionBody>(&opToClone))
@@ -118,8 +202,8 @@ private:
   }
 
   Value processPredicates(cal::ActionOp actionOp, PatternRewriter &rewriter,
-                         IRMapping &mapping, Value trueConst, 
-                         Location loc) const {
+                          IRMapping &mapping, Value trueConst,
+                          Location loc) const {
     SmallVector<Value, 4> predicateResults;
 
     for (auto &bodyOp : actionOp.getBody().front()) {
@@ -143,14 +227,13 @@ private:
     return combinedPredicate;
   }
 
-  void createConditionalExecution(cal::ActionOp actionOp, 
-                                PatternRewriter &rewriter,
-                                IRMapping &mapping, Value condition,
-                                Value trueValue, Value falseValue,
-                                Block *entryBlock, Type i1Type,
-                                Location loc) const {
+  void createConditionalExecution(cal::ActionOp actionOp,
+                                  PatternRewriter &rewriter, IRMapping &mapping,
+                                  Value condition, Value trueValue,
+                                  Value falseValue, Block *entryBlock,
+                                  Type i1Type, Location loc) const {
     auto ifOp = rewriter.create<mlir::scf::IfOp>(loc, i1Type, condition, true);
-    
+
     rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
     for (auto &opToClone : actionOp.getBody().front()) {
       if (mlir::isa<cal::Predicate>(opToClone)) {
@@ -159,7 +242,7 @@ private:
       rewriter.clone(opToClone, mapping);
     }
     rewriter.create<mlir::scf::YieldOp>(loc, trueValue);
-    
+
     rewriter.setInsertionPointToStart(&ifOp.getElseRegion().front());
     rewriter.create<mlir::scf::YieldOp>(loc, falseValue);
 
@@ -174,56 +257,58 @@ class ConvertCalToFuncWithStaticSchedulePass
 public:
   void runOnOperation() final {
 
+    // Step 1: Generate the analysis object
     auto &csdfAnalysis = getAnalysis<CycloStaticDataflowAnalysis>();
 
-    bool printFsm = print_fsm_for_testing.getValue();
-    if (printFsm) {
+    // Get the singular cal::NetworkOp in the module (if any)
+    cal::NetworkOp networkOp = nullptr;
+    auto networkOpsRange = getOperation()->getRegion(0).front().getOps<cal::NetworkOp>();
+    if (!networkOpsRange.empty()) {
+      networkOp = *networkOpsRange.begin();
+    }
+
+    // Step 2: Print various analysis results based on flags
+    if (print_fsm_for_testing.getValue()) {
       getOperation()->walk([&](cal::ActorOp actorOp) {
-        csdfAnalysis.printActorStateMachine(actorOp);
+      csdfAnalysis.printActorStateMachine(actorOp);
       });
     }
-
-    bool printCSDFSchedule = print_csdf_schedule_for_testing.getValue();
-    if (printCSDFSchedule) {
+    if (print_csdf_schedule_for_testing.getValue()) {
       getOperation()->walk(
-          [&](cal::ActorOp actorOp) { csdfAnalysis.printCSDFPhases(actorOp); });
+        [&](cal::ActorOp actorOp) { csdfAnalysis.printCSDFPhases(actorOp); });
+    }
+    if (print_balance_equations_for_testing.getValue() && networkOp) {
+      csdfAnalysis.printBalanceEquations(networkOp);
+    }
+    if (print_solved_balance_equations_for_testing.getValue() && networkOp) {
+      csdfAnalysis.printFiringsPerActorFromSolvedBalanceEquations(networkOp);
+    }
+    if (print_static_schedule_for_testing.getValue() && networkOp) {
+      csdfAnalysis.printStaticSchedule(networkOp);
     }
 
-    bool printBalanceEquations = print_balance_equations_for_testing.getValue();
-    if (printBalanceEquations) {
-      getOperation()->walk([&](cal::NetworkOp networkOp) {
-        csdfAnalysis.printBalanceEquations(networkOp);
-      });
+    // Step 3: Generate the static schedule
+    std::vector<cal::ActionOp> schedule;
+    if (networkOp) {
+      schedule = csdfAnalysis.generateScheduleThroughSimulation(networkOp);
     }
 
-    bool printSolvedBalanceEquations =
-        print_solved_balance_equations_for_testing.getValue();
-    if (printSolvedBalanceEquations) {
-      getOperation()->walk([&](cal::NetworkOp networkOp) {
-        csdfAnalysis.printFiringsPerActorFromSolvedBalanceEquations(networkOp);
-      });
-    }
-
-    bool printStaticSchedule = print_static_schedule_for_testing.getValue();
-    if (printStaticSchedule) {
-      getOperation()->walk([&](cal::NetworkOp networkOp) {
-        csdfAnalysis.printStaticSchedule(networkOp);
-      });
-    }
-
+    // Step 4: Hoist cal state variable declarations out of cal.actors into
+    // cal.network ops So they are only declared once after the actors are
+    // transformed into functions
     RewritePatternSet hoistPatterns(&getContext());
     cal::populateHoistCalStateOutOfActorPatterns(hoistPatterns);
-
     if (failed(
             applyPatternsGreedily(getOperation(), std::move(hoistPatterns)))) {
       signalPassFailure();
     }
 
+    // Step 5: Convert cal.actor and cal.network ops into functions and
+    // function calls using the static schedule
     RewritePatternSet staticSchedulePatterns(&getContext());
     staticSchedulePatterns.add<ConvertCalActorToActionFuncs>(&getContext());
     staticSchedulePatterns.add<ConvertCalNetworkToMainFuncWithStaticSchedule>(
-        &getContext(),
-        /*benefit=*/0);
+        &getContext(), schedule);
     if (failed(applyPatternsGreedily(getOperation(),
                                      std::move(staticSchedulePatterns)))) {
       signalPassFailure();
