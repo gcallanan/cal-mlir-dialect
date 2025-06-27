@@ -38,88 +38,73 @@ struct ConvertCalNetworkToMainFuncWithStaticSchedule
 
   LogicalResult matchAndRewrite(cal::NetworkOp op,
                                 PatternRewriter &rewriter) const override {
-
-    // Get location and module
     Location loc = op.getLoc();
+    SymbolTableCollection symbolTable;
 
-    // Set insertion point before the network op
+    // Insert main function before the network op
     rewriter.setInsertionPoint(op);
-
-    // Create the main function type (no arguments, no return)
     auto funcType = rewriter.getFunctionType({}, {});
     auto mainFunc = rewriter.create<func::FuncOp>(loc, "main", funcType);
     Block *entryBlock = mainFunc.addEntryBlock();
     rewriter.setInsertionPointToStart(entryBlock);
 
-    // Clone operations from network body, skipping CreateInstanceOp
+    // Clone network body ops, skipping CreateInstanceOp, and map actors to instances
     IRMapping mapping;
-    for (auto &opToClone : op.getBody().front()) {
-      if (mlir::isa<cal::CreateInstanceOp>(opToClone))
+    llvm::DenseMap<cal::ActorOp, cal::CreateInstanceOp> actorToInstanceMap;
+    for (auto &bodyOp : op.getBody().front()) {
+      if (auto createInstanceOp = dyn_cast<cal::CreateInstanceOp>(&bodyOp)) {
+        auto actorOp = symbolTable.lookupNearestSymbolFrom<cal::ActorOp>(
+            op.getOperation(), createInstanceOp.getActorRefAttr());
+        if (actorOp)
+          actorToInstanceMap[actorOp] = createInstanceOp;
         continue;
-      rewriter.clone(opToClone, mapping);
+      }
+      rewriter.clone(bodyOp, mapping);
     }
 
-    // Create an infinite while loop using scf.WhileOp
+    // Create infinite while loop (scf.WhileOp)
     auto i1Type = rewriter.getI1Type();
     auto trueConst = rewriter.create<mlir::arith::ConstantOp>(
         loc, rewriter.getBoolAttr(true));
-
-    // The loop carries one i1 operand/result for the condition
     auto whileOp = rewriter.create<mlir::scf::WhileOp>(
-        loc, /*resultTypes=*/TypeRange{}, /*operands=*/ValueRange{trueConst});
+        loc, TypeRange{}, ValueRange{trueConst});
 
-    // Condition block: accepts one i1 argument and yields it as condition
-    Block *condBlock = rewriter.createBlock(&whileOp.getBefore(), 
-        whileOp.getBefore().end(), {i1Type}, {loc});
+    // Condition block: yields the i1 argument as condition
+    Block *condBlock = rewriter.createBlock(
+        &whileOp.getBefore(), whileOp.getBefore().end(), {i1Type}, {loc});
     rewriter.setInsertionPointToEnd(condBlock);
     rewriter.create<mlir::scf::ConditionOp>(loc, condBlock->getArgument(0), ValueRange{});
 
-    // Body block: contains the schedule and yields true to continue
-    Block *bodyBlock =
-        rewriter.createBlock(&whileOp.getAfter(), whileOp.getAfter().end());
+    // Body block: executes the static schedule, yields true to continue
+    Block *bodyBlock = rewriter.createBlock(&whileOp.getAfter(), whileOp.getAfter().end());
     rewriter.setInsertionPointToEnd(bodyBlock);
 
-    llvm::outs() << "Processing static schedule for cal::NetworkOp: "
-                 << "\n";
-
     for (auto actionOp : staticSchedule) {
-      // Prepare arguments for the action function call
       SmallVector<Value, 4> args;
-      // // If needed, populate args from the context or mapping
-
-      // Build the function name: "<actorName>_<actionName>"
       auto actorOp = actionOp->getParentOfType<cal::ActorOp>();
       auto actorName = actorOp.getSymName();
       auto actionNameAttr = actionOp.getActionNameAttr();
-      std::string funcName =
-          (actorName + "_" + actionNameAttr.getValue()).str();
+      std::string funcName = (actorName + "_" + actionNameAttr.getValue()).str();
 
-      llvm::outs() << "Calling action function: " << funcName << "\n";
+      // Find the corresponding CreateInstanceOp for this actor, from this we can get the operands
+      // that need to be passed to the action function.
+      auto it = actorToInstanceMap.find(actorOp);
+      if (it != actorToInstanceMap.end()) {
+        auto createInstanceOp = it->second;
+        for (auto operand : createInstanceOp.getOperands())
+          args.push_back(mapping.lookupOrDefault(operand));
+      } else {
+        llvm::errs() << "Warning: No CreateInstanceOp found for actor " << actorName << "\n";
+      }
 
-      // TODO: We need to populate the args vector with actual values
-
-      // Call the action function
-      //rewriter.create<func::CallOp>(loc, funcName, TypeRange{}, args);
+      rewriter.create<func::CallOp>(loc, funcName, i1Type, args);
     }
 
-    llvm::outs() << "Finished processing static schedule for cal::NetworkOp: "
-                 << "\n";
-
     rewriter.create<mlir::scf::YieldOp>(loc, ValueRange{trueConst});
-
-    // Set insertion point after the whileOp to continue building the main
-    // function
     rewriter.setInsertionPointAfter(whileOp);
-
     rewriter.create<func::ReturnOp>(loc);
 
-    // Erase the original network op (don't use replaceOp since we're not
-    // replacing with equivalent results)
     rewriter.eraseOp(op);
-
-    llvm::outs() << "Converted cal::NetworkOp to main function: " << mainFunc
-                 << "\n";
-
     return success();
   }
 
@@ -262,7 +247,8 @@ public:
 
     // Get the singular cal::NetworkOp in the module (if any)
     cal::NetworkOp networkOp = nullptr;
-    auto networkOpsRange = getOperation()->getRegion(0).front().getOps<cal::NetworkOp>();
+    auto networkOpsRange =
+        getOperation()->getRegion(0).front().getOps<cal::NetworkOp>();
     if (!networkOpsRange.empty()) {
       networkOp = *networkOpsRange.begin();
     }
@@ -270,12 +256,12 @@ public:
     // Step 2: Print various analysis results based on flags
     if (print_fsm_for_testing.getValue()) {
       getOperation()->walk([&](cal::ActorOp actorOp) {
-      csdfAnalysis.printActorStateMachine(actorOp);
+        csdfAnalysis.printActorStateMachine(actorOp);
       });
     }
     if (print_csdf_schedule_for_testing.getValue()) {
       getOperation()->walk(
-        [&](cal::ActorOp actorOp) { csdfAnalysis.printCSDFPhases(actorOp); });
+          [&](cal::ActorOp actorOp) { csdfAnalysis.printCSDFPhases(actorOp); });
     }
     if (print_balance_equations_for_testing.getValue() && networkOp) {
       csdfAnalysis.printBalanceEquations(networkOp);
