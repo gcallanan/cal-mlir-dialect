@@ -117,14 +117,45 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
     rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index0);
     rewriter.create<memref::StoreOp>(loc, zeroI32, alloc_metadata, index1);
 
-    // 5. We also need to be sure to free the memrefs at the end of the region
-    // that they were allocated in.
-    Block *parentBlock = op->getBlock();
-    Operation *terminator = parentBlock->getTerminator();
-
-    rewriter.setInsertionPoint(terminator);
-    rewriter.create<memref::DeallocOp>(loc, alloc_data);
-    rewriter.create<memref::DeallocOp>(loc, alloc_metadata);
+    // 5. Schedule deallocations at the end of the containing region's exit blocks
+    Region *containingRegion = op->getParentRegion();
+    if (containingRegion && !containingRegion->empty()) {
+      // Find all exit blocks (blocks with terminators that don't branch to blocks within the same region)
+      SmallVector<Block*> exitBlocks;
+      for (Block &block : *containingRegion) {
+        Operation *terminator = block.getTerminator();
+        if (!terminator) continue;
+        
+        // Check if this is an exit block (terminator has no successors within the same region)
+        bool isExitBlock = true;
+        for (Block *successor : terminator->getSuccessors()) {
+          if (successor->getParent() == containingRegion) {
+            isExitBlock = false;
+            break;
+          }
+        }
+        
+        // Also consider blocks with no successors (like return statements) as exit blocks
+        if (isExitBlock || terminator->getSuccessors().empty()) {
+          exitBlocks.push_back(&block);
+        }
+      }
+      
+      // If no exit blocks found, fall back to the last block
+      if (exitBlocks.empty() && !containingRegion->empty()) {
+        exitBlocks.push_back(&containingRegion->back());
+      }
+      
+      // Place deallocations in all exit blocks
+      for (Block *exitBlock : exitBlocks) {
+        Operation *terminator = exitBlock->getTerminator();
+        if (terminator) {
+          rewriter.setInsertionPoint(terminator);
+          rewriter.create<memref::DeallocOp>(loc, alloc_data);
+          rewriter.create<memref::DeallocOp>(loc, alloc_metadata);
+        }
+      }
+    }
 
     // 6. Now make sure to replace the opearation correctly.
     rewriter.replaceOp(op,

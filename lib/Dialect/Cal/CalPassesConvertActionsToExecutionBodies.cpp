@@ -312,7 +312,6 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
 
     bool firstCond = true;
     mlir::Value toReturn;
-    mlir::Block *currentBlock = execBlock;
 
     // Collect and move all predicate operations into execBlock
     llvm::SmallVector<mlir::Operation *> opsToErase;

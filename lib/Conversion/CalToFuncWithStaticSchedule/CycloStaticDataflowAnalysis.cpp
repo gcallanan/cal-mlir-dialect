@@ -17,17 +17,17 @@ namespace mlir {
 void printScheduleGraph(ScheduleGraph &graph) {
   std::string scheduleType;
   switch (graph.type) {
-    case GraphType::SingleAction:
-      scheduleType = "SingleAction";
-      break;
-    case GraphType::StateMachineSchedule:
-      scheduleType = "StateMachineSchedule";
-      break;
-    case GraphType::Dynamic:
-      scheduleType = "Dynamic";
-      break;
+  case GraphType::SingleAction:
+    scheduleType = "SingleAction";
+    break;
+  case GraphType::StateMachineSchedule:
+    scheduleType = "StateMachineSchedule";
+    break;
+  case GraphType::Dynamic:
+    scheduleType = "Dynamic";
+    break;
   }
-  
+
   llvm::outs() << "ScheduleGraph for actor: " << graph.actor.getSymName()
                << ". Type: " << scheduleType << "\n";
 
@@ -39,19 +39,19 @@ void printScheduleGraph(ScheduleGraph &graph) {
     llvm::outs() << "    -> Next: Node " << node.nextNodeIndex;
 
     switch (node.edgeTypeToNextNode) {
-      case ScheduleEdgeType::Next:
-        llvm::outs() << " (Next)";
-        break;
-      case ScheduleEdgeType::WrapAround:
-        llvm::outs() << " (WrapAround)";
-        break;
+    case ScheduleEdgeType::Next:
+      llvm::outs() << " (Next)";
+      break;
+    case ScheduleEdgeType::WrapAround:
+      llvm::outs() << " (WrapAround)";
+      break;
     }
     llvm::outs() << "\n";
   }
 }
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                             const PredicateInequalityInfo &info) {
+                              const PredicateInequalityInfo &info) {
   std::string ssaName;
   llvm::raw_string_ostream ss(ssaName);
   info.stateVar.printAsOperand(ss, mlir::OpPrintingFlags().useLocalScope());
@@ -59,16 +59,36 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
 
   os << "PredicateInequalityInfo(" << ssaName << " ";
   switch (info.predicate) {
-    case mlir::arith::CmpIPredicate::eq:    os << "=="; break;
-    case mlir::arith::CmpIPredicate::ne:    os << "!="; break;
-    case mlir::arith::CmpIPredicate::slt:   os << "<";  break;
-    case mlir::arith::CmpIPredicate::sle:   os << "<="; break;
-    case mlir::arith::CmpIPredicate::sgt:   os << ">";  break;
-    case mlir::arith::CmpIPredicate::sge:   os << ">="; break;
-    case mlir::arith::CmpIPredicate::ult:   os << "<";  break;
-    case mlir::arith::CmpIPredicate::ule:   os << "<="; break;
-    case mlir::arith::CmpIPredicate::ugt:   os << ">";  break;
-    case mlir::arith::CmpIPredicate::uge:   os << ">="; break;
+  case mlir::arith::CmpIPredicate::eq:
+    os << "==";
+    break;
+  case mlir::arith::CmpIPredicate::ne:
+    os << "!=";
+    break;
+  case mlir::arith::CmpIPredicate::slt:
+    os << "<";
+    break;
+  case mlir::arith::CmpIPredicate::sle:
+    os << "<=";
+    break;
+  case mlir::arith::CmpIPredicate::sgt:
+    os << ">";
+    break;
+  case mlir::arith::CmpIPredicate::sge:
+    os << ">=";
+    break;
+  case mlir::arith::CmpIPredicate::ult:
+    os << "<";
+    break;
+  case mlir::arith::CmpIPredicate::ule:
+    os << "<=";
+    break;
+  case mlir::arith::CmpIPredicate::ugt:
+    os << ">";
+    break;
+  case mlir::arith::CmpIPredicate::uge:
+    os << ">=";
+    break;
   }
   os << " " << info.constant << ")";
   return os;
@@ -396,6 +416,42 @@ CycloStaticDataflowAnalysis::generateScheduleThroughSimulation(
   auto balanceEquations = generateBalanceEquations(networkOp);
   auto actorFiringsPerCycle = solveBalanceEquations(balanceEquations);
   return simulateNetwork(networkOp, actorFiringsPerCycle, actorScheduleMap);
+}
+
+std::vector<cal::ActorOp>
+CycloStaticDataflowAnalysis::getNonSchedulableActors(cal::NetworkOp networkOp) {
+  std::vector<cal::ActorOp> result;
+  for (auto createInstanceOp : networkOp.getOps<cal::CreateInstanceOp>()) {
+    auto actorRef = createInstanceOp.getActorRefAttr();
+    SymbolTableCollection symbolTable;
+    auto actorOp = symbolTable.lookupNearestSymbolFrom<cal::ActorOp>(
+        createInstanceOp, actorRef);
+    if (!actorOp)
+      continue;
+    auto it = actorScheduleMap.find(actorOp);
+    if (it != actorScheduleMap.end() && it->second.type == GraphType::Dynamic) {
+      result.push_back(actorOp);
+    }
+  }
+  return result;
+}
+
+std::vector<cal::ActorOp>
+CycloStaticDataflowAnalysis::getSchedulableActors(cal::NetworkOp networkOp) {
+  std::vector<cal::ActorOp> result;
+  for (auto createInstanceOp : networkOp.getOps<cal::CreateInstanceOp>()) {
+    auto actorRef = createInstanceOp.getActorRefAttr();
+    SymbolTableCollection symbolTable;
+    auto actorOp = symbolTable.lookupNearestSymbolFrom<cal::ActorOp>(
+        createInstanceOp, actorRef);
+    if (!actorOp)
+      continue;
+    auto it = actorScheduleMap.find(actorOp);
+    if (it != actorScheduleMap.end() && it->second.type != GraphType::Dynamic) {
+      result.push_back(actorOp);
+    }
+  }
+  return result;
 }
 
 } // namespace mlir

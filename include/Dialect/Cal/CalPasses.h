@@ -10,6 +10,7 @@
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Pass/Pass.h"
 #include <memory>
 

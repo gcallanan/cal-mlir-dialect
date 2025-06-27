@@ -211,6 +211,12 @@ public:
   void printFiringsPerActorFromSolvedBalanceEquations(cal::NetworkOp networkOp);
   void printStaticSchedule(cal::NetworkOp networkOp);
 
+  std::vector<cal::ActorOp> getNonSchedulableActors(
+      cal::NetworkOp networkOp);
+
+  std::vector<cal::ActorOp> getSchedulableActors(
+      cal::NetworkOp networkOp);
+
 private:
   llvm::DenseMap<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
 

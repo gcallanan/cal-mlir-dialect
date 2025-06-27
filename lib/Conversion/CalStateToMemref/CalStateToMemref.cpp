@@ -54,19 +54,44 @@ class ConvertCalCreateStateVarOpToMemref
     auto memRefType_data = MemRefType::get(1, stateType);
     auto alloc_state = rewriter.create<memref::AllocOp>(loc, memRefType_data);
 
-    // 2. Here we create the dealloc operation, we add right at the end of the
-    // region this alloc operation was called in as this is the lifetime of
-    // memref
+    // 2. Schedule deallocations at the end of the containing region's exit blocks
+    Region *containingRegion = op->getParentRegion();
+    if (containingRegion && !containingRegion->empty()) {
+      // Find all exit blocks (blocks with terminators that don't branch to blocks within the same region)
+      SmallVector<Block*> exitBlocks;
+      for (Block &block : *containingRegion) {
+        Operation *terminator = block.getTerminator();
+        if (!terminator) continue;
 
-    // Get the terminator of the parent block.
-    // Allocations are usually at the beginning/middle of a block,
-    // and deallocations should happen before the return/branch.
-    Block *parentBlock = op->getBlock();
-    Operation *terminator = parentBlock->getTerminator();
+        // Check if this is an exit block (terminator has no successors within the same region)
+        bool isExitBlock = true;
+        for (Block *successor : terminator->getSuccessors()) {
+          if (successor->getParent() == containingRegion) {
+            isExitBlock = false;
+            break;
+          }
+        }
 
-    // Insert the dealloc operation right before the terminator.
-    rewriter.setInsertionPoint(terminator);
-    rewriter.create<memref::DeallocOp>(loc, alloc_state);
+        // Also consider blocks with no successors (like return statements) as exit blocks
+        if (isExitBlock || terminator->getSuccessors().empty()) {
+          exitBlocks.push_back(&block);
+        }
+      }
+
+      // If no exit blocks found, fall back to the last block
+      if (exitBlocks.empty() && !containingRegion->empty()) {
+        exitBlocks.push_back(&containingRegion->back());
+      }
+
+      // Place deallocations in all exit blocks
+      for (Block *exitBlock : exitBlocks) {
+        Operation *terminator = exitBlock->getTerminator();
+        if (terminator) {
+          rewriter.setInsertionPoint(terminator);
+          rewriter.create<memref::DeallocOp>(loc, alloc_state);
+        }
+      }
+    }
 
     rewriter.replaceOp(op, alloc_state);
 

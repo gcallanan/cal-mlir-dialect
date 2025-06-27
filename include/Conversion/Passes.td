@@ -69,9 +69,40 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
 }
 
 def ConvertCalToFuncWithStaticSchedule : Pass<"convert-cal-to-func-with-static-schedule"> {
-    let summary = "TODO";
+    let summary = "A pass that converts CAL actors and networks to functions using static scheduling";
     let description = [{
-        
+        Creates a pass to lower CAL dialect operations (`cal.actor` with `cal.action`
+        operations, `cal.network`, and related constructs) into standard MLIR `func`
+        operations using cyclo-static dataflow (CSDF) analysis for deterministic
+        static scheduling.
+
+        This pass differs from `ConvertCalToFunc` by supporting actors with multiple
+        named actions and generating static schedules instead of dynamic while loops.
+        It performs the following transformations:
+
+          - Runs CSDF analysis to compute firing patterns, balance equations, and
+            static schedules for all actors in the network.
+          - Converts each `cal.action` within a `cal.actor` into a separate
+            `func.func` function named `{actorName}_{actionName}`, with predicates
+            wrapped in `scf.if` operations.
+          - Transforms the top-level `cal.network` into a `func.func` called "main"
+            with explicit control flow based on the pre-computed static schedule.
+          - Creates basic blocks for each action firing in the schedule, with
+            conditional branches based on predicate evaluation results.
+          - Hoists state variable declarations from actor bodies to the network
+            level to avoid duplication.
+
+        The resulting code has deterministic execution order and eliminates runtime
+        scheduling overhead, making it suitable for real-time applications and
+        enabling better static analysis.
+
+        NOTE: This pass only supports `cal.actor` operations containing `cal.action`
+        operations and requires all actors to be either synchronous dataflow (SDF)
+        or cyclo-static dataflow (CSDF) actors. Non-schedulable actors will cause
+        the pass to fail. This is complementary to `ConvertCalToFunc` which handles
+        actors with `cal.execution_body`.
+
+        Description originally written by Gareth Callanan and refined using Copilot.
     }];
 
     let options = [
@@ -93,6 +124,7 @@ def ConvertCalToFuncWithStaticSchedule : Pass<"convert-cal-to-func-with-static-s
         "func::FuncDialect",
         "fifo::FifoDialect",
         "cal::CalDialect",
+        "cf::ControlFlowDialect",
         "scf::SCFDialect"
     ];
 }
