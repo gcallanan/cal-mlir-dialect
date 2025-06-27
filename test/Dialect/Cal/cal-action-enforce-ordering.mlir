@@ -11,7 +11,7 @@ cal.actor @my_actor()
     %s1 = cal.create_state_var<i32> : !cal.state_ref<i32>
     cal.set(%s1: !cal.state_ref<i32>, %c1: i32)
 
-    // expected-error @+1 {{'cal.action' op cal.set operations must be after fifo.pop and cal.predicate operations in the body of the cal.action}}
+    // expected-error @+1 {{'cal.action' op cal.set operations must be after fifo.pop and cal.predicate operations and before fifo.push operations in the body of the cal.action}}
     cal.action {
         cal.predicate {
             %true = arith.constant 1 : i1
@@ -43,7 +43,7 @@ cal.actor @my_actor()
     %s1 = cal.create_state_var<i32> : !cal.state_ref<i32>
     cal.set(%s1: !cal.state_ref<i32>, %c1: i32)
 
-    // expected-error @+1 {{'cal.action' op fifo.pop operations must be before cal.set and fifo.push operations in the body of the cal.action}}
+    // expected-error @+1 {{'cal.action' op fifo.pop operations must be before cal.set and fifo.push operations and after cal.predicate operations in the body of the cal.action}}
     cal.action {
         cal.predicate {
             %true = arith.constant 1 : i1

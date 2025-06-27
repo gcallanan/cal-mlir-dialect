@@ -669,14 +669,16 @@ LogicalResult ActionOp::verify() {
         if (currentPhase > popOps) {
           return emitOpError()
                  << "fifo.pop operations must be before cal.set and "
-                    "fifo.push operations in the body of the cal.action";
+                    "fifo.push operations and after cal.predicate operations "
+                    "in the body of the cal.action";
         }
         currentPhase = popOps;
       } else if (mlir::isa<cal::StateSetOp>(op)) {
         if (currentPhase > setStateOps) {
           return emitOpError()
                  << "cal.set operations must be after fifo.pop and "
-                    "cal.predicate operations in the body of the cal.action";
+                    "cal.predicate operations and before fifo.push operations "
+                    "in the body of the cal.action";
         }
         currentPhase = setStateOps;
       } else if (mlir::isa<fifo::Push>(op)) {
@@ -693,8 +695,7 @@ LogicalResult ActionOp::verify() {
   return success();
 }
 
-llvm::DenseMap<mlir::Value, int>
-ActionOp::getPortRates() {
+llvm::DenseMap<mlir::Value, int> ActionOp::getPortRates() {
 
   llvm::DenseMap<mlir::Value, int> portRates;
   for (auto pushOp : getOps<fifo::Push>()) {

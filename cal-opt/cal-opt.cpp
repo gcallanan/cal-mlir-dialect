@@ -40,7 +40,9 @@ int main(int argc, char **argv) {
                   mlir::LLVM::LLVMDialect, mlir::cf::ControlFlowDialect,
                   mlir::scf::SCFDialect, mlir::math::MathDialect,
                   mlir::func::FuncDialect, mlir::gpu::GPUDialect,
-                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect>();
+                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
+                  mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect
+                  >();
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
   // will be *parsed* by the tool, not the one generated
