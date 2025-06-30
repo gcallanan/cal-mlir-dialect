@@ -91,14 +91,14 @@ namespace mlir {
 ///             i1
 ///     cf.cond_br %1, ^bb3, ^bb1
 ///   ^bb3:  // second action in schedule
-///     %2 = call @source_transmit(%inputPort_0, %0) : 
-///             (!fifo.input_port<i32>, !cal.state_ref<i32>) -> i1 
+///     %2 = call @source_transmit(%inputPort_0, %0) :
+///             (!fifo.input_port<i32>, !cal.state_ref<i32>) -> i1
 ///     cf.cond_br %2, ^bb4, ^bb1
 ///   ^bb4:  // remaining actions in schedule
 ///     %3 = call @pass_passThrough(%outputPort_1, %inputPort) :
-///             (!fifo.output_port<i32>, !fifo.input_port<i32>) -> i1 
-///     %4 = call @sink_receive(%outputPort) : (!fifo.output_port<i32>) -> i1 
-///     %5 = call @sink_receive(%outputPort) : (!fifo.output_port<i32>) -> i1 
+///             (!fifo.output_port<i32>, !fifo.input_port<i32>) -> i1
+///     %4 = call @sink_receive(%outputPort) : (!fifo.output_port<i32>) -> i1
+///     %5 = call @sink_receive(%outputPort) : (!fifo.output_port<i32>) -> i1
 ///     cf.cond_br %5, ^bb2, ^bb1
 /// }
 /// ```
@@ -236,7 +236,8 @@ private:
 /// individually as part of a static schedule.
 ///
 /// The transformation process for each action:
-/// 1. **Function Creation**: A new function is created with the naming convention
+/// 1. **Function Creation**: A new function is created with the naming
+/// convention
 ///    `{actorName}_{actionName}`, taking the actor's arguments as parameters
 ///    and returning an `i1` to indicate success/failure.
 /// 2. **Actor Body Cloning**: All non-action operations from the actor body
@@ -246,7 +247,8 @@ private:
 ///    to create a single condition.
 /// 4. **Conditional Execution**: The action's body is wrapped in an `scf.if`
 ///    operation, executing only when all predicates evaluate to true:
-///    - **Then branch**: Contains the action's execution logic and yields `true`
+///    - **Then branch**: Contains the action's execution logic and yields
+///    `true`
 ///    - **Else branch**: Yields `false` to indicate the action did not fire
 /// 5. **Return Value**: The function returns the result of the conditional
 ///    execution, indicating whether the action successfully executed.
@@ -284,7 +286,7 @@ private:
 ///
 /// Example Output:
 /// ```
-/// func.func @source_transmit(%arg0: !fifo.input_port<i32>, 
+/// func.func @source_transmit(%arg0: !fifo.input_port<i32>,
 ///             %arg1: !cal.state_ref<i32>) -> i1 {
 ///     %true = arith.constant true
 ///     %false = arith.constant false
@@ -433,7 +435,6 @@ private:
   }
 }; // namespace mlir
 
-
 /// This pass converts CAL dialect operations to standard MLIR function calls
 /// using cyclo-static dataflow (CSDF) analysis to generate deterministic static
 /// schedules.
@@ -505,13 +506,16 @@ public:
 
     // Step 2: Print various analysis results based on flags
     if (print_fsm_for_testing.getValue()) {
-      getOperation()->walk([&](cal::ActorOp actorOp) {
+      for (auto actorOp :
+           getOperation()->getRegion(0).front().getOps<cal::ActorOp>()) {
         csdfAnalysis.printActorStateMachine(actorOp);
-      });
+      }
     }
     if (print_csdf_schedule_for_testing.getValue()) {
-      getOperation()->walk(
-          [&](cal::ActorOp actorOp) { csdfAnalysis.printCSDFPhases(actorOp); });
+      for (auto actorOp :
+           getOperation()->getRegion(0).front().getOps<cal::ActorOp>()) {
+        csdfAnalysis.printCSDFPhases(actorOp);
+      }
     }
     if (print_balance_equations_for_testing.getValue() && networkOp) {
       csdfAnalysis.printBalanceEquations(networkOp);

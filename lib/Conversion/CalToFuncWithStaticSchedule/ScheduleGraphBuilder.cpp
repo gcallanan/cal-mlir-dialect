@@ -179,20 +179,24 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::candidatePredicateOrNull(
     cal::Predicate predicateOp) {
   mlir::Value lhs, rhs;
   mlir::arith::CmpIPredicate pred;
-  bool inValid = false;
+  bool invalid = false;
 
-  predicateOp->walk([&](mlir::cal::PredicateResultOp resultOp) {
+  auto resultOps = predicateOp.getOps<mlir::cal::PredicateResultOp>();
+  if (!resultOps.empty()) {
+    auto resultOp = *resultOps.begin();
     if (auto cmpOp = resultOp.getEvaluationResult()
                          .getDefiningOp<mlir::arith::CmpIOp>()) {
       lhs = cmpOp.getLhs();
       rhs = cmpOp.getRhs();
       pred = cmpOp.getPredicate();
     } else {
-      inValid = true;
+      invalid = true;
     }
-  });
+  } else {
+    invalid = true;
+  }
 
-  if (inValid || !lhs || !rhs)
+  if (invalid || !lhs || !rhs)
     return std::nullopt;
 
   auto *lhsOp = lhs.getDefiningOp();

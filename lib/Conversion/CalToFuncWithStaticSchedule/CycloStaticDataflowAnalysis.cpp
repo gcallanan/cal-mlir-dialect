@@ -115,7 +115,9 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
 }
 
 CycloStaticDataflowAnalysis::CycloStaticDataflowAnalysis(Operation *op) {
-  op->walk([&](mlir::cal::ActorOp actor) { determineActorSchedule(actor); });
+  for (auto actor : op->getRegion(0).front().getOps<mlir::cal::ActorOp>()) {
+    determineActorSchedule(actor);
+  }
 }
 
 void CycloStaticDataflowAnalysis::printActorStateMachine(cal::ActorOp actorOp) {
@@ -151,7 +153,9 @@ void CycloStaticDataflowAnalysis::printCSDFPhases(cal::ActorOp actorOp) {
 
 void CycloStaticDataflowAnalysis::determineActorSchedule(cal::ActorOp actorOp) {
   int actionCount = 0;
-  actorOp.walk([&](cal::ActionOp actionOp) { ++actionCount; });
+  for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
+    ++actionCount;
+  }
 
   if (actionCount == 1) {
     actorScheduleMap[actorOp] = generateSingleActionSchedule(actorOp);
@@ -169,7 +173,10 @@ ScheduleGraph CycloStaticDataflowAnalysis::generateSingleActionSchedule(
 
   // Find the single action
   cal::ActionOp singleAction = nullptr;
-  actorOp.walk([&](cal::ActionOp actionOp) { singleAction = actionOp; });
+  for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
+    singleAction = actionOp;
+    break;
+  }
 
   // Create a single node for the action
   ScheduleNode node;
