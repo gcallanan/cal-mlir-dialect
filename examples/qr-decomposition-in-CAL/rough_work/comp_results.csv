@@ -1,8 +1,6 @@
-QR Decomposition, N=M=16, 10000 matrices
-OptimisationFlag,0,1,2,3
-MlirCompilationTime,19.61,28.07,28.84,20.99
-CppCompilationTime,,,,
-MlirRunningTime,16.78,7.20,6.96,7.21
-CppRunningTime,70.56,31.88,27.43,27.90
-CRunningTime - Gcc,40.00,13.47,12.09,12.03
-CRunningTime - Clang,33.014,9.042,8.9,8.74
+Opt Level,0,1,2,3,
+CPP,66.186,29.076,24.473,24.460
+MLIR with Dynamic Schedule,12.713,6.256,6.163,6.236
+MLIR with Static Schedule,8.583,4.853,4.780,4.080
+MLIR with Static Schedule and no duplicate functions,5.713,4.883,4.730,2.900
+C,30.726,5.633,5.476,5.373

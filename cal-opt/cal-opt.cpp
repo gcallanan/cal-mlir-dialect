@@ -151,6 +151,9 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         // 1. FIFO/CAL-specific lowering
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertCalToFuncWithStaticSchedulePass());
+
+        // We add this pass as we often get functions that are the same but with different names.
+        pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
         pm.addPass(mlir::lowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());

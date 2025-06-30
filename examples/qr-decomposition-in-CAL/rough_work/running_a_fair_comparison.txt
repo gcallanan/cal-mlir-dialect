@@ -1,0 +1,7 @@
+The print statements cause big performance differences between the MLIR and C/CPP backends. 
+In the MLIR backend, the print statements execute much quicker. 
+When I reduce the number of print statements, the performance comparison is much fairer. 
+
+I do this by modifying the qrd_systolic_cordic_fixedpoint.cal application so only the last matrix is output. This is not commited, if you want to get fair results, you will need to make these changes yourself.
+
+All results in the commited version of comp_results.csv were generated this way.
