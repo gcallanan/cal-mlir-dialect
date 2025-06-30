@@ -1,3 +1,6 @@
+#include <memory>
+#include <utility> 
+
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Cal/CalPasses.h"
@@ -8,11 +11,15 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/Types.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-namespace mlir::cal {
+namespace mlir {
+namespace cal {
 #define GEN_PASS_DEF_CONVERTCALACTIONSTOEXECUTIONBODIES
 #include "Dialect/Cal/CalPasses.h.inc"
 
@@ -450,7 +457,8 @@ public:
   }
 };
 
-} // namespace mlir::cal
+} // namespace cal
+} // namespace mlir
 
 // Creates and returns a new instance of the
 // ConvertCalActionsToExecutionBodiesPass. This pass is responsible for

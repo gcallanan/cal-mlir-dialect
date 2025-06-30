@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/build/include",
+                "${workspaceFolder}/llvm-project/llvm/include",
+                "${workspaceFolder}/llvm-project/build/include",
+                "${workspaceFolder}/llvm-project/mlir/include",
+                "${workspaceFolder}/llvm-project/build/tools/mlir/include",
+                "/usr/local/include/eigen3"
+            ],
+            "defines": [
+                "__STDC_CONSTANT_MACROS",
+                "__STDC_FORMAT_MACROS", 
+                "__STDC_LIMIT_MACROS",
+                "NDEBUG",
+                "_GNU_SOURCE"
+            ],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-clang-x64",
+                        "compilerArgs": [
+                "-D__STDC_CONSTANT_MACROS",
+                "-D__STDC_FORMAT_MACROS", 
+                "-D__STDC_LIMIT_MACROS",
+                "-DNDEBUG",
+                "-D_GNU_SOURCE",
+                "-fno-exceptions",
+                "-fno-rtti",
+                "-Wall",
+                "-Wextra",
+                "-Wno-unused-parameter",
+                "-Wno-missing-field-initializers"
+            ],
+            "compileCommands": [
+                "${workspaceFolder}/build/compile_commands.json"
+            ]
+        }
+    ],
+    "version": 4
+}
