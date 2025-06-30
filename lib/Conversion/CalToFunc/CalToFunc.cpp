@@ -96,15 +96,30 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
   LogicalResult matchAndRewrite(cal::NetworkOp op,
                                 PatternRewriter &rewriter) const override {
 
-    mlir::Location loc = op.getLoc();
-    Block &networkBody = op.getBody().front();
+    // Walk through the network body and check for any cal.create_instance ops.
+    // If any are found, return failure. We need them to be transformed into
+    // func.func calls first.
+    for (Operation &innerOp : op.getBody().front()) {
+      if (mlir::isa<cal::CreateInstanceOp>(innerOp)) {
+        return failure();
+      }
+    }
 
+    mlir::Location loc = op.getLoc();
     auto functionType = rewriter.getFunctionType({}, {});
     auto function = rewriter.create<func::FuncOp>(loc, "main", functionType);
     Block *entryBlock = function.addEntryBlock();
-
     rewriter.setInsertionPointToStart(entryBlock);
 
+    // Ensure the network op has a body with at least one block.
+    // If not, create an empty main function.
+    if (op.getBody().empty()) {
+      rewriter.create<func::ReturnOp>(function.getLoc());
+      rewriter.replaceOp(op, function);
+      return success();
+    }
+
+    Block &networkBody = op.getBody().front();
     // 1. Here we put all instructions that need to be executed once before the
     // while loop starts.
 
@@ -120,16 +135,7 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
           continue; // Skip operations that are from CreateInstance
         }
       }
-
-      if (mlir::isa<cal::CreateInstanceOp>(opToMove)) {
-        // Output an error if CreateInstanceOp is found outside expected context
-        llvm::outs() << "Error: CreateInstanceOp found outside of expected "
-                        "context in NetworkOp\n";
-        op.emitError(
-            "CreateInstanceOp found outside of expected context in NetworkOp");
-        return failure();
-      }
-
+      
       // llvm::outs() << "Moving operation: " << opToMove << "\n";
       opToMove.moveBefore(entryBlock, entryBlock->end());
     }

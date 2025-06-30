@@ -71,6 +71,9 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
   LogicalResult matchAndRewrite(cal::ActorOp actorOp,
                                 PatternRewriter &rewriter) const override {
 
+    // Check if the actor body has any blocks; if not, there is nothing to hoist.
+    if (actorOp.getBody().empty())
+      return success();
     Block &entryBlock = actorOp.getBody().front();
     auto beginIt = actorOp.getBody().op_begin();
     auto endIt = actorOp.getBody().op_end();
