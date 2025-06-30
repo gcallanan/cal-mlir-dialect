@@ -6,8 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
-#include "mlir/Dialect/GPU/Transforms/Passes.h"
+// MLIR Core
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllPasses.h"
@@ -17,11 +16,32 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
 
+// MLIR Conversions
+#include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
+
+// MLIR Dialects
+#include "mlir/Dialect/GPU/Transforms/Passes.h"
+
+// MLIR Dialect Transforms
+#include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
+#include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Arith/Transforms/BufferViewFlowOpInterfaceImpl.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Bufferization/Pipelines/Passes.h"
+#include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"
+#include "mlir/Dialect/Linalg/Transforms/AllInterfaces.h"
+#include "mlir/Dialect/SCF/Transforms/BufferDeallocationOpInterfaceImpl.h"
+#include "mlir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
+
+// Project-specific dialects
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalPasses.h"
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoPasses.h"
 
+// Project-specific conversions
 #include "Conversion/Passes.h"
 
 void registerLowerCalToLLVMPipeline();
@@ -35,14 +55,30 @@ int main(int argc, char **argv) {
   // TODO: Register cal passes here.
 
   mlir::DialectRegistry registry;
-  registry.insert<mlir::cal::CalDialect, mlir::fifo::FifoDialect,
-                  mlir::arith::ArithDialect, mlir::func::FuncDialect,
-                  mlir::memref::MemRefDialect, mlir::index::IndexDialect,
-                  mlir::LLVM::LLVMDialect, mlir::cf::ControlFlowDialect,
-                  mlir::scf::SCFDialect, mlir::math::MathDialect,
-                  mlir::func::FuncDialect, mlir::gpu::GPUDialect,
-                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
-                  mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect>();
+  registry.insert<
+      mlir::cal::CalDialect, mlir::fifo::FifoDialect, mlir::arith::ArithDialect,
+      mlir::func::FuncDialect, mlir::memref::MemRefDialect,
+      mlir::index::IndexDialect, mlir::LLVM::LLVMDialect,
+      mlir::cf::ControlFlowDialect, mlir::scf::SCFDialect,
+      mlir::math::MathDialect, mlir::func::FuncDialect, mlir::gpu::GPUDialect,
+      mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
+      mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect,
+      mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect>();
+
+  // These were all the things we needed to register to get bufferisation working
+  // with the Cal dialect. Bufferisztion converts tensor types to memref types which
+  // we need to get the linalg dialect to work properly.
+  mlir::arith::registerBufferDeallocationOpInterfaceExternalModels(registry);
+  mlir::arith::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::arith::registerBufferViewFlowOpInterfaceExternalModels(registry);
+  mlir::arith::registerValueBoundsOpInterfaceExternalModels(registry);
+  mlir::scf::registerBufferDeallocationOpInterfaceExternalModels(registry);
+  mlir::scf::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::linalg::registerAllDialectInterfaceImplementations(registry);
+  mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
+      registry);
+
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
   // will be *parsed* by the tool, not the one generated
@@ -88,7 +124,8 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertCalToFuncPass());
-        // We add this pass as we often get functions that are the same but with different names.
+        // We add this pass as we often get functions that are the same but with
+        // different names.
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
         pm.addPass(mlir::lowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
@@ -154,7 +191,8 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertCalToFuncWithStaticSchedulePass());
 
-        // We add this pass as we often get functions that are the same but with different names.
+        // We add this pass as we often get functions that are the same but with
+        // different names.
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
         pm.addPass(mlir::lowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());

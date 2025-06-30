@@ -1,0 +1,11 @@
+#!/bin/bash
+# Build and run the merge.mlir file
+#cal-opt tensors.mlir --canonicalize --hoist-cal-state-out-of-actor --insert-cal-port-predicates --convert-cal-actions-to-execution-bodies --convert-cal-to-func --lower-fifo-to-memref --decompose-fifo-tuples --lower-cal-state-to-memref
+
+
+PATH="../../llvm-project/build/bin:$PATH"
+PATH="$PATH:../../build/bin"
+
+#cal-opt --lower-cal-to-llvm tensors.mlir | cal-translate --mlir-to-llvmir | lli
+cal-opt tensors.mlir --canonicalize --hoist-cal-state-out-of-actor --insert-cal-port-predicates --convert-cal-actions-to-execution-bodies --convert-cal-to-func --lower-fifo-to-memref --decompose-fifo-tuples --lower-cal-state-to-memref --canonicalize --one-shot-bufferize --convert-linalg-to-loops --lower-cal-to-llvm | cal-translate --mlir-to-llvmir | lli
+
