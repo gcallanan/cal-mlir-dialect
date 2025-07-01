@@ -30,7 +30,7 @@ using namespace cal;
 #include "Conversion/Passes.h.inc"
 
 // Converts the `cal.create_state_var` operation into a memref allocation of
-// size 1. Also inserts deallocation at the end of the region.
+// size 1. Deallocation can be handled by other MLIR passes (--buffer-deallocation)
 //
 // This transformation lowers a `cal.create_state_var` on a state reference of
 // element type `T` to a `memref.alloc` of shape `<1 x T>`.
@@ -53,45 +53,6 @@ class ConvertCalCreateStateVarOpToMemref
     auto stateType = op.getStateType();
     auto memRefType_data = MemRefType::get(1, stateType);
     auto alloc_state = rewriter.create<memref::AllocOp>(loc, memRefType_data);
-
-    // 2. Schedule deallocations at the end of the containing region's exit blocks
-    Region *containingRegion = op->getParentRegion();
-    if (containingRegion && !containingRegion->empty()) {
-      // Find all exit blocks (blocks with terminators that don't branch to blocks within the same region)
-      SmallVector<Block*> exitBlocks;
-      for (Block &block : *containingRegion) {
-        Operation *terminator = block.getTerminator();
-        if (!terminator) continue;
-
-        // Check if this is an exit block (terminator has no successors within the same region)
-        bool isExitBlock = true;
-        for (Block *successor : terminator->getSuccessors()) {
-          if (successor->getParent() == containingRegion) {
-            isExitBlock = false;
-            break;
-          }
-        }
-
-        // Also consider blocks with no successors (like return statements) as exit blocks
-        if (isExitBlock || terminator->getSuccessors().empty()) {
-          exitBlocks.push_back(&block);
-        }
-      }
-
-      // If no exit blocks found, fall back to the last block
-      if (exitBlocks.empty() && !containingRegion->empty()) {
-        exitBlocks.push_back(&containingRegion->back());
-      }
-
-      // Place deallocations in all exit blocks
-      for (Block *exitBlock : exitBlocks) {
-        Operation *terminator = exitBlock->getTerminator();
-        if (terminator) {
-          rewriter.setInsertionPoint(terminator);
-          rewriter.create<memref::DeallocOp>(loc, alloc_state);
-        }
-      }
-    }
 
     rewriter.replaceOp(op, alloc_state);
 

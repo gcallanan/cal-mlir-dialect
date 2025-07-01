@@ -1,4 +1,4 @@
-// RUN: cal-opt --lower-cal-state-to-memref %s | FileCheck %s
+// RUN: cal-opt --lower-cal-state-to-memref --buffer-deallocation %s | FileCheck %s
 
 cal.actor @simple(%ref : !cal.state_ref<i32>)
 {

@@ -62,9 +62,6 @@ func.func @temp1() {
     // CHECK-NEXT: %22 = arith.addi %20, %c1_i32_5 : i32
     // CHECK-NEXT: %23 = arith.remsi %22, %19 : i32
     // CHECK-NEXT: memref.store %23, %18[%c1_4] : memref<2xi32>
-
-    // CHECK: memref.dealloc %alloc : memref<11xi32>
-    // CHECK: memref.dealloc %alloc_0 : memref<2xi32>
     return
 }
 
@@ -93,9 +90,5 @@ func.func @temp2() {
 
     func.call @my_func(%in1, %out1) : (!fifo.input_port<i32>, !fifo.output_port<i32>) -> ()
     // CHECK: call @my_func(%4, %4) : (tuple<memref<?xi32>, memref<2xi32>, i32>, tuple<memref<?xi32>, memref<2xi32>, i32>) -> ()
-
-
-    // CHECK: memref.dealloc %alloc : memref<11xi32>
-    // CHECK-NEXT: memref.dealloc %alloc_0 : memref<2xi32>
     return
 }

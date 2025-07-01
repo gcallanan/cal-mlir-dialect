@@ -24,8 +24,8 @@
 
 // MLIR Dialect Transforms
 #include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
-#include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Arith/Transforms/BufferViewFlowOpInterfaceImpl.h"
+#include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Pipelines/Passes.h"
 #include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
@@ -65,9 +65,13 @@ int main(int argc, char **argv) {
       mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect,
       mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect>();
 
-  // These were all the things we needed to register to get bufferisation working
-  // with the Cal dialect. Bufferisztion converts tensor types to memref types which
-  // we need to get the linalg dialect to work properly.
+  // We need this to be able to run the --buffer-deallocation pass which can
+  // automatically insert deallocation operations
+  mlir::memref::registerAllocationOpInterfaceExternalModels(registry);
+
+  // These were all the things we needed to register to get bufferisation
+  // working with the Cal dialect. Bufferisztion converts tensor types to memref
+  // types which we need to get the linalg dialect to work properly.
   mlir::arith::registerBufferDeallocationOpInterfaceExternalModels(registry);
   mlir::arith::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::arith::registerBufferViewFlowOpInterfaceExternalModels(registry);
@@ -82,7 +86,7 @@ int main(int argc, char **argv) {
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
   // will be *parsed* by the tool, not the one generated
-  // registerAllDialects(registry);
+  registerAllDialects(registry);
 
   registerLowerCalToLLVMPipeline();
   registerLowerCalToLLVMWithStaticSchedulePipeline();
@@ -131,6 +135,7 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
+        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
 
         // 2. Standard MLIR to LLVM lowering:
         //    The following passes lower various MLIR dialects to LLVM.
@@ -199,7 +204,14 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
 
-        // 2. Standard MLIR to LLVM lowering:
+        // 2. We need to add deallocation operations. However the
+        // createConvertCalToFuncWithStaticSchedulePass genrerates CF, not SCF,
+        // in the main function. The buffer deallocation pass expects SCF. So
+        // we add a conversion here. The conversion gets undone in later passes
+        pm.addPass(mlir::createLiftControlFlowToSCFPass());
+        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+
+        // 3. Standard MLIR to LLVM lowering:
         //    The following passes lower various MLIR dialects to LLVM.
         //    (The ordering and combination of these passes follow similar
         //    pipelines
