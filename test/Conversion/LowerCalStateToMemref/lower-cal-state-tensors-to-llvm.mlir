@@ -1,3 +1,19 @@
+//RUN: cal-opt --lower-cal-to-llvm %s | \
+//RUN: cal-translate --mlir-to-llvmir | \
+//RUN: lli | FileCheck %s
+
+// CHECK: Accumulated Tensor
+// CHECK: [0.000000] [1.000000] 
+// CHECK: [2.000000] [3.000000] 
+
+// CHECK: Accumulated Tensor
+// CHECK: [0.000000] [2.000000] 
+// CHECK: [4.000000] [6.000000] 
+
+// CHECK: Accumulated Tensor
+// CHECK: [0.000000] [3.000000] 
+// CHECK: [6.000000] [9.000000] 
+
 cal.actor @simple()
 {
     %c0_f64 = arith.constant 0.0 : f64
@@ -29,14 +45,6 @@ cal.actor @simple()
         // Generate a tensor
         fifo.print("Input Tensor\0A\00")
         %tensor0 = tensor.from_elements %c0_f64, %c1_f64, %c2_f64, %c3_f64 : tensor<2x2xf64>
-        scf.for %i = %c0_index to %c2_index step %c1_index {
-          scf.for %j = %c0_index to %c2_index step %c1_index {
-            %elem = tensor.extract %tensor0[%i, %j] : tensor<2x2xf64>
-            fifo.print("[%f] \00", %elem) : (f64)
-          }
-          fifo.print("\0A\00")
-        }
-        fifo.print("\0A\00")
 
         // Accumulate the tensor into the state
         %state_tensor_1 = cal.get(%accumulator: !cal.state_ref<tensor<2x2xf64>>) : tensor<2x2xf64>

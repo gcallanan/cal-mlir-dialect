@@ -32,6 +32,8 @@ struct CreateStateVarOpInterface
     : public mlir::bufferization::BufferizableOpInterface::ExternalModel<
           CreateStateVarOpInterface, CreateStateVarOp> {
 
+  bool bufferizesToAllocation(Operation *op, Value value) const { return true; }
+
   bool bufferizesToMemoryRead(
       Operation *op, OpOperand &opOperand,
       const mlir::bufferization::AnalysisState &state) const {
@@ -44,13 +46,6 @@ struct CreateStateVarOpInterface
       const mlir::bufferization::AnalysisState &state) const {
     // CreateStateVar operations don't have operands
     return false;
-  }
-
-  SmallVector<OpResult>
-  getAliasingOpResults(Operation *op, OpOperand &opOperand,
-                       const mlir::bufferization::AnalysisState &state) const {
-    // CreateStateVar operations don't have operands
-    return {};
   }
 
   bool hasTensorSemantics(Operation *op) const {
@@ -101,14 +96,6 @@ struct StateGetOpInterface
     return false;
   }
 
-  SmallVector<OpResult>
-  getAliasingOpResults(Operation *op, OpOperand &opOperand,
-                       const mlir::bufferization::AnalysisState &state) const {
-    // The get op basically retrieves the underlying buffer in the case of a
-    // tensor state variable. So we consider this an aliasing operation.
-    return {opOperand.getOwner()->getResult(0)};
-  }
-
   bool hasTensorSemantics(Operation *op) const {
     // Consider this operation to have tensor semantics if the state type is a
     // tensor type.
@@ -135,7 +122,9 @@ struct StateGetOpInterface
     auto newOp =
         rewriter.create<cal::StateGetOp>(op->getLoc(), memrefType, newStateRef);
 
-    rewriter.replaceOp(op, newOp.getResult());
+    bufferization::replaceOpWithBufferizedValues(rewriter, op,
+                                                 newOp.getResult());
+    //rewriter.replaceOp(op, newOp.getResult());
     return success();
   }
 };

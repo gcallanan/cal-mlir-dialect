@@ -29,17 +29,24 @@ using namespace cal;
 #define GEN_PASS_DEF_LOWERCALSTATETOMEMREF
 #include "Conversion/Passes.h.inc"
 
-// Converts the `cal.create_state_var` operation into a memref allocation of
-// size 1. Deallocation can be handled by other MLIR passes (--buffer-deallocation)
+// Converts the `cal.create_state_var` operation into a memref allocation.
+// For scalar types, creates a memref allocation of size 1. For types that are
+// already memref, uses the memref type directly without wrapping.
+// Deallocation can be handled by other MLIR passes (--buffer-deallocation)
 //
 // This transformation lowers a `cal.create_state_var` on a state reference of
-// element type `T` to a `memref.alloc` of shape `<1 x T>`.
+// element type `T` to a `memref.alloc` of shape `<1 x T>` for scalars, or
+// preserves the memref type if the state is already a memref.
 //
-// Input:
+// Input (scalar):
 //   %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//
-// Output:
+// Output (scalar):
 //   %alloc = memref.alloc() : memref<1xi32>
+//
+// Input (memref):
+//   %ref0 = cal.create_state_var<memref<4xi32>> : !cal.state_ref<memref<4xi32>>
+// Output (memref):
+//   %alloc = memref.alloc() : memref<4xi32>
 class ConvertCalCreateStateVarOpToMemref
     : public OpConversionPattern<CreateStateVarOp> {
   using OpConversionPattern<CreateStateVarOp>::OpConversionPattern;
@@ -51,7 +58,12 @@ class ConvertCalCreateStateVarOpToMemref
     // 1. Here we create the alloc operations
     mlir::Location loc = op.getLoc();
     auto stateType = op.getStateType();
-    auto memRefType_data = MemRefType::get(1, stateType);
+    MemRefType memRefType_data;
+    if (auto memrefTy = stateType.dyn_cast<MemRefType>()) {
+      memRefType_data = memrefTy;
+    } else {
+      memRefType_data = MemRefType::get(1, stateType);
+    }
     auto alloc_state = rewriter.create<memref::AllocOp>(loc, memRefType_data);
 
     rewriter.replaceOp(op, alloc_state);
@@ -78,11 +90,17 @@ class ConvertCalStateGetOpToMemref : public OpConversionPattern<StateGetOp> {
 
     mlir::Location loc = op.getLoc();
     auto stateRef = adaptor.getStateRef();
+    auto stateType = op.getStateValue().getType();
 
-    Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    auto readData =
-        rewriter.create<memref::LoadOp>(loc, stateRef, readLocationIndex);
-    rewriter.replaceOp(op, readData);
+    if (!mlir::isa<mlir::MemRefType>(stateType)) {
+      Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      auto readData =
+          rewriter.create<memref::LoadOp>(loc, stateRef, readLocationIndex);
+      rewriter.replaceOp(op, readData);
+    } else {
+      // If already a memref type, just replace with the stateRef itself
+      rewriter.replaceOp(op, stateRef);
+    }
 
     return success();
   }
@@ -109,10 +127,16 @@ class ConvertCalStateSetOpToMemref : public OpConversionPattern<StateSetOp> {
     auto stateRef = adaptor.getStateRef();
     auto stateValue = adaptor.getStateValue();
 
-    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    auto storeOp = rewriter.create<memref::StoreOp>(loc, stateValue, stateRef,
-                                                    writeLocationIndex);
-    rewriter.replaceOp(op, storeOp);
+    if (!mlir::isa<mlir::MemRefType>(stateValue.getType())) {
+      Value writeLocationIndex =
+          rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      auto storeOp = rewriter.create<memref::StoreOp>(loc, stateValue, stateRef,
+                                                      writeLocationIndex);
+      rewriter.replaceOp(op, storeOp);
+    } else {
+      rewriter.create<memref::CopyOp>(loc, stateValue, stateRef);
+      rewriter.eraseOp(op);
+    }
 
     return success();
   }
@@ -178,7 +202,10 @@ static void populateCalStateTypeConverterDynamic(mlir::TypeConverter &converter,
   converter.addConversion([&](Type type) { return type; });
   // 2) The conversion for `cal.state` to `memref`
   converter.addConversion([&](cal::StateVarRefType type) {
-    return MemRefType::get(1, type.getStateType());
+    Type elemType = type.getStateType();
+    if (auto memrefType = elemType.dyn_cast<MemRefType>())
+      return memrefType;
+    return MemRefType::get(1, elemType);
   });
 }
 

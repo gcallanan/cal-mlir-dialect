@@ -53,9 +53,11 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
     This pass lowers state-related operations from the CAL dialect, specifically
     `cal.state`, `cal.get`, and `cal.set`, to equivalent operations in the MemRef
     dialect. The transformation replaces CAL state definitions with `memref.alloc`
-    operations, and rewrites `cal.get` and `cal.set` into `memref.load` and
-    `memref.store`, respectively. It also creates `memref.dealloc` operations
-    at the end of the region to deallocate allocated memory
+    operations. For scalar types, a `memref.alloc` of size 1 is created to simulate
+    scalar state. For memref types, the memref becomes the buffer directly without
+    additional wrapping. The pass rewrites `cal.get` and `cal.set` into `memref.load`
+    and `memref.store` for scalars, or direct memref access for memref types.
+    Memory deallocation can be handled by other MLIR passes (--buffer-deallocation).
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
