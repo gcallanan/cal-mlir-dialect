@@ -1,6 +1,8 @@
 cal.actor @simple()
 {
     %num_tokens_sent_state = cal.create_state_var<i32> : !cal.state_ref<i32>
+    %accumulator = cal.create_state_var<tensor<2x2xf64>> : !cal.state_ref<tensor<2x2xf64>>
+    %tensor = cal.get(%accumulator: !cal.state_ref<tensor<2x2xf64>>) : tensor<2x2xf64>
     %c0_index = arith.constant 0 : index
     %c1_index = arith.constant 1 : index
     %c2_index = arith.constant 2 : index
@@ -23,6 +25,7 @@ cal.actor @simple()
       
         fifo.print("Input Tensor\0A\00")
         %tensor0 = tensor.from_elements %c0_f64, %c1_f64, %c2_f64, %c3_f64 : tensor<2x2xf64>
+        cal.set(%accumulator: !cal.state_ref<tensor<2x2xf64>>, %tensor0: tensor<2x2xf64>)
         scf.for %i = %c0_index to %c2_index step %c1_index {
           scf.for %j = %c0_index to %c2_index step %c1_index {
             %elem = tensor.extract %tensor0[%i, %j] : tensor<2x2xf64>
