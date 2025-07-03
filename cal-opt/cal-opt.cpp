@@ -43,7 +43,6 @@
 
 // Project-specific conversions
 #include "Conversion/Passes.h"
-#include "Dialect/Cal/BufferizableOpInterfaceImpl.h"
 
 void registerLowerCalToLLVMPipeline();
 void registerLowerCalToLLVMWithStaticSchedulePipeline();
@@ -73,7 +72,6 @@ int main(int argc, char **argv) {
   // These were all the things we needed to register to get bufferisation
   // working with the Cal dialect. Bufferisztion converts tensor types to memref
   // types which we need to get the linalg dialect to work properly.
-  mlir::cal::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::arith::registerBufferDeallocationOpInterfaceExternalModels(registry);
   mlir::arith::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::arith::registerBufferViewFlowOpInterfaceExternalModels(registry);
@@ -127,9 +125,6 @@ void registerLowerCalToLLVMPipeline() {
         // 1. FIFO/CAL-specific lowering
         pm.addPass(mlir::cal::insertCalPortPredicates());
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
-        // We need to bufferize the tensor types to memref types in order to
-        // lower the CAL state and Fifo operations to memref operations.
-        pm.addPass(mlir::bufferization::createOneShotBufferizePass());
 
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
@@ -142,7 +137,16 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
+
+        mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
+        bufferizeOptions.bufferizeFunctionBoundaries = true;
+        pm.addPass(
+            mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
+        pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createConvertLinalgToLoopsPass());
+        pm.addPass(mlir::createCanonicalizerPass());
 
         // 2. Standard MLIR to LLVM lowering:
         //    The following passes lower various MLIR dialects to LLVM.
@@ -202,10 +206,6 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         // 1. FIFO/CAL-specific lowering
         pm.addPass(mlir::createCanonicalizerPass());
 
-        // We need to bufferize the tensor types to memref types in order to
-        // lower the CAL state and Fifo operations to memref operations.
-        pm.addPass(mlir::bufferization::createOneShotBufferizePass());
-
         pm.addPass(mlir::createConvertCalToFuncWithStaticSchedulePass());
 
         // We add this pass as we often get functions that are the same but with
@@ -222,14 +222,21 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         // in the main function. The buffer deallocation pass expects SCF. So
         // we add a conversion here. The conversion gets undone in later passes
         pm.addPass(mlir::createLiftControlFlowToSCFPass());
-        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
 
         // 3. Standard MLIR to LLVM lowering:
         //    The following passes lower various MLIR dialects to LLVM.
         //    (The ordering and combination of these passes follow similar
         //    pipelines
         //     as in the LLVM project, for example in TestLowertoLLVM.cpp.)
-
+        mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
+        bufferizeOptions.bufferizeFunctionBoundaries = true;
+        pm.addPass(
+            mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createConvertLinalgToLoopsPass());
+        pm.addPass(mlir::createCanonicalizerPass());
         // pm.addNestedPass<func::FuncOp>(createConvertVectorToSCFPass());
         // // Blanket-convert any remaining linalg ops to loops if any remain.
         // pm.addNestedPass<func::FuncOp>(createConvertLinalgToLoopsPass());

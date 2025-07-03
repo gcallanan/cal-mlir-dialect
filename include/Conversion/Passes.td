@@ -51,12 +51,18 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
   let summary = "Lower CAL state operations to MemRef dialect operations";
   let description = [{
     This pass lowers state-related operations from the CAL dialect, specifically
-    `cal.state`, `cal.get`, and `cal.set`, to equivalent operations in the MemRef
+    `cal.create_state_var`, `cal.get`, and `cal.set`, to equivalent operations in the MemRef
     dialect. The transformation replaces CAL state definitions with `memref.alloc`
-    operations. For scalar types, a `memref.alloc` of size 1 is created to simulate
-    scalar state. For memref types, the memref becomes the buffer directly without
-    additional wrapping. The pass rewrites `cal.get` and `cal.set` into `memref.load`
-    and `memref.store` for scalars, or direct memref access for memref types.
+    operations with different behaviors based on the state type:
+
+    - For scalar types: Creates a `memref.alloc` of size 1 to simulate scalar state.
+      `cal.get` becomes `memref.load` from index 0, and `cal.set` becomes `memref.store` to index 0.
+    - For memref types: The memref becomes the buffer directly without additional wrapping.
+      `cal.get` returns the memref directly, and `cal.set` uses `memref.copy` to copy data.
+    - For tensor types: Converts tensors to equivalent memref types for allocation.
+      `cal.get` retrieves from buffer and converts to tensor using `bufferization.to_tensor`,
+      and `cal.set` converts tensor to memref using `bufferization.to_memref` and copies.
+
     Memory deallocation can be handled by other MLIR passes (--buffer-deallocation).
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
@@ -66,7 +72,9 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
     "cal::CalDialect",
     "index::IndexDialect",
     "arith::ArithDialect",
-    "memref::MemRefDialect"
+    "memref::MemRefDialect",
+    "tensor::TensorDialect",
+    "bufferization::BufferizationDialect"
   ];
 }
 

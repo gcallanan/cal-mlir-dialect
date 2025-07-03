@@ -10,6 +10,9 @@
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Cal/CalTypes.h"
+#include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoOps.h"
+#include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/IR/UnstructuredControlFlow.h"
@@ -124,7 +127,7 @@ struct StateGetOpInterface
 
     bufferization::replaceOpWithBufferizedValues(rewriter, op,
                                                  newOp.getResult());
-    //rewriter.replaceOp(op, newOp.getResult());
+    // rewriter.replaceOp(op, newOp.getResult());
     return success();
   }
 };
@@ -207,6 +210,13 @@ struct StateSetOpInterface
 
 void mlir::cal::registerBufferizableOpInterfaceExternalModels(
     DialectRegistry &registry) {
+
+  // Emit an error to indicate this pass is out of date.
+  llvm::report_fatal_error(
+      "mlir::cal::registerBufferizableOpInterfaceExternalModels is out of date "
+      "with the current MLIR bufferization infrastructure. Please update this "
+      "pass.");
+
   registry.addExtension(+[](MLIRContext *ctx, mlir::cal::CalDialect *dialect) {
     CreateStateVarOp::attachInterface<CreateStateVarOpInterface>(*ctx);
     StateGetOp::attachInterface<StateGetOpInterface>(*ctx);
