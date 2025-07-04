@@ -164,6 +164,14 @@ struct ConvertCalNetworkToMainFuncWithStaticSchedule
       auto actorOp = actionOp->getParentOfType<cal::ActorOp>();
       auto actorName = actorOp.getSymName();
       auto actionNameAttr = actionOp.getActionNameAttr();
+
+      // Add null check here
+      if (!actionNameAttr) {
+        actionOp.emitError("ActionOp missing action name attribute. Actor: ")
+            << actorName << ", Action: " << actionOp << "\n";
+        return failure();
+      }
+
       std::string funcName =
           (actorName + "_" + actionNameAttr.getValue()).str();
 
