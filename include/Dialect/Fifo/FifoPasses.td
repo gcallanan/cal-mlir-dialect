@@ -20,8 +20,9 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
 
     This pass works by transforming FIFO buffer operations (such as `fifo.create`, `fifo.push`,
     and `fifo.pop`) into MemRef-based operations that represent memory buffers. The pass
-    is not thread-safe, meaning it should be used in single-threaded execution contexts
-    to avoid issues with concurrent transformations.
+    supports scalar, tensor, and memref element types, handling tensor-to-memref conversions
+    as needed for FIFO operations. The pass is not thread-safe, meaning it should be used
+    in single-threaded execution contexts to avoid issues with concurrent transformations.
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
@@ -30,7 +31,9 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
     "memref::MemRefDialect",
     "index::IndexDialect",
     "arith::ArithDialect",
-    "fifo::FifoDialect"
+    "fifo::FifoDialect",
+    "tensor::TensorDialect",
+    "bufferization::BufferizationDialect"
   ];
 }
 

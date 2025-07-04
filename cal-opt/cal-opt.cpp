@@ -174,7 +174,7 @@ void registerLowerCalToLLVMPipeline() {
         // Expand complicated MemRef operations before lowering them.
         pm.addPass(mlir::memref::createExpandStridedMetadataPass());
         // // The expansion may create affine expressions. Get rid of them.
-        // pm.addPass(createLowerAffinePass());
+        pm.addPass(mlir::createLowerAffinePass());
         // // Convert MemRef to LLVM (always needed).
         pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
         // // Convert Func to LLVM (always needed).
@@ -257,7 +257,7 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         // Expand complicated MemRef operations before lowering them.
         pm.addPass(mlir::memref::createExpandStridedMetadataPass());
         // // The expansion may create affine expressions. Get rid of them.
-        // pm.addPass(createLowerAffinePass());
+        pm.addPass(mlir::createLowerAffinePass());
         // // Convert MemRef to LLVM (always needed).
         pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
         // // Convert Func to LLVM (always needed).

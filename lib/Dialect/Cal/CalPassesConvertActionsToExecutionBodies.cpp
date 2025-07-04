@@ -1,5 +1,5 @@
 #include <memory>
-#include <utility> 
+#include <utility>
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
@@ -10,10 +10,10 @@
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/IR/Value.h"
 #include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -166,8 +166,14 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
 
     // 1. Collect all action operations, if none exist we terminate
     llvm::SmallVector<cal::ActionOp> actionOps;
-    actor->walk(
-        [&](mlir::cal::ActionOp actionOp) { actionOps.push_back(actionOp); });
+    actor->walk([&](cal::ActionOp actionOp) {
+      if (!actionOp.getRegion().empty() &&
+          !actionOp.getRegion().front().empty()) {
+        actionOps.push_back(actionOp);
+      }else{
+        rewriter.eraseOp(actionOp); // Remove empty actions
+      }
+    });
 
     if (actionOps.empty()) {
       return failure(); // No actions to convert
@@ -303,10 +309,10 @@ struct ActionToExecBodyPattern : public OpRewritePattern<cal::ActorOp> {
    *
    * @return A `Value` representing the logical AND of all predicate results.
    */
-  Value managePredicateConditionsSingleCheck(mlir::cal::ActionOp actionOp,
-                                  mlir::Block *execBlock,
-                                  mlir::PatternRewriter &rewriter,
-                                  StateAndFifoPredicateOpCache &cache) const {
+  Value managePredicateConditionsSingleCheck(
+      mlir::cal::ActionOp actionOp, mlir::Block *execBlock,
+      mlir::PatternRewriter &rewriter,
+      StateAndFifoPredicateOpCache &cache) const {
 
     llvm::SmallVector<mlir::Value, 4> predicateResults;
 

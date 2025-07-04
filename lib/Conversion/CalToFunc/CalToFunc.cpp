@@ -135,7 +135,7 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
           continue; // Skip operations that are from CreateInstance
         }
       }
-      
+
       // llvm::outs() << "Moving operation: " << opToMove << "\n";
       opToMove.moveBefore(entryBlock, entryBlock->end());
     }
@@ -256,6 +256,7 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
     // into the function body, using the mapping created above.
     auto beginIt = actorBody.op_begin();
     auto endIt = actorBody.op_end();
+    bool hasExecutionBody = false;
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &opToClone = *it; // reference to the operation
 
@@ -263,6 +264,7 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
       if (!mlir::isa<cal::ExecutionBody>(opToClone)) {
         rewriter.clone(opToClone, originalToClonedOperandsMap);
       } else {
+        hasExecutionBody = true;
         // The last operation in the body can be an ExecutionBody it contains
         // a region with the actual execution logic. We need to clone all the
         // instructions in this region into the function body. We do not
@@ -276,6 +278,14 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
           rewriter.clone(opToCloneInExecBody, originalToClonedOperandsMap);
         }
       }
+    }
+
+    // 3.3 If there is no execution body, we need to create a terminator for the
+    // function
+    if (!hasExecutionBody) {
+      auto falseVal = rewriter.create<mlir::arith::ConstantOp>(
+          loc, rewriter.getBoolAttr(false));
+      rewriter.create<func::ReturnOp>(loc, falseVal.getResult());
     }
 
     rewriter.replaceOp(op, function);
