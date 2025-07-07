@@ -49,7 +49,7 @@ static MemRefType createFifoDataMemRefType(mlir::Type elementType,
     auto origShape = memrefType.getShape();
     newShape.append(origShape.begin(), origShape.end());
     return mlir::MemRefType::get(newShape, memrefType.getElementType(),
-                                 memrefType.getLayout(),
+                                 mlir::MemRefLayoutAttrInterface{},
                                  memrefType.getMemorySpace());
   }
 
@@ -58,9 +58,7 @@ static MemRefType createFifoDataMemRefType(mlir::Type elementType,
     newShape.push_back(fifoSize);
     auto origShape = tensorType.getShape();
     newShape.append(origShape.begin(), origShape.end());
-    return mlir::MemRefType::get(newShape, tensorType.getElementType(),
-                                 {}, // default layout
-                                 0); // default memory space
+    return mlir::MemRefType::get(newShape, tensorType.getElementType());
   }
 
   return MemRefType::get(fifoSize, elementType);
@@ -168,7 +166,6 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
 static Value copyFifoToMemref(PatternRewriter &rewriter, Location loc,
                               Value srcFifo, Value srcIndex) {
   auto srcType = mlir::cast<MemRefType>(srcFifo.getType());
-  auto elemType = srcType.getElementType();
   int64_t rank = srcType.getRank();
 
   // The source memref has shape [N, ...], we want to extract a subview at
@@ -461,8 +458,7 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
     } else if (auto memrefType = mlir::dyn_cast<mlir::MemRefType>(tokenType)) {
       copyMemrefToFifo(rewriter, loc, token, writeIndex, dataMemref);
     } else {
-      auto pushedData =
-          rewriter.create<memref::StoreOp>(loc, token, dataMemref, writeIndex);
+      rewriter.create<memref::StoreOp>(loc, token, dataMemref, writeIndex);
     }
 
     // 3. Increment the write index and wrap it to zero if it goes out of bounds
@@ -722,15 +718,18 @@ class ConvertFifoPeekToMemref : public OpConversionPattern<Peek> {
     Value outputData;
     auto tokenType = op.getResult().getType();
     if (auto tensorType = mlir::dyn_cast<mlir::TensorType>(tokenType)) {
-      outputData = copyFifoToMemref(rewriter, loc, dataMemref, peekIndexWrapped);
+      outputData =
+          copyFifoToMemref(rewriter, loc, dataMemref, peekIndexWrapped);
       auto toTensorOp = rewriter.create<mlir::bufferization::ToTensorOp>(
           loc, tokenType, outputData);
       toTensorOp->setAttr("restrict", rewriter.getUnitAttr());
       outputData = toTensorOp.getResult();
     } else if (auto memrefType = mlir::dyn_cast<mlir::MemRefType>(tokenType)) {
-      outputData = copyFifoToMemref(rewriter, loc, dataMemref, peekIndexWrapped);
+      outputData =
+          copyFifoToMemref(rewriter, loc, dataMemref, peekIndexWrapped);
     } else {
-      outputData = rewriter.create<memref::LoadOp>(loc, dataMemref, peekIndexWrapped.getResult());
+      outputData = rewriter.create<memref::LoadOp>(
+          loc, dataMemref, peekIndexWrapped.getResult());
     }
     rewriter.replaceOp(op, outputData);
 
