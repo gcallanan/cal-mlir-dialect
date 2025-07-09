@@ -1,3 +1,4 @@
 [submodule "examples/thalassa-pde-solver/thalassa-repo"]
 	path = examples/thalassa-pde-solver/thalassa-repo
 	url = git@git.cs.lth.se:gpai/pde-general.git
+	branch = cal-mlir-backend
