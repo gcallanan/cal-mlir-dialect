@@ -16,6 +16,7 @@ The examples in this directory cover both plain MLIR and the use of higher-level
 | `big-CAL`                    | Implements the Savina "Big Actor" benchmark in CAL. Demonstrates large-scale message passing between many actors, and provides scripts to compile and benchmark both C++ and MLIR backends. See [big/README.md](big/README.md) for details. |
 | `bounded-buffer-CAL`          | Implements the Savina "Bounded Buffer" benchmark in CAL. Demonstrates concurrent producer-consumer communication using bounded FIFOs, with scripts to compile and benchmark both C++ and MLIR backends. See [bounded-buffer/README.md](bounded-buffer/README.md) for details. |
 | `tensors`                | Demonstrates tensor processing in CAL-based MLIR, with all tensor operations executed on the CPU. Shows a dataflow network with actors operating on 2x2 tensors, including accumulation and pretty-printing using the CAL and FIFO dialects. See [tensors/README.md](tensors/README.md) for details. |
+| `thalassa-pde-solver`        | A tutorial demonstrating how to use the Thalassa Python package to define and solve PDEs, generate MLIR using the CAL dialect, and run high-performance numerical simulations. See [thalassa-pde-solver/README.md](thalassa-pde-solver/README.md) for details. |
 
 ## Usage
 
