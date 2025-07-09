@@ -1,0 +1,10 @@
+venv
+actual_results.txt
+main.o
+main.ll
+main.opt.ll
+main_executable_from_mlir
+advection_diffusion_initial_conditions.npy
+advection_diffusion_pytorch_output.npy
+advection_diffusion_pytorch_program.py
+actual_results_pytorch.txt

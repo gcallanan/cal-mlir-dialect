@@ -44,7 +44,7 @@ cal.actor @src(%max_tokens_to_send: i32)
     %c0 = arith.constant 0 : i32
     cal.set(%num_tokens_sent_state: !cal.state_ref<i32>, %c0: i32)
 
-    cal.action
+    cal.action "send"
     {
         // Predicate: only send tensors if we haven't reached the maximum
         cal.predicate {
@@ -80,8 +80,6 @@ cal.actor @src(%max_tokens_to_send: i32)
         
         // Send the tensor through the FIFO
         fifo.push(%out0: !fifo.input_port<tensor<2x2xi32>>, %tensor_to_send: tensor<2x2xi32>)
-
-
     }
 }
 
@@ -100,7 +98,7 @@ cal.actor @accumulator()
     %fill = linalg.fill ins(%c_init : i32) outs(%accum_val : tensor<2x2xi32>) -> tensor<2x2xi32>
     cal.set(%accumulator: !cal.state_ref<tensor<2x2xi32>>, %fill: tensor<2x2xi32>)
 
-    cal.action
+    cal.action "rx_and_accumulate"
     {
         // Receive a tensor from the FIFO
         %token_tensor = fifo.pop(%in0: !fifo.output_port<tensor<2x2xi32>>) : tensor<2x2xi32>
