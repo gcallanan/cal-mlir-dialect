@@ -1,0 +1,6 @@
+Backend,Num Tests,Exec Time (s),RMS Error
+MLIR-O0,20,5.0776,0
+MLIR-O1,20,3.9097,0
+MLIR-O2,20,3.8360,0
+MLIR-O3,20,3.8297,0
+PyTorch,20,10.0275,1.338e-06
