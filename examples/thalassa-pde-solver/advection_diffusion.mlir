@@ -74,7 +74,7 @@ cal.actor @integrate()
     cal.action {
         %17 = fifo.pop(%in : !fifo.output_port<tensor<1x1000002xf64>>) : tensor<1x1000002xf64>
         %18 = tensor.expand_shape %17 [[0, 1], [2]] output_shape [1, 1, 1000002] : tensor<1x1000002xf64> into tensor<1x1x1000002xf64>
-        %19 = arith.constant dense<[[[0.01001, 0.97999, 0.01]]]> : tensor<1x1x3xf64>
+        %19 = arith.constant dense<[[[0.0011, 0.9988, 0.0001]]]> : tensor<1x1x3xf64>
         %22 = arith.constant 0.0 : f64
         %20 = tensor.empty() : tensor<1x1x1000000xf64>
         %21 = linalg.fill ins(%22 : f64) outs(%20 : tensor<1x1x1000000xf64>) -> tensor<1x1x1000000xf64>

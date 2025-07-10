@@ -11,10 +11,34 @@ opt -O0 main.ll -o main.opt.ll
 llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
 clang main.o -o main_executable_from_mlir -lm
 
-echo "Step 3: Run the executable and compare the output with expected results"
+echo "Step 3: Run the executable"
 echo "    This will take a few seconds..."
 
 /usr/bin/time -f "    Execution time: %e seconds" ./main_executable_from_mlir > actual_results.txt
+
+echo "Step 4: Compare the output with expected results and plot the results"
+echo "    The expected results are in expected_results.txt"
+echo "    The actual results are in actual_results.txt"
+echo "    The plot will be saved as plot-mlir-results.png"
+
+python -c "
+import matplotlib.pyplot as plt
+import numpy as np
+
+def load_data(fname):
+    with open(fname) as f:
+        return np.array(list(map(float, f.read().split())))
+
+expected = load_data('expected_results.txt')
+actual = load_data('actual_results.txt')
+diff = expected - actual
+
+plt.plot(expected, label='Expected')
+plt.plot(actual, label='Actual')
+plt.plot(diff, label='Diff (Expected - Actual)')
+plt.legend()
+plt.savefig('plot-mlir-results.png')
+"
 
 diff expected_results.txt actual_results.txt > /dev/null
 if [ $? -eq 0 ]; then

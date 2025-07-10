@@ -8,3 +8,5 @@ advection_diffusion_initial_conditions.npy
 advection_diffusion_pytorch_output.npy
 advection_diffusion_pytorch_program.py
 actual_results_pytorch.txt
+plot-mlir-results.png
+plot-pytorch-results.png

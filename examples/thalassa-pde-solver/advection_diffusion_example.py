@@ -25,13 +25,13 @@ pde = thalassa.PDESystem(
 )
 
 # Discretization step
-dx = 0.000001 
+dx = 0.01
 # Discretizations in a list
 disc = [
     thalassa.fdm_simple_partial_derivative(D(u, (x, 1)), dx, method='backward'),
     thalassa.fdm_simple_partial_derivative(D(u, (x, 2)), dx, method='central')
 ]
-dt = 0.00000000001 # Needs to be less than 0.5dx^2 for stability
+dt = 0.00001 # Needs to be less than 0.5dx^2 for stability
 
 # Step 2: Compile the PDE system to MLIR or PyTorch
 
@@ -40,7 +40,7 @@ if not args.torch:
     with open('advection_diffusion.mlir', 'w') as output_file:
         code = thalassa.pde_compile(
             pde, disc, target='mlir-cal', ics='external', output='external',
-            sol_hypercube=[4, int(1 / dx)], dt=dt, loop_iterations=250
+            sol_hypercube=[4, 1000000], dt=dt, loop_iterations=250
         )
         output_file.write(code)
 
@@ -52,8 +52,7 @@ if args.torch:
     u0 = np.exp(-((x - 0.5) ** 2) / 0.01)
     np.save('advection_diffusion_initial_conditions.npy', u0)
 
-    dt = 0.000001
     with open('advection_diffusion_pytorch_program.py', 'w') as output_file:
         code = thalassa.pde_compile(pde, disc, target='pytorch', ics='external', output='external',
-                                    sol_hypercube=[4, int(1 / dx)], dt=dt, loop_iterations=250)
+                                    sol_hypercube=[4, 1000000], dt=dt, loop_iterations=250)
         output_file.write(code)
