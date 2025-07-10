@@ -34,25 +34,25 @@ disc = [
 dt = 0.00001 # Needs to be less than 0.5dx^2 for stability
 
 # Step 2: Compile the PDE system to MLIR or PyTorch
-
+hypercube_size=1000000
 # Normal compilation path that generates MLIR code
 if not args.torch:
     with open('advection_diffusion.mlir', 'w') as output_file:
         code = thalassa.pde_compile(
             pde, disc, target='mlir-cal', ics='external', output='external',
-            sol_hypercube=[4, 1000000], dt=dt, loop_iterations=250
+            sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=250
         )
         output_file.write(code)
 
 # Compile the MLIR code to use the PyTorch backend
 # We do not guarentee it works here as this is not the focus of this example
 if args.torch:
-    x = np.arange(0, 1, dx)
+    x = np.linspace(0,1,hypercube_size)
     # Generate some initial conditions
     u0 = np.exp(-((x - 0.5) ** 2) / 0.01)
     np.save('advection_diffusion_initial_conditions.npy', u0)
 
     with open('advection_diffusion_pytorch_program.py', 'w') as output_file:
         code = thalassa.pde_compile(pde, disc, target='pytorch', ics='external', output='external',
-                                    sol_hypercube=[4, 1000000], dt=dt, loop_iterations=250)
+                                    sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=250)
         output_file.write(code)
