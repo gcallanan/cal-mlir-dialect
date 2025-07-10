@@ -71,7 +71,7 @@ else:
     print(f'    RMS error / Max value ratio: {ratio}')
     if ratio > 0.0001:
         raise RuntimeError('RMS error is greater than 1% of the max value!')
-    print(rms_error)
+    print(f'    {rms_error}')
 ")
 echo "$rms_output"
 rms_error=$(echo "$rms_output" | tail -1)

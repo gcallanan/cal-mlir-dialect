@@ -1,13 +1,22 @@
 source venv/bin/activate
 
+O=0
+while getopts O: flag
+do
+    case "${flag}" in
+        O) O=${OPTARG};; # Optimization level
+    esac
+done
+
 echo "Step 1: Run thalassa package in advection_diffusion_example.py to generate MLIR code"
 
 python advection_diffusion_example.py 
 
 echo "Step 2: Compile the generated MLIR code to LLVM IR and then to an executable"
+echo "   Optimization level: ${O}"
 
 cal-opt --lower-cal-to-llvm advection_diffusion.mlir | cal-translate --mlir-to-llvmir > main.ll
-opt -O0 main.ll -o main.opt.ll
+opt -O$O main.ll -o main.opt.ll
 llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
 clang main.o -o main_executable_from_mlir -lm
 
@@ -69,7 +78,7 @@ else:
     print(f'    RMS error / Max value ratio: {ratio}')
     if ratio > 0.0001:
         raise RuntimeError('RMS error is greater than 1% of the max value!')
-    print(rms_error)
+    print(f'    {rms_error}')
 ")
 echo "$rms_output"
 rms_error=$(echo "$rms_output" | tail -1)
