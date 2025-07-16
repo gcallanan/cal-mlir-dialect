@@ -7,7 +7,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include <optional>
 
@@ -116,7 +116,7 @@ struct CycloStaticDataflowAnalysis {
 public:
   struct SDFPhase {
     mlir::cal::ActionOp actionOp;
-    llvm::DenseMap<mlir::Value, int> portRates;
+    llvm::MapVector<mlir::Value, int> portRates;
   };
 
   struct BalanceEquation {
@@ -185,9 +185,9 @@ public:
   /// \param equations A vector of balance equations representing the
   /// constraints between actors in the dataflow network.
   ///
-  /// \return A DenseMap mapping each ActorOp to its computed firing rate (as an
+  /// \return A map mapping each ActorOp to its computed firing rate (as an
   /// int). The map contains one entry per actor involved in the equations.
-  llvm::DenseMap<mlir::cal::ActorOp, int>
+  llvm::MapVector<mlir::cal::ActorOp, int>
   solveBalanceEquations(llvm::SmallVector<BalanceEquation, 4> &equations);
 
   /// @brief Generates a schedule for the given network operation by simulating
@@ -218,7 +218,7 @@ public:
       cal::NetworkOp networkOp);
 
 private:
-  llvm::DenseMap<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
+  llvm::MapVector<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
 
   void determineActorSchedule(cal::ActorOp actorOp);
   ScheduleGraph generateSingleActionSchedule(cal::ActorOp actorOp);
@@ -239,7 +239,7 @@ public:
     cal::ActorOp actorOp;
 
     std::optional<ScheduleGraph> constructScheduleGraphFromActionInfo(
-        const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+        const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap,
         int initialStateValue);
     std::optional<int64_t> tryGetConstantValue(Value val);
@@ -253,7 +253,7 @@ public:
     int findInitialAssignment(mlir::Value stateVar);
     std::optional<cal::ActionOp> getActionForStateValue(
         int stateValue,
-        const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+        const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap);
     bool allPredicatesTrueForState(
         int stateValue, const llvm::SmallVectorImpl<PredicateInequalityInfo>

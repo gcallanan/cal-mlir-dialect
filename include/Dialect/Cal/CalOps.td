@@ -295,7 +295,7 @@ def Cal_ActionOp : Cal_Op<"action", [HasParent<"ActorOp">, NoTerminator, Automat
   let regions = (region AnyRegion:$body);
 
   let extraClassDeclaration = [{
-    llvm::DenseMap<mlir::Value, int> getPortRates();
+    llvm::MapVector<mlir::Value, int> getPortRates();
   }];
 
   let hasCustomAssemblyFormat = 1;

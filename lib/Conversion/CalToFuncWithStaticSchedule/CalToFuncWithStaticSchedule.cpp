@@ -129,7 +129,7 @@ struct ConvertCalNetworkToMainFuncWithStaticSchedule
     // CreateInstanceOp to map actors to instances which we use later for
     // getting the correct argument into the newly created functions
     IRMapping mapping;
-    llvm::DenseMap<cal::ActorOp, cal::CreateInstanceOp> actorToInstanceMap;
+    llvm::MapVector<cal::ActorOp, cal::CreateInstanceOp> actorToInstanceMap;
     for (auto &bodyOp : op.getBody().front()) {
       if (auto createInstanceOp = dyn_cast<cal::CreateInstanceOp>(&bodyOp)) {
         auto actorOp = symbolTable.lookupNearestSymbolFrom<cal::ActorOp>(

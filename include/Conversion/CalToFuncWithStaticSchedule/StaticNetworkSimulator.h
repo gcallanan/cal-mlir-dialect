@@ -5,7 +5,7 @@
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "mlir/IR/Value.h"
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 
 /// @file StaticNetworkSimulator.h
 /// @brief Contains data structures and function declarations for simulating a
@@ -51,8 +51,8 @@ struct Actor {
   int currentState;
   int numFiringsLeft;
   ScheduleGraph fsm;
-  llvm::DenseMap<mlir::Value, Channel *> portsIn;
-  llvm::DenseMap<mlir::Value, Channel *> portsOut;
+  llvm::MapVector<mlir::Value, Channel *> portsIn;
+  llvm::MapVector<mlir::Value, Channel *> portsOut;
 };
 
 // Function declarations
@@ -94,12 +94,12 @@ cal::ActionOp fire(Actor *actor);
 /// @param actorsMap A mapping from cal::ActorOp to Actor, used to resolve actor instances.
 void queueFollowOnActorsToWorklist(
     Actor &currentActor, std::vector<Actor *> &worklist,
-    llvm::DenseMap<cal::ActorOp, Actor> &actorsMap);
+    llvm::MapVector<cal::ActorOp, Actor> &actorsMap);
 
     std::vector<cal::ActionOp> simulateNetwork(
     cal::NetworkOp networkOp,
-    const llvm::DenseMap<cal::ActorOp, int> &actorFiringsPerCycle,
-    const llvm::DenseMap<cal::ActorOp, ScheduleGraph> &actorScheduleMap);
+    const llvm::MapVector<cal::ActorOp, int> &actorFiringsPerCycle,
+    const llvm::MapVector<cal::ActorOp, ScheduleGraph> &actorScheduleMap);
 
 // Static helper methods
 

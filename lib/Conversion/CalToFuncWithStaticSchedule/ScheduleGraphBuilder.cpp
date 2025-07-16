@@ -20,7 +20,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
   // actions that this variable is a candidate in. We will prune to the correct
   // variable in STEp 1.2
 
-  llvm::DenseMap<mlir::Value, llvm::SmallPtrSet<mlir::Operation *, 4>>
+  llvm::MapVector<mlir::Value, llvm::SmallPtrSet<mlir::Operation *, 4>>
       actionToValues;
   size_t numberOfActions = 0;
   for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
@@ -66,7 +66,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
   // 3. You will need to implement checks to ensure that there is no stepping by
   // +ve or -ve infinity
 
-  llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction> actionInfoMap;
+  llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction> actionInfoMap;
   for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
     llvm::SmallVector<PredicateInequalityInfo> predicateInfos;
     for (auto predicateOp : actionOp.getOps<cal::Predicate>()) {
@@ -343,7 +343,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getIncrementAmount(
 
 std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
     constructScheduleGraphFromActionInfo(
-        const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+        const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap,
         int initialStateValue) {
 
@@ -447,7 +447,7 @@ int CycloStaticDataflowAnalysis::ScheduleGraphBuilder::findInitialAssignment(
 std::optional<cal::ActionOp>
 CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getActionForStateValue(
     int stateValue,
-    const llvm::DenseMap<cal::ActionOp, SchedulingVariableInfoForAction>
+    const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
         &actionInfoMap) {
 
   cal::ActionOp selectedAction = nullptr;

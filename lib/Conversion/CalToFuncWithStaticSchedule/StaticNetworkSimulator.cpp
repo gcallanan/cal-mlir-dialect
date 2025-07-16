@@ -77,7 +77,7 @@ cal::ActionOp fire(Actor *actor) {
 
 void queueFollowOnActorsToWorklist(
     Actor &currentActor, std::vector<Actor *> &worklist,
-    llvm::DenseMap<cal::ActorOp, Actor> &actorsMap) {
+    llvm::MapVector<cal::ActorOp, Actor> &actorsMap) {
   std::vector<Actor *> followOnWorklist;
 
   // For each output port, find the connected channel and destination actor
@@ -122,11 +122,11 @@ getActorAndPort(mlir::Value fifoEnd) {
 
 std::vector<cal::ActionOp> simulateNetwork(
     cal::NetworkOp networkOp,
-    const llvm::DenseMap<cal::ActorOp, int> &actorFiringsPerCycle,
-    const llvm::DenseMap<cal::ActorOp, ScheduleGraph> &actorScheduleMap) {
+    const llvm::MapVector<cal::ActorOp, int> &actorFiringsPerCycle,
+    const llvm::MapVector<cal::ActorOp, ScheduleGraph> &actorScheduleMap) {
     
   // Step 1: Create actors structs for each actor
-  llvm::DenseMap<cal::ActorOp, Actor> actorOpToActorStructMap;
+  llvm::MapVector<cal::ActorOp, Actor> actorOpToActorStructMap;
   std::vector<Actor *> actors;
   for (auto &pair : actorFiringsPerCycle) {
     actorOpToActorStructMap[pair.first] = Actor{

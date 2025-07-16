@@ -3,197 +3,198 @@
 // This is a big file so we just check the main function:
 
 // CHECK: func.func @main() {
-//CHECK-NEXT:     %c2_i32 = arith.constant 2 : i32
-//CHECK-NEXT:     %c57671_i22 = arith.constant 57671 : i22
-//CHECK-NEXT:     %c0_i22 = arith.constant 0 : i22
-//CHECK-NEXT:     %c0_i32 = arith.constant 0 : i32
-//CHECK-NEXT:     %inputPort, %outputPort = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_0, %outputPort_1 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_2, %outputPort_3 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
-//CHECK-NEXT:     %inputPort_4, %outputPort_5 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
-//CHECK-NEXT:     %inputPort_6, %outputPort_7 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
-//CHECK-NEXT:     %inputPort_8, %outputPort_9 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_10, %outputPort_11 = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_12, %outputPort_13 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_14, %outputPort_15 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_16, %outputPort_17 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_18, %outputPort_19 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_20, %outputPort_21 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_22, %outputPort_23 = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_24, %outputPort_25 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
-//CHECK-NEXT:     %inputPort_26, %outputPort_27 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
-//CHECK-NEXT:     %inputPort_28, %outputPort_29 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_30, %outputPort_31 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
-//CHECK-NEXT:     %inputPort_32, %outputPort_33 = fifo.create<i22> (3) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_34, %outputPort_35 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
-//CHECK-NEXT:     %inputPort_36, %outputPort_37 = fifo.create<i22> (3) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_38, %outputPort_39 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_40, %outputPort_41 = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_42, %outputPort_43 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_44, %outputPort_45 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_46, %outputPort_47 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_48, %outputPort_49 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %inputPort_50, %outputPort_51 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
-//CHECK-NEXT:     %0 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%0 : !cal.state_ref<i22>, %c0_i22 : i22)
-//CHECK-NEXT:     %1 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%1 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %2 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%2 : !cal.state_ref<i22>, %c0_i22 : i22)
-//CHECK-NEXT:     %3 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%3 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %4 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%4 : !cal.state_ref<i22>, %c0_i22 : i22)
-//CHECK-NEXT:     %5 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%5 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %6 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%6 : !cal.state_ref<i22>, %c0_i22 : i22)
-//CHECK-NEXT:     %7 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%7 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %8 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%8 : !cal.state_ref<i22>, %c0_i22 : i22)
-//CHECK-NEXT:     %9 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%9 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %10 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%10 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %11 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%11 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %12 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%12 : !cal.state_ref<i22>, %c57671_i22 : i22)
-//CHECK-NEXT:     %13 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%13 : !cal.state_ref<i22>, %c0_i22 : i22)
-//CHECK-NEXT:     %14 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%14 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %15 = cal.create_state_var<i22> : !cal.state_ref<i22>
-//CHECK-NEXT:     cal.set(%15 : !cal.state_ref<i22>, %c0_i22 : i22)
-//CHECK-NEXT:     %16 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%16 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %17 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%17 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %18 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%18 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %19 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%19 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %20 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%20 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %21 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%21 : !cal.state_ref<i32>, %c2_i32 : i32)
-//CHECK-NEXT:     %22 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%22 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %23 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%23 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %24 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%24 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %25 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%25 : !cal.state_ref<i32>, %c0_i32 : i32)
-//CHECK-NEXT:     %26 = cal.create_state_var<i32> : !cal.state_ref<i32>
-//CHECK-NEXT:     cal.set(%26 : !cal.state_ref<i32>, %c2_i32 : i32)
-//CHECK-NEXT:     cf.br ^bb2
-//CHECK-NEXT:   ^bb1:  // 28 preds: ^bb2, ^bb3, ^bb4, ^bb5, ^bb6, ^bb7, ^bb8, ^bb9, ^bb10, ^bb11, ^bb12, ^bb13, ^bb14, ^bb15, ^bb16, ^bb17, ^bb18, ^bb19, ^bb20, ^bb21, ^bb22, ^bb23, ^bb24, ^bb25, ^bb26, ^bb27, ^bb28, ^bb29
-//CHECK-NEXT:     return
-//   ^bb2:  // 2 preds: ^bb0, ^bb29
-//     %27 = call @iGenerator_0_$untagged0(%inputPort_28, %24, %25, %26) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %27, ^bb3, ^bb1
-//   ^bb3:  // pred: ^bb2
-//     %28 = call @iGenerator_1_$untagged0(%inputPort_0, %19, %20, %21) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %28, ^bb4, ^bb1
-//   ^bb4:  // pred: ^bb3
-//CHECK:     %29 = call @source_transmit(%inputPort_36, %inputPort_32, %10, %11, %12) : (!fifo.input_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i22>) -> i1
-//CHECK-NEXT:     cf.cond_br %29, ^bb5, ^bb1
-//   ^bb5:  // pred: ^bb4
-//CHECK:     %30 = call @boundaryCells_0_normal(%outputPort_37, %inputPort_38, %inputPort_26, %6, %7) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %30, ^bb6, ^bb1
-//   ^bb6:  // pred: ^bb5
-//CHECK:     %31 = call @innerCells_r_0_normal(%outputPort_33, %outputPort_27, %inputPort_46, %inputPort_18, %inputPort_34, %8, %9) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %31, ^bb7, ^bb1
-//   ^bb7:  // pred: ^bb6
-//     %32 = call @boundaryCells_1_normal(%outputPort_47, %inputPort_8, %inputPort_4, %2, %3) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %32, ^bb8, ^bb1
-//   ^bb8:  // pred: ^bb7
-//     %33 = call @innerCells_q_0_normal(%outputPort_29, %outputPort_35, %inputPort_12, %inputPort_44, %inputPort_6, %0, %1) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %33, ^bb9, ^bb1
-//   ^bb9:  // pred: ^bb8
-//     %34 = call @innerCells_q_2_normal(%outputPort_13, %outputPort_5, %inputPort_14, %inputPort_50, %inputPort_2, %13, %14) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %34, ^bb10, ^bb1
-//   ^bb10:  // pred: ^bb9
-//     %35 = call @innerCells_q_1_normal(%outputPort_1, %outputPort_7, %inputPort_48, %inputPort_16, %inputPort_30, %4, %5) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %35, ^bb11, ^bb1
-//   ^bb11:  // pred: ^bb10
-//     %36 = call @caps_x_0_receive(%outputPort_15) : (!fifo.output_port<i22>) -> i1
-//     %37 = call @caps_cordic_0_receive(%outputPort_31) : (!fifo.output_port<i16>) -> i1
-//     %38 = call @innerCells_q_3_normal(%outputPort_49, %outputPort_3, %inputPort_42, %inputPort_20, %inputPort_24, %15, %16) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %38, ^bb12, ^bb1
-//   ^bb12:  // pred: ^bb11
-//     %39 = call @caps_cordic_1_receive(%outputPort_25) : (!fifo.output_port<i16>) -> i1
-//     %40 = call @caps_x_1_receive(%outputPort_43) : (!fifo.output_port<i22>) -> i1
-//     %41 = call @iGenerator_0_$untagged0(%inputPort_28, %24, %25, %26) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %41, ^bb13, ^bb1
-//   ^bb13:  // pred: ^bb12
-//     %42 = call @iGenerator_1_$untagged0(%inputPort_0, %19, %20, %21) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %42, ^bb14, ^bb1
-//   ^bb14:  // pred: ^bb13
-//     %43 = call @source_transmit(%inputPort_36, %inputPort_32, %10, %11, %12) : (!fifo.input_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i22>) -> i1
-//     cf.cond_br %43, ^bb15, ^bb1
-//   ^bb15:  // pred: ^bb14
-//     %44 = call @boundaryCells_0_normal(%outputPort_37, %inputPort_38, %inputPort_26, %6, %7) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %44, ^bb16, ^bb1
-//   ^bb16:  // pred: ^bb15
-//     %45 = call @innerCells_r_0_normal(%outputPort_33, %outputPort_27, %inputPort_46, %inputPort_18, %inputPort_34, %8, %9) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %45, ^bb17, ^bb1
-//   ^bb17:  // pred: ^bb16
-//     %46 = call @boundaryCells_1_normal(%outputPort_47, %inputPort_8, %inputPort_4, %2, %3) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %46, ^bb18, ^bb1
-//   ^bb18:  // pred: ^bb17
-//     %47 = call @innerCells_q_0_normal(%outputPort_29, %outputPort_35, %inputPort_12, %inputPort_44, %inputPort_6, %0, %1) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %47, ^bb19, ^bb1
-//   ^bb19:  // pred: ^bb18
-//     %48 = call @innerCells_q_2_normal(%outputPort_13, %outputPort_5, %inputPort_14, %inputPort_50, %inputPort_2, %13, %14) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %48, ^bb20, ^bb1
-//   ^bb20:  // pred: ^bb19
-//     %49 = call @innerCells_q_1_normal(%outputPort_1, %outputPort_7, %inputPort_48, %inputPort_16, %inputPort_30, %4, %5) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %49, ^bb21, ^bb1
-//   ^bb21:  // pred: ^bb20
-//     %50 = call @caps_x_0_receive(%outputPort_15) : (!fifo.output_port<i22>) -> i1
-//     %51 = call @caps_cordic_0_receive(%outputPort_31) : (!fifo.output_port<i16>) -> i1
-//     %52 = call @innerCells_q_3_normal(%outputPort_49, %outputPort_3, %inputPort_42, %inputPort_20, %inputPort_24, %15, %16) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %52, ^bb22, ^bb1
-//   ^bb22:  // pred: ^bb21
-//     %53 = call @caps_cordic_1_receive(%outputPort_25) : (!fifo.output_port<i16>) -> i1
-//     %54 = call @caps_x_1_receive(%outputPort_43) : (!fifo.output_port<i22>) -> i1
-//     %55 = call @boundaryCells_0_final(%outputPort_37, %inputPort_38, %inputPort_26, %6, %7) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %55, ^bb23, ^bb1
-//   ^bb23:  // pred: ^bb22
-//     %56 = call @boundaryCells_1_final(%outputPort_47, %inputPort_8, %inputPort_4, %2, %3) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %56, ^bb24, ^bb1
-//   ^bb24:  // pred: ^bb23
-//     %57 = call @innerCells_q_0_final(%outputPort_29, %outputPort_35, %inputPort_12, %inputPort_44, %inputPort_6, %0, %1) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %57, ^bb25, ^bb1
-//   ^bb25:  // pred: ^bb24
-//     %58 = call @innerCells_q_1_final(%outputPort_1, %outputPort_7, %inputPort_48, %inputPort_16, %inputPort_30, %4, %5) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %58, ^bb26, ^bb1
-//   ^bb26:  // pred: ^bb25
-//CHECK:     %59 = call @innerCells_q_2_final(%outputPort_13, %outputPort_5, %inputPort_14, %inputPort_50, %inputPort_2, %13, %14) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %59, ^bb27, ^bb1
-//   ^bb27:  // pred: ^bb26
-//CHECK:     %60 = call @innerCells_q_3_final(%outputPort_49, %outputPort_3, %inputPort_42, %inputPort_20, %inputPort_24, %15, %16) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %60, ^bb28, ^bb1
-//   ^bb28:  // pred: ^bb27
-//CHECK:     %61 = call @innerCells_r_0_final(%outputPort_33, %outputPort_27, %inputPort_46, %inputPort_18, %inputPort_34, %8, %9) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
-//     cf.cond_br %61, ^bb29, ^bb1
-//   ^bb29:  // pred: ^bb28
-//CHECK:     %62 = call @joinersPerRow_r_1_$untagged0(%outputPort_9, %inputPort_22, %23) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
-//CHECK:     %63 = call @joinersPerRow_q_0_$untagged0(%outputPort_45, %outputPort_51, %inputPort_10, %22) : (!fifo.output_port<i22>, !fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
-//CHECK:     %64 = call @joinersPerRow_q_1_$untagged0(%outputPort_17, %outputPort_21, %inputPort_40, %17) : (!fifo.output_port<i22>, !fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
-//CHECK:     %65 = call @joinersPerRow_r_0_$untagged0(%outputPort_39, %outputPort_19, %inputPort, %18) : (!fifo.output_port<i22>, !fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
-//CHECK:     %66 = call @caps_r_1_receive(%outputPort_23) : (!fifo.output_port<i22>) -> i1
-//CHECK:     %67 = call @caps_q_0_receive(%outputPort_11) : (!fifo.output_port<i22>) -> i1
-//CHECK:     %68 = call @caps_q_1_receive(%outputPort_41) : (!fifo.output_port<i22>) -> i1
-//CHECK:     %69 = call @caps_r_0_receive(%outputPort) : (!fifo.output_port<i22>) -> i1
-//CHECK:     %70 = call @caps_q_0_receive(%outputPort_11) : (!fifo.output_port<i22>) -> i1
-//CHECK:     %71 = call @caps_q_1_receive(%outputPort_41) : (!fifo.output_port<i22>) -> i1
-//CHECK:     %72 = call @caps_r_0_receive(%outputPort) : (!fifo.output_port<i22>) -> i1
-//CHECK:     cf.cond_br %72, ^bb2, ^bb1
-//}
+// CHECK-NEXT:     %c2_i32 = arith.constant 2 : i32
+// CHECK-NEXT:     %c57671_i22 = arith.constant 57671 : i22
+// CHECK-NEXT:     %c0_i22 = arith.constant 0 : i22
+// CHECK-NEXT:     %c0_i32 = arith.constant 0 : i32
+// CHECK-NEXT:     %inputPort, %outputPort = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_0, %outputPort_1 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_2, %outputPort_3 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
+// CHECK-NEXT:     %inputPort_4, %outputPort_5 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
+// CHECK-NEXT:     %inputPort_6, %outputPort_7 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
+// CHECK-NEXT:     %inputPort_8, %outputPort_9 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_10, %outputPort_11 = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_12, %outputPort_13 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_14, %outputPort_15 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_16, %outputPort_17 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_18, %outputPort_19 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_20, %outputPort_21 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_22, %outputPort_23 = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_24, %outputPort_25 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
+// CHECK-NEXT:     %inputPort_26, %outputPort_27 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
+// CHECK-NEXT:     %inputPort_28, %outputPort_29 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_30, %outputPort_31 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
+// CHECK-NEXT:     %inputPort_32, %outputPort_33 = fifo.create<i22> (3) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_34, %outputPort_35 = fifo.create<i16> (1) : !fifo.input_port<i16>, !fifo.output_port<i16>
+// CHECK-NEXT:     %inputPort_36, %outputPort_37 = fifo.create<i22> (3) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_38, %outputPort_39 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_40, %outputPort_41 = fifo.create<i22> (2) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_42, %outputPort_43 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_44, %outputPort_45 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_46, %outputPort_47 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_48, %outputPort_49 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %inputPort_50, %outputPort_51 = fifo.create<i22> (1) : !fifo.input_port<i22>, !fifo.output_port<i22>
+// CHECK-NEXT:     %0 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%0 : !cal.state_ref<i22>, %c0_i22 : i22)
+// CHECK-NEXT:     %1 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%1 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %2 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%2 : !cal.state_ref<i22>, %c0_i22 : i22)
+// CHECK-NEXT:     %3 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%3 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %4 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%4 : !cal.state_ref<i22>, %c0_i22 : i22)
+// CHECK-NEXT:     %5 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%5 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %6 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%6 : !cal.state_ref<i22>, %c0_i22 : i22)
+// CHECK-NEXT:     %7 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%7 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %8 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%8 : !cal.state_ref<i22>, %c0_i22 : i22)
+// CHECK-NEXT:     %9 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%9 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %10 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%10 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %11 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%11 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %12 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%12 : !cal.state_ref<i22>, %c57671_i22 : i22)
+// CHECK-NEXT:     %13 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%13 : !cal.state_ref<i22>, %c0_i22 : i22)
+// CHECK-NEXT:     %14 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%14 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %15 = cal.create_state_var<i22> : !cal.state_ref<i22>
+// CHECK-NEXT:     cal.set(%15 : !cal.state_ref<i22>, %c0_i22 : i22)
+// CHECK-NEXT:     %16 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%16 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %17 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%17 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %18 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%18 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %19 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%19 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %20 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%20 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %21 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%21 : !cal.state_ref<i32>, %c2_i32 : i32)
+// CHECK-NEXT:     %22 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%22 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %23 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%23 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %24 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%24 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %25 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%25 : !cal.state_ref<i32>, %c0_i32 : i32)
+// CHECK-NEXT:     %26 = cal.create_state_var<i32> : !cal.state_ref<i32>
+// CHECK-NEXT:     cal.set(%26 : !cal.state_ref<i32>, %c2_i32 : i32)
+// CHECK-NEXT:     cf.br ^bb2
+// CHECK-NEXT:   ^bb1:  // 28 preds: ^bb2, ^bb3, ^bb4, ^bb5, ^bb6, ^bb7, ^bb8, ^bb9, ^bb10, ^bb11, ^bb12, ^bb13, ^bb14, ^bb15, ^bb16, ^bb17, ^bb18, ^bb19, ^bb20, ^bb21, ^bb22, ^bb23, ^bb24, ^bb25, ^bb26, ^bb27, ^bb28, ^bb29
+// CHECK-NEXT:     return
+// CHECK-NEXT:   ^bb2:  // 2 preds: ^bb0, ^bb29
+// CHECK-NEXT:     %27 = call @iGenerator_0_$untagged0(%inputPort_28, %24, %25, %26) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %27, ^bb3, ^bb1
+// CHECK-NEXT:   ^bb3:  // pred: ^bb2
+// CHECK-NEXT:     %28 = call @iGenerator_1_$untagged0(%inputPort_0, %19, %20, %21) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %28, ^bb4, ^bb1
+// CHECK-NEXT:   ^bb4:  // pred: ^bb3
+// CHECK-NEXT:     %29 = call @source_transmit(%inputPort_36, %inputPort_32, %10, %11, %12) : (!fifo.input_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i22>) -> i1
+// CHECK-NEXT:     cf.cond_br %29, ^bb5, ^bb1
+// CHECK-NEXT:   ^bb5:  // pred: ^bb4
+// CHECK-NEXT:     %30 = call @boundaryCells_0_normal(%outputPort_37, %inputPort_38, %inputPort_26, %6, %7) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %30, ^bb6, ^bb1
+// CHECK-NEXT:   ^bb6:  // pred: ^bb5
+// CHECK-NEXT:     %31 = call @innerCells_r_0_normal(%outputPort_33, %outputPort_27, %inputPort_46, %inputPort_18, %inputPort_34, %8, %9) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %31, ^bb7, ^bb1
+// CHECK-NEXT:   ^bb7:  // pred: ^bb6
+// CHECK-NEXT:     %32 = call @innerCells_q_0_normal(%outputPort_29, %outputPort_35, %inputPort_12, %inputPort_44, %inputPort_6, %0, %1) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %32, ^bb8, ^bb1
+// CHECK-NEXT:   ^bb8:  // pred: ^bb7
+// CHECK-NEXT:     %33 = call @boundaryCells_1_normal(%outputPort_47, %inputPort_8, %inputPort_4, %2, %3) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %33, ^bb9, ^bb1
+// CHECK-NEXT:   ^bb9:  // pred: ^bb8
+// CHECK-NEXT:     %34 = call @innerCells_q_1_normal(%outputPort_1, %outputPort_7, %inputPort_48, %inputPort_16, %inputPort_30, %4, %5) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %34, ^bb10, ^bb1
+// CHECK-NEXT:   ^bb10:  // pred: ^bb9
+// CHECK-NEXT:     %35 = call @innerCells_q_2_normal(%outputPort_13, %outputPort_5, %inputPort_14, %inputPort_50, %inputPort_2, %13, %14) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %35, ^bb11, ^bb1
+// CHECK-NEXT:   ^bb11:  // pred: ^bb10
+// CHECK-NEXT:     %36 = call @caps_cordic_0_receive(%outputPort_31) : (!fifo.output_port<i16>) -> i1
+// CHECK-NEXT:     %37 = call @innerCells_q_3_normal(%outputPort_49, %outputPort_3, %inputPort_42, %inputPort_20, %inputPort_24, %15, %16) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %37, ^bb12, ^bb1
+// CHECK-NEXT:   ^bb12:  // pred: ^bb11
+// CHECK-NEXT:     %38 = call @caps_x_0_receive(%outputPort_15) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %39 = call @caps_cordic_1_receive(%outputPort_25) : (!fifo.output_port<i16>) -> i1
+// CHECK-NEXT:     %40 = call @caps_x_1_receive(%outputPort_43) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %41 = call @iGenerator_0_$untagged0(%inputPort_28, %24, %25, %26) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %41, ^bb13, ^bb1
+// CHECK-NEXT:   ^bb13:  // pred: ^bb12
+// CHECK-NEXT:     %42 = call @iGenerator_1_$untagged0(%inputPort_0, %19, %20, %21) : (!fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %42, ^bb14, ^bb1
+// CHECK-NEXT:   ^bb14:  // pred: ^bb13
+// CHECK-NEXT:     %43 = call @source_transmit(%inputPort_36, %inputPort_32, %10, %11, %12) : (!fifo.input_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>, !cal.state_ref<i32>, !cal.state_ref<i22>) -> i1
+// CHECK-NEXT:     cf.cond_br %43, ^bb15, ^bb1
+// CHECK-NEXT:   ^bb15:  // pred: ^bb14
+// CHECK-NEXT:     %44 = call @boundaryCells_0_normal(%outputPort_37, %inputPort_38, %inputPort_26, %6, %7) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %44, ^bb16, ^bb1
+// CHECK-NEXT:   ^bb16:  // pred: ^bb15
+// CHECK-NEXT:     %45 = call @innerCells_r_0_normal(%outputPort_33, %outputPort_27, %inputPort_46, %inputPort_18, %inputPort_34, %8, %9) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %45, ^bb17, ^bb1
+// CHECK-NEXT:   ^bb17:  // pred: ^bb16
+// CHECK-NEXT:     %46 = call @innerCells_q_0_normal(%outputPort_29, %outputPort_35, %inputPort_12, %inputPort_44, %inputPort_6, %0, %1) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %46, ^bb18, ^bb1
+// CHECK-NEXT:   ^bb18:  // pred: ^bb17
+// CHECK-NEXT:     %47 = call @boundaryCells_1_normal(%outputPort_47, %inputPort_8, %inputPort_4, %2, %3) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %47, ^bb19, ^bb1
+// CHECK-NEXT:   ^bb19:  // pred: ^bb18
+// CHECK-NEXT:     %48 = call @innerCells_q_1_normal(%outputPort_1, %outputPort_7, %inputPort_48, %inputPort_16, %inputPort_30, %4, %5) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %48, ^bb20, ^bb1
+// CHECK-NEXT:   ^bb20:  // pred: ^bb19
+// CHECK-NEXT:     %49 = call @innerCells_q_2_normal(%outputPort_13, %outputPort_5, %inputPort_14, %inputPort_50, %inputPort_2, %13, %14) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %49, ^bb21, ^bb1
+// CHECK-NEXT:   ^bb21:  // pred: ^bb20
+// CHECK-NEXT:     %50 = call @caps_cordic_0_receive(%outputPort_31) : (!fifo.output_port<i16>) -> i1
+// CHECK-NEXT:     %51 = call @innerCells_q_3_normal(%outputPort_49, %outputPort_3, %inputPort_42, %inputPort_20, %inputPort_24, %15, %16) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %51, ^bb22, ^bb1
+// CHECK-NEXT:   ^bb22:  // pred: ^bb21
+// CHECK-NEXT:     %52 = call @caps_x_0_receive(%outputPort_15) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %53 = call @caps_cordic_1_receive(%outputPort_25) : (!fifo.output_port<i16>) -> i1
+// CHECK-NEXT:     %54 = call @caps_x_1_receive(%outputPort_43) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %55 = call @boundaryCells_0_final(%outputPort_37, %inputPort_38, %inputPort_26, %6, %7) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %55, ^bb23, ^bb1
+// CHECK-NEXT:   ^bb23:  // pred: ^bb22
+// CHECK-NEXT:     %56 = call @boundaryCells_1_final(%outputPort_47, %inputPort_8, %inputPort_4, %2, %3) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %56, ^bb24, ^bb1
+// CHECK-NEXT:   ^bb24:  // pred: ^bb23
+// CHECK-NEXT:     %57 = call @innerCells_q_0_final(%outputPort_29, %outputPort_35, %inputPort_12, %inputPort_44, %inputPort_6, %0, %1) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %57, ^bb25, ^bb1
+// CHECK-NEXT:   ^bb25:  // pred: ^bb24
+// CHECK-NEXT:     %58 = call @innerCells_q_1_final(%outputPort_1, %outputPort_7, %inputPort_48, %inputPort_16, %inputPort_30, %4, %5) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %58, ^bb26, ^bb1
+// CHECK-NEXT:   ^bb26:  // pred: ^bb25
+// CHECK-NEXT:     %59 = call @innerCells_q_2_final(%outputPort_13, %outputPort_5, %inputPort_14, %inputPort_50, %inputPort_2, %13, %14) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %59, ^bb27, ^bb1
+// CHECK-NEXT:   ^bb27:  // pred: ^bb26
+// CHECK-NEXT:     %60 = call @innerCells_q_3_final(%outputPort_49, %outputPort_3, %inputPort_42, %inputPort_20, %inputPort_24, %15, %16) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %60, ^bb28, ^bb1
+// CHECK-NEXT:   ^bb28:  // pred: ^bb27
+// CHECK-NEXT:     %61 = call @innerCells_r_0_final(%outputPort_33, %outputPort_27, %inputPort_46, %inputPort_18, %inputPort_34, %8, %9) : (!fifo.output_port<i22>, !fifo.output_port<i16>, !fifo.input_port<i22>, !fifo.input_port<i22>, !fifo.input_port<i16>, !cal.state_ref<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     cf.cond_br %61, ^bb29, ^bb1
+// CHECK-NEXT:   ^bb29:  // pred: ^bb28
+// CHECK-NEXT:     %62 = call @joinersPerRow_r_1_$untagged0(%outputPort_9, %inputPort_22, %23) : (!fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     %63 = call @joinersPerRow_q_0_$untagged0(%outputPort_45, %outputPort_51, %inputPort_10, %22) : (!fifo.output_port<i22>, !fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     %64 = call @joinersPerRow_q_1_$untagged0(%outputPort_17, %outputPort_21, %inputPort_40, %17) : (!fifo.output_port<i22>, !fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     %65 = call @joinersPerRow_r_0_$untagged0(%outputPort_39, %outputPort_19, %inputPort, %18) : (!fifo.output_port<i22>, !fifo.output_port<i22>, !fifo.input_port<i22>, !cal.state_ref<i32>) -> i1
+// CHECK-NEXT:     %66 = call @caps_r_1_receive(%outputPort_23) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %67 = call @caps_q_0_receive(%outputPort_11) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %68 = call @caps_q_1_receive(%outputPort_41) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %69 = call @caps_r_0_receive(%outputPort) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %70 = call @caps_q_0_receive(%outputPort_11) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %71 = call @caps_q_1_receive(%outputPort_41) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     %72 = call @caps_r_0_receive(%outputPort) : (!fifo.output_port<i22>) -> i1
+// CHECK-NEXT:     cf.cond_br %72, ^bb2, ^bb1
+// CHECK-NEXT:   }
+
 
 
 // Global callable definition

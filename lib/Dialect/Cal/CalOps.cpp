@@ -695,9 +695,9 @@ LogicalResult ActionOp::verify() {
   return success();
 }
 
-llvm::DenseMap<mlir::Value, int> ActionOp::getPortRates() {
+llvm::MapVector<mlir::Value, int> ActionOp::getPortRates() {
 
-  llvm::DenseMap<mlir::Value, int> portRates;
+  llvm::MapVector<mlir::Value, int> portRates;
   for (auto pushOp : getOps<fifo::Push>()) {
     portRates[pushOp.getInputPort()] += 1;
   }

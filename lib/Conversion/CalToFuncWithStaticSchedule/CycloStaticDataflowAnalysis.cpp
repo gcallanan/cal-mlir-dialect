@@ -295,12 +295,12 @@ int CycloStaticDataflowAnalysis::getPortRateOverAllPhases(cal::ActorOp actorOp,
 }
 
 // ---- Main solver ----
-llvm::DenseMap<mlir::cal::ActorOp, int>
+llvm::MapVector<mlir::cal::ActorOp, int>
 CycloStaticDataflowAnalysis::solveBalanceEquations(
     llvm::SmallVector<CycloStaticDataflowAnalysis::BalanceEquation, 4>
         &equations) {
   // Step 1: Map actors to indices
-  std::unordered_map<mlir::Operation *, int> actorIndex;
+  std::map<mlir::Operation *, int> actorIndex;
   int index = 0;
 
   // Map each actor to a unique index
@@ -351,7 +351,7 @@ CycloStaticDataflowAnalysis::solveBalanceEquations(
   for (int &x : result)
     x /= g;
 
-  llvm::DenseMap<mlir::cal::ActorOp, int> repetitionMap;
+  llvm::MapVector<mlir::cal::ActorOp, int> repetitionMap;
   for (const auto &pair : actorIndex) {
     mlir::Operation *op = pair.first;
     mlir::cal::ActorOp actorOp = llvm::dyn_cast<mlir::cal::ActorOp>(op);
