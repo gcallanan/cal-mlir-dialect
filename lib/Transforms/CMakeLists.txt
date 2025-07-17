@@ -1,1 +1,2 @@
 add_subdirectory(GPUAwareBufferize)
+add_subdirectory(GPUDeallocInterface)

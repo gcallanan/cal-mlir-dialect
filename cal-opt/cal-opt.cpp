@@ -44,6 +44,7 @@
 
 // Project-specific conversions and Transformations
 #include "Conversion/Passes.h"
+#include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
 #include "Transforms/Passes.h"
 
 void registerLowerCalToLLVMPipeline();
@@ -85,7 +86,8 @@ int main(int argc, char **argv) {
   mlir::linalg::registerAllDialectInterfaceImplementations(registry);
   mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
       registry);
-  //mlir::gpu::registerBufferDeallocationOpInterfaceExternalModels(registry);
+  
+  mlir::registerGpuDeallocInterface(registry);
 
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
@@ -302,8 +304,8 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
 
         pm.addPass(mlir::createGpuAwareBufferizePass());
 
-        // pm.addPass(mlir::createCanonicalizerPass());
-        // pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
         // pm.addPass(mlir::createCanonicalizerPass());
         // pm.addPass(mlir::createConvertLinalgToLoopsPass());
         // pm.addPass(mlir::createCanonicalizerPass());
