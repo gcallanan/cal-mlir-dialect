@@ -1,7 +1,4 @@
 The following is a list of outstanding tasks:
-1. Deallocate allocated memory: In CalPassesLowerStateToMemref.cpp and FifoPassesConvertFifoToMemref.cpp, the cal.create_state_var and fifo.create operations are transformed to memref.alloc. However no corresponding deallocation occurs. This does not affect program performance as these memrefs are meant to remain allocated for the duration of the program but it is bad practice. 
-2. In both CalPassesLowerStateToMemref.cpp and FifoPassesConvertFifoToMemref.cpp, a local ConvertCalCreateInstanceOperands class has been declared. This class is identical in both of these files. This class needs to be moved to its own location where it can be called once so there is no duplicate code. The same problem exists for the ConvertCalActorArguments class.
-3. Move transformation passes. Currently transformation passes are in the Dialect/"Dialect Name"/ directory. We need to create a Conversion/"Conversion Sub Directory"/ path and move them there instead.
-4. Define the cal.network properly. Currently only one cal.network operand is supported per program. It does not allow for input or output or for the composition of subnetworks. This whole operation needs to be reworked.
-5. Add descriptions to many of the cal operations defined in /include/Dialect/Cal/CalOps.td: I did not write a description for them as they were modified a bit during development, this description is needed.
-6. Add description to HoistCalStateOutOfActor in CalPasses.td
+1. Move transformation passes. Currently transformation passes are in the Dialect/"Dialect Name"/ directory. We have created a Conversion/"Conversion Sub Directory"/ where some passes are, but we need to move the rest there.
+2. Define the cal.network properly. Currently only one cal.network operand is supported per program. It does not allow for input or output or for the composition of subnetworks. This whole operation needs to be reworked.
+3. In cal-opt.cpp, we have defined all our pipelines, they should be defined in their own file. Currently it just takes a long time to build and link every time we modify a pipeline and its not very good modulatrisation in general.

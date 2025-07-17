@@ -20,6 +20,7 @@
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
 
 // MLIR Dialects
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 
 // MLIR Dialect Transforms
@@ -41,18 +42,20 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoPasses.h"
 
-// Project-specific conversions
+// Project-specific conversions and Transformations
 #include "Conversion/Passes.h"
+#include "Transforms/Passes.h"
 
 void registerLowerCalToLLVMPipeline();
 void registerLowerCalToLLVMWithStaticSchedulePipeline();
+void registerLowerCalToLLVMWithGPUTensorsPipeline();
 
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mlir::cal::registerPasses();
   mlir::registerCalConversionPasses();
   mlir::fifo::registerPasses();
-  // TODO: Register cal passes here.
+  mlir::registerCalGenericTransformationsPasses();
 
   mlir::DialectRegistry registry;
   registry.insert<
@@ -82,14 +85,16 @@ int main(int argc, char **argv) {
   mlir::linalg::registerAllDialectInterfaceImplementations(registry);
   mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
       registry);
+  //mlir::gpu::registerBufferDeallocationOpInterfaceExternalModels(registry);
 
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
   // will be *parsed* by the tool, not the one generated
-  registerAllDialects(registry);
+  // registerAllDialects(registry);
 
   registerLowerCalToLLVMPipeline();
   registerLowerCalToLLVMWithStaticSchedulePipeline();
+  registerLowerCalToLLVMWithGPUTensorsPipeline();
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "Cal optimizer driver\n", registry));
@@ -270,5 +275,78 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::createConvertIndexToLLVMPass());
         // // Convert remaining unrealized_casts (always needed).
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+      });
+}
+
+void registerLowerCalToLLVMWithGPUTensorsPipeline() {
+  mlir::PassPipelineRegistration<>(
+      "lower-cal-to-llvm-with-gpu-tensors",
+      "Pipeline lowering FIFO and CAL dialects to LLVM dialect and executing "
+      "tensor operations on NVVM GPUs",
+      [](mlir::OpPassManager &pm) {
+        // 1. FIFO/CAL-specific lowering
+        pm.addPass(mlir::cal::insertCalPortPredicates());
+        pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
+
+        pm.addPass(mlir::cal::hoistCalStateOutOfActor());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createConvertCalToFuncPass());
+        // We add this pass as we often get functions that are the same but with
+        // different names.
+        pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
+
+        pm.addPass(mlir::lowerCalStateToMemref());
+        pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
+        pm.addPass(mlir::fifo::decomposeFifoTuples());
+        pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
+
+        pm.addPass(mlir::createGpuAwareBufferizePass());
+
+        // pm.addPass(mlir::createCanonicalizerPass());
+        // pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        // pm.addPass(mlir::createCanonicalizerPass());
+        // pm.addPass(mlir::createConvertLinalgToLoopsPass());
+        // pm.addPass(mlir::createCanonicalizerPass());
+
+        // // 2. Standard MLIR to LLVM lowering:
+        // //    The following passes lower various MLIR dialects to LLVM.
+        // //    (The ordering and combination of these passes follow similar
+        // //    pipelines
+        // //     as in the LLVM project, for example in TestLowertoLLVM.cpp.)
+
+        // // pm.addNestedPass<func::FuncOp>(createConvertVectorToSCFPass());
+        // // // Blanket-convert any remaining linalg ops to loops if any
+        // remain.
+        // // pm.addNestedPass<func::FuncOp>(createConvertLinalgToLoopsPass());
+        // // // Blanket-convert any remaining affine ops if any remain.
+        // // pm.addPass(createLowerAffinePass());
+        // // Convert SCF to CF (always needed).
+        // pm.addPass(mlir::createConvertSCFToCFPass());
+        // // Sprinkle some cleanups.
+        // pm.addPass(mlir::createCanonicalizerPass());
+        // pm.addPass(mlir::createCSEPass());
+        // // Convert vector to LLVM (always needed).
+        // // pm.addPass(createConvertVectorToLLVMPass(
+        // //     // TODO: add more options on a per-need basis.
+        // // ConvertVectorToLLVMPassOptions{options.reassociateFPReductions}));
+        // // // Convert Math to LLVM (always needed).
+        // pm.addNestedPass<mlir::func::FuncOp>(
+        //     mlir::createConvertMathToLLVMPass());
+        // // Expand complicated MemRef operations before lowering them.
+        // pm.addPass(mlir::memref::createExpandStridedMetadataPass());
+        // // // The expansion may create affine expressions. Get rid of them.
+        // pm.addPass(mlir::createLowerAffinePass());
+        // // // Convert MemRef to LLVM (always needed).
+        // pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
+        // // // Convert Func to LLVM (always needed).
+        // pm.addPass(mlir::createConvertFuncToLLVMPass());
+        // // // Convert Arith to LLVM (always needed).
+        // pm.addPass(mlir::createArithToLLVMConversionPass());
+        // // // Convert CF to LLVM (always needed).
+        // pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+        // // // Convert Index to LLVM (always needed).
+        // pm.addPass(mlir::createConvertIndexToLLVMPass());
+        // // // Convert remaining unrealized_casts (always needed).
+        // pm.addPass(mlir::createReconcileUnrealizedCastsPass());
       });
 }
