@@ -82,6 +82,8 @@ int main(int argc, char **argv) {
   mlir::arith::registerValueBoundsOpInterfaceExternalModels(registry);
   mlir::scf::registerBufferDeallocationOpInterfaceExternalModels(registry);
   mlir::scf::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::cf::registerBufferDeallocationOpInterfaceExternalModels(registry);
+  mlir::cf::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::linalg::registerAllDialectInterfaceImplementations(registry);
   mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
