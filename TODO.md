@@ -2,3 +2,6 @@ The following is a list of outstanding tasks:
 1. Move transformation passes. Currently transformation passes are in the Dialect/"Dialect Name"/ directory. We have created a Conversion/"Conversion Sub Directory"/ where some passes are, but we need to move the rest there.
 2. Define the cal.network properly. Currently only one cal.network operand is supported per program. It does not allow for input or output or for the composition of subnetworks. This whole operation needs to be reworked.
 3. In cal-opt.cpp, we have defined all our pipelines, they should be defined in their own file. Currently it just takes a long time to build and link every time we modify a pipeline and its not very good modulatrisation in general.
+4. Most of the passes defined have a constructor defined:
+    let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";
+This is not necessary, and can be removed in all these classes. The names may change slightly. 

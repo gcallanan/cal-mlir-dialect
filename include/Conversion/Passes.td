@@ -67,9 +67,15 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
-  let constructor = "mlir::lowerCalStateToMemref()";
+
+  let options = [
+    Option<"which_alloc", "which-alloc", "std::string", /*default=*/"\"HOST\"",
+           "Choose allocation target for tensor types: HOST | GPU_HOST_SHARED">,
+  ];
+
   let dependentDialects = [
     "cal::CalDialect",
+    "mlir::gpu::GPUDialect",
     "index::IndexDialect",
     "arith::ArithDialect",
     "memref::MemRefDialect",

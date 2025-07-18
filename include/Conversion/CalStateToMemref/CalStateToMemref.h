@@ -6,8 +6,6 @@
 
 namespace mlir {
 
-std::unique_ptr<mlir::Pass> lowerCalStateToMemref();
-
 #define GEN_PASS_DECL_LOWERCALSTATETOMEMREF
 #include "Conversion/Passes.h.inc"
 

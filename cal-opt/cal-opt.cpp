@@ -142,7 +142,7 @@ void registerLowerCalToLLVMPipeline() {
         // different names.
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
-        pm.addPass(mlir::lowerCalStateToMemref());
+        pm.addPass(mlir::createLowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
@@ -221,7 +221,7 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         // different names.
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
-        pm.addPass(mlir::lowerCalStateToMemref());
+        pm.addPass(mlir::createLowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
@@ -299,7 +299,9 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
         // different names.
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
-        pm.addPass(mlir::lowerCalStateToMemref());
+        mlir::LowerCalStateToMemrefOptions stateOptions;
+        stateOptions.which_alloc = std::string("GPU_HOST_SHARED");
+        pm.addPass(mlir::createLowerCalStateToMemref(stateOptions));
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());

@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -42,6 +43,13 @@ using namespace cal;
 // converts to equivalent memref types for tensors, or preserves memref types
 // directly.
 //
+// Tensors can be allocated to different memory locations depending on the pass
+// option `which-alloc`. By default, tensors are allocated in host memory, but
+// if the option is set to `GPU_HOST_SHARED`, tensor allocations use the GPU
+// dialect's `gpu.alloc` operation with host-shared memory semantics. This
+// allows for flexible placement of tensor buffers for heterogeneous execution
+// environments.
+//
 // Input (scalar):
 //   %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
 // Output (scalar):
@@ -58,7 +66,14 @@ using namespace cal;
 //   %alloc = memref.alloc() : memref<4xi32>
 class ConvertCalCreateStateVarOpToMemref
     : public OpConversionPattern<CreateStateVarOp> {
-  using OpConversionPattern<CreateStateVarOp>::OpConversionPattern;
+public:
+  ConvertCalCreateStateVarOpToMemref(MLIRContext *context,
+                                     AllocLocation allocLocation)
+      : OpConversionPattern<CreateStateVarOp>(context),
+        allocLocation(allocLocation) {}
+
+private:
+  AllocLocation allocLocation;
 
   LogicalResult
   matchAndRewrite(CreateStateVarOp op, OpAdaptor adaptor,
@@ -66,19 +81,32 @@ class ConvertCalCreateStateVarOpToMemref
 
     mlir::Location loc = op.getLoc();
     auto stateType = op.getStateType();
+    bool isTensor = false;
 
     MemRefType memrefType;
     if (auto tensorType = stateType.dyn_cast<TensorType>()) {
       memrefType =
           MemRefType::get(tensorType.getShape(), tensorType.getElementType());
+      isTensor = true;
     } else if (auto memrefTy = stateType.dyn_cast<MemRefType>()) {
       memrefType = memrefTy;
     } else {
       memrefType = MemRefType::get(1, stateType);
     }
 
-    auto alloc = rewriter.create<memref::AllocOp>(loc, memrefType);
-    rewriter.replaceOp(op, alloc);
+    if (allocLocation == AllocLocation::HOST || !isTensor) {
+      auto allocOp = rewriter.create<memref::AllocOp>(loc, memrefType);
+      rewriter.replaceOp(op, allocOp.getResult());
+    } else if (allocLocation == AllocLocation::GPU_HOST_SHARED) {
+      auto allocOp = rewriter.create<gpu::AllocOp>(
+          loc, memrefType, /*asyncToken=*/Type(),
+          /*asyncDependencies=*/ValueRange(),
+          /*dynamicSizes=*/ValueRange(), /*symbolOperands=*/ValueRange(),
+          /*hostShared=*/true);
+      rewriter.replaceOp(op, allocOp.getResult(0));
+    } else {
+      return rewriter.notifyMatchFailure(op, "Unknown AllocLocation");
+    }
     return success();
   }
 };
@@ -166,7 +194,14 @@ class ConvertCalStateGetOpToMemref : public OpConversionPattern<StateGetOp> {
 /// Is rewritten into (memref):
 ///   memref.copy %memref, %ref0 : memref<4xi32>, memref<4xi32>
 class ConvertCalStateSetOpToMemref : public OpConversionPattern<StateSetOp> {
-  using OpConversionPattern<StateSetOp>::OpConversionPattern;
+public:
+  ConvertCalStateSetOpToMemref(MLIRContext *context,
+                               AllocLocation allocLocation)
+      : OpConversionPattern<StateSetOp>(context), allocLocation(allocLocation) {
+  }
+
+private:
+  AllocLocation allocLocation;
 
   LogicalResult
   matchAndRewrite(StateSetOp op, OpAdaptor adaptor,
@@ -179,7 +214,15 @@ class ConvertCalStateSetOpToMemref : public OpConversionPattern<StateSetOp> {
     if (mlir::isa<mlir::TensorType>(stateValue.getType())) {
       auto buffer = rewriter.create<bufferization::ToMemrefOp>(
           loc, stateRef.getType(), stateValue);
-      rewriter.create<memref::CopyOp>(loc, buffer, stateRef);
+      if (allocLocation == AllocLocation::GPU_HOST_SHARED) {
+        rewriter.create<gpu::MemcpyOp>(loc,
+                                       /*asyncToken=*/Type(),
+                                       /*asyncDependencies=*/ValueRange(),
+                                       /*dst=*/stateRef,
+                                       /*src=*/buffer);
+      } else {
+        rewriter.create<memref::CopyOp>(loc, buffer, stateRef);
+      }
       rewriter.eraseOp(op);
       return success();
     }
@@ -291,16 +334,35 @@ static void populateCalStateTypeConverterDynamic(mlir::TypeConverter &converter,
 class LowerCalStateToMemrefPass
     : public impl::LowerCalStateToMemrefBase<LowerCalStateToMemrefPass> {
 public:
+  LowerCalStateToMemrefPass(const LowerCalStateToMemrefOptions &options)
+      : impl::LowerCalStateToMemrefBase<LowerCalStateToMemrefPass>(options) {}
+
+  LowerCalStateToMemrefPass() {}
+
   void runOnOperation() final {
     ConversionTarget target(getContext());
+
+    AllocLocation allocLocation;
+    if (which_alloc == "HOST") {
+      allocLocation = AllocLocation::HOST;
+    } else if (which_alloc == "GPU_HOST_SHARED") {
+      allocLocation = AllocLocation::GPU_HOST_SHARED;
+    } else {
+      mlir::emitError(mlir::UnknownLoc::get(&getContext()))
+          << "Invalid allocation location: " << which_alloc
+          << ". Valid options are: HOST, GPU_HOST_SHARED";
+      signalPassFailure();
+      return;
+    }
 
     TypeConverter typeConverter;
     populateCalStateTypeConverterDynamic(typeConverter, &getContext());
 
     RewritePatternSet patterns(&getContext());
-    patterns.add<ConvertCalStateSetOpToMemref>(&getContext());
+    patterns.add<ConvertCalStateSetOpToMemref>(&getContext(), allocLocation);
     patterns.add<ConvertCalStateGetOpToMemref>(&getContext());
-    patterns.add<ConvertCalCreateStateVarOpToMemref>(&getContext());
+    patterns.add<ConvertCalCreateStateVarOpToMemref>(&getContext(),
+                                                     allocLocation);
     patterns.add<ConvertCalActorArguments>(&getContext(), typeConverter);
     patterns.add<ConvertCalCreateInstanceOperands>(&getContext(),
                                                    typeConverter);
@@ -312,6 +374,7 @@ public:
     // // Set the legal and illegal dialects after this conversion
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
                            arith::ArithDialect, tensor::TensorDialect,
+                           gpu::GPUDialect,
                            bufferization::BufferizationDialect>();
 
     // Provide checks to ensure that the following operations
@@ -349,9 +412,3 @@ public:
 };
 
 } // namespace mlir
-
-/// Creates a pass that lowers CAL dialect state operations (`cal.state`,
-/// `cal.get`, `cal.set`) to equivalent operations in the MemRef dialect.
-std::unique_ptr<mlir::Pass> mlir::lowerCalStateToMemref() {
-  return std::make_unique<mlir::LowerCalStateToMemrefPass>();
-}

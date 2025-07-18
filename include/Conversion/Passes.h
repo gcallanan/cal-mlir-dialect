@@ -11,6 +11,11 @@ namespace mlir {
 
 //===- Generated passes ---------------------------------------------------===//
 
+enum class AllocLocation {
+  HOST,
+  GPU_HOST_SHARED
+};
+
 #define GEN_PASS_REGISTRATION
 #include "Conversion/Passes.h.inc"
 
