@@ -69,7 +69,12 @@ def LowerFifoPrintToLLVM: Pass<"lower-fifo-print-to-llvm"> {
   let constructor = "mlir::fifo::lowerFifoPrintToLLVM()";
   let dependentDialects = [
     "fifo::FifoDialect",
-    "LLVM::LLVMDialect"
+    "LLVM::LLVMDialect",
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "memref::MemRefDialect",
+    "tensor::TensorDialect",
+    "bufferization::BufferizationDialect"
   ];
 }
 

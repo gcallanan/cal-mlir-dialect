@@ -25,6 +25,12 @@ func.func @main() -> i32 {
     fifo.print("Value: %.2f\0A\00", %c63p56) : (f32)
     //CHECK: Value: 63.56
 
+    %vals = arith.constant dense<[[1.0, 2.0], [3.0, 4.0]]> : tensor<2x2xf32>
+    fifo.print_tensor(%vals) : tensor<2x2xf32>
+    // CHECK: 1.000000 2.000000 
+    // CHECK: 3.000000 4.000000 
+
+
     func.return %constant0 : i32
 }
     

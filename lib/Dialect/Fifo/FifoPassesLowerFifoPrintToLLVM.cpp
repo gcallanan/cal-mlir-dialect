@@ -15,7 +15,12 @@
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoPasses.h"
 #include "Dialect/Fifo/FifoTypes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -25,6 +30,94 @@
 namespace mlir::fifo {
 #define GEN_PASS_DEF_LOWERFIFOPRINTTOLLVM
 #include "Dialect/Fifo/FifoPasses.h.inc"
+
+class ConvertTensorPrintToPrint : public OpConversionPattern<PrintTensorOp> {
+  using OpConversionPattern<PrintTensorOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(PrintTensorOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+
+    mlir::Location loc = op.getLoc();
+
+    // llvm::outs() << "Converting PrintTensorOp to LLVM print: " << op << "\n";
+
+    Type tensorType = op.getTensor().getType();
+    llvm::SmallVector<int64_t, 4> shape;
+    Value tensorVal = adaptor.getTensor();
+    if (auto memrefType = tensorType.dyn_cast<MemRefType>()) {
+      shape.append(memrefType.getShape().begin(), memrefType.getShape().end());
+    } else if (auto rankedTensorType =
+                   tensorType.dyn_cast<RankedTensorType>()) {
+      shape.append(rankedTensorType.getShape().begin(),
+                   rankedTensorType.getShape().end());
+      // Convert tensor to memref using bufferization.to_memref
+      auto memrefTy = MemRefType::get(rankedTensorType.getShape(),
+                                      rankedTensorType.getElementType());
+      tensorVal = rewriter.create<mlir::bufferization::ToMemrefOp>(
+          loc, memrefTy, tensorVal);
+    } else {
+      return rewriter.notifyMatchFailure(
+          op, "Expected memref or ranked tensor type");
+    }
+
+    // std::cout << "Tensor shape: [";
+    // for (size_t i = 0; i < shape.size(); ++i) {
+    //   std::cout << shape[i];
+    //   if (i != shape.size() - 1)
+    //     std::cout << ", ";
+    // }
+    // std::cout << "]" << std::endl;
+
+    // llvm::outs() << tensorVal << "\n";
+
+    // Assume shape is [m, n]
+    assert(shape.size() == 2 && "Tensor must be 2D (mxn)");
+
+    Value mVal = rewriter.create<arith::ConstantIndexOp>(loc, shape[0]);
+    Value nVal = rewriter.create<arith::ConstantIndexOp>(loc, shape[1]);
+
+    auto indexType = rewriter.getIndexType();
+    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // Outer loop (i from 0 to m)
+    auto outerLoop = rewriter.create<scf::ForOp>(loc, zero, mVal, one);
+    rewriter.setInsertionPointToStart(outerLoop.getBody());
+
+    // Inner loop (j from 0 to n)
+    auto innerLoop = rewriter.create<scf::ForOp>(loc, zero, nVal, one);
+    rewriter.setInsertionPointToStart(innerLoop.getBody());
+
+    // Load and print each element
+    auto rowIdx = outerLoop.getInductionVar();
+    auto colIdx = innerLoop.getInductionVar();
+
+    auto loadOp = rewriter.create<memref::LoadOp>(loc, tensorVal,
+                                                  ValueRange{rowIdx, colIdx});
+
+    // Print the element with format based on type
+    auto elementType = tensorVal.getType().cast<MemRefType>().getElementType();
+    if (elementType.isa<FloatType>()) {
+      rewriter.create<fifo::PrintOp>(loc, StringRef("%f "),
+                                     ArrayRef<Value>{loadOp});
+    } else if (elementType.isa<IntegerType>()) {
+      rewriter.create<fifo::PrintOp>(loc, StringRef("%d "),
+                                     ArrayRef<Value>{loadOp});
+    }
+
+    // After inner loop, print newline
+    rewriter.setInsertionPointAfter(innerLoop);
+    rewriter.create<fifo::PrintOp>(loc, StringRef("\n"), ArrayRef<Value>{});
+
+    // Restore insertion point to after the loops
+    rewriter.setInsertionPointAfter(outerLoop);
+
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+};
 
 // This class defines a conversion pattern that lowers the `fifo.print`
 // operation to a `printf` call in the LLVM dialect. The conversion involves
@@ -75,7 +168,8 @@ class ConvertPrintToLLVMPrint : public OpConversionPattern<PrintOp> {
     mlir::Operation::operand_range args = op.getArgs();
 
     // Create a vecotr of operands to the printf, including the format string
-    // All f32 need to be converted to f64 or else printf does not generate nice data
+    // All f32 need to be converted to f64 or else printf does not generate nice
+    // data
     llvm::SmallVector<mlir::Value, 8> combinedOperands;
     combinedOperands.push_back(formatSpecifierCst);
     for (auto arg : args) {
@@ -128,6 +222,13 @@ private:
   static Value createGlobalString(Location loc, OpBuilder &builder,
                                   StringRef name, StringRef value,
                                   ModuleOp module) {
+    // Check if the very last character is the null terminator
+    std::string updatedValue = value.str();
+    if (updatedValue.empty() || updatedValue.back() != '\0') {
+      updatedValue.push_back('\0');
+    }
+    StringRef valueWithNull(updatedValue);
+
     // TODO: This while loops is a bit of a hack to get a unique name, worth
     // fixing later, just in a hurry right now
     std::string uniqueName;
@@ -141,10 +242,10 @@ private:
       OpBuilder::InsertionGuard insertGuard(builder);
       builder.setInsertionPointToStart(module.getBody());
       auto type = LLVM::LLVMArrayType::get(
-          IntegerType::get(builder.getContext(), 8), value.size());
+          IntegerType::get(builder.getContext(), 8), updatedValue.size());
       global = builder.create<LLVM::GlobalOp>(
           loc, type, /*isConstant=*/true, LLVM::Linkage::Internal, uniqueName,
-          builder.getStringAttr(value),
+          builder.getStringAttr(updatedValue),
           /*alignment=*/0);
     }
 
@@ -158,7 +259,7 @@ private:
   }
 };
 
-//int ConvertPrintToLLVMPrint::global_string_counter = 0;
+// int ConvertPrintToLLVMPrint::global_string_counter = 0;
 
 // This pass lowers the `fifo.print` operation to an equivalent `printf`
 // operation in the LLVM dialect. The `fifo.print` operation, which prints
@@ -174,10 +275,14 @@ public:
     // Something about this being a stack
     RewritePatternSet patterns(&getContext());
     patterns.add<ConvertPrintToLLVMPrint>(&getContext());
+    patterns.add<ConvertTensorPrintToPrint>(&getContext());
 
     // Set the legal and illegal dialects after this conversion
-    target.addIllegalOp<fifo::PrintOp>();
-    target.addLegalDialect<LLVM::LLVMDialect>();
+    target.addIllegalOp<fifo::PrintOp, fifo::PrintTensorOp>();
+    target.addLegalDialect<LLVM::LLVMDialect,
+                           mlir::bufferization::BufferizationDialect,
+                           mlir::scf::SCFDialect, mlir::memref::MemRefDialect,
+                           mlir::arith::ArithDialect>();
 
     // Run the conversion
     if (failed(applyPartialConversion(getOperation(), target,

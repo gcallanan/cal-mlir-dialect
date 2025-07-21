@@ -341,6 +341,20 @@ def Fifo_PrintOp : Fifo_Op<"print", []> {
   let assemblyFormat = "`(` $format (`,` $args^)? `)` attr-dict (`:` `(` type($args)^ `)`)?";
 }
 
+def Fifo_PrintTensorOp : Fifo_Op<"print_tensor", []> {
+  let summary = "";
+  let description = [{
+    
+  }];
+
+  let arguments = (ins
+    AnyType:$tensor
+  );
+  let assemblyFormat = "`(` $tensor `)` attr-dict `:` type($tensor)";
+
+  let hasVerifier = 1; // Enables verification logic in C++.
+}
+
 
 
 #endif // FIFO_OPS

@@ -16,6 +16,11 @@ func.func @main() -> i32 {
     fifo.print("Values: %d %d\0A\00", %c234, %c694) : (i32, i32)
     //CHECK: fifo.print("Values: %d %d\0A\00", %c234_i32, %c698_i32) : (i32, i32)
 
+    %vals = arith.constant dense<[[1.0, 2.0], [3.0, 4.0]]> : tensor<2x2xf32>
+    fifo.print_tensor(%vals) : tensor<2x2xf32>
+    // CHECK: %cst = arith.constant dense<
+    // CHECK: fifo.print_tensor(%cst) : tensor<2x2xf32>
+
     func.return %constant0 : i32
 }
     

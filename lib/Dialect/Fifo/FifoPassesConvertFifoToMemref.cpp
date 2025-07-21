@@ -948,7 +948,8 @@ public:
 
     // Set the legal and illegal dialects after this conversion
     target.addIllegalDialect<fifo::FifoDialect>();
-    target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement, fifo::PrintOp>();
+    target.addLegalOp<fifo::MakeTuple, fifo::GetTupleElement, fifo::PrintOp,
+                      fifo::PrintTensorOp>();
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
                            arith::ArithDialect, tensor::TensorDialect,
                            bufferization::BufferizationDialect>();
