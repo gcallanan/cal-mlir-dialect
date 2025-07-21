@@ -22,6 +22,7 @@
 // MLIR Dialects
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 
 // MLIR Dialect Transforms
 #include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
@@ -31,10 +32,12 @@
 #include "mlir/Dialect/Bufferization/Pipelines/Passes.h"
 #include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
+#include "mlir/Dialect/GPU/Pipelines/Passes.h"
 #include "mlir/Dialect/Linalg/Transforms/AllInterfaces.h"
 #include "mlir/Dialect/SCF/Transforms/BufferDeallocationOpInterfaceImpl.h"
 #include "mlir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
 
 // Project-specific dialects
 #include "Dialect/Cal/CalDialect.h"
@@ -44,6 +47,7 @@
 
 // Project-specific conversions and Transformations
 #include "Conversion/Passes.h"
+#include "Dialect/Fifo/BufferizableOpInterfaceImpl.h"
 #include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
 #include "Transforms/Passes.h"
 
@@ -67,7 +71,8 @@ int main(int argc, char **argv) {
       mlir::math::MathDialect, mlir::func::FuncDialect, mlir::gpu::GPUDialect,
       mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
       mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect,
-      mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect>();
+      mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect,
+      mlir::affine::AffineDialect, mlir::ub::UBDialect>();
 
   // We need this to be able to run the --buffer-deallocation pass which can
   // automatically insert deallocation operations
@@ -88,8 +93,10 @@ int main(int argc, char **argv) {
   mlir::linalg::registerAllDialectInterfaceImplementations(registry);
   mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
       registry);
-  
+
   mlir::registerGpuDeallocInterface(registry);
+
+  mlir::fifo::registerBufferizableOpInterfaceExternalModels(registry);
 
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
@@ -145,7 +152,7 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::createLowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
-        pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
+        pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
         mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
         bufferizeOptions.bufferizeFunctionBoundaries = true;
@@ -224,7 +231,7 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::createLowerCalStateToMemref());
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
-        pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
+        pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
         // 2. We need to add deallocation operations. However the
         // createConvertCalToFuncWithStaticSchedulePass genrerates CF, not SCF,
@@ -300,19 +307,36 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
         mlir::LowerCalStateToMemrefOptions stateOptions;
-        stateOptions.which_alloc = std::string("GPU_HOST_SHARED");
+        stateOptions.which_alloc = std::string("GPU");
         pm.addPass(mlir::createLowerCalStateToMemref(stateOptions));
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
-        pm.addPass(mlir::fifo::lowerFifoPrintToLLVM());
+        mlir::fifo::LowerFifoPrintToLLVMOptions printOptions;
+        printOptions.tensors_on_gpu = true; // We want to lower the prints to GPU
+        pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM(printOptions));
 
         pm.addPass(mlir::createGpuAwareBufferizePass());
 
         pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
-        // pm.addPass(mlir::createCanonicalizerPass());
-        // pm.addPass(mlir::createConvertLinalgToLoopsPass());
-        // pm.addPass(mlir::createCanonicalizerPass());
+        // pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createConvertLinalgToParallelLoopsPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+
+        // 2. Now we start the GPU-specific lowering
+
+        pm.addPass(mlir::createGpuMapParallelLoopsPass());
+        pm.addPass(mlir::createParallelLoopToGpuPass());
+        pm.addPass(mlir::createGpuKernelOutliningPass());
+        pm.addPass(mlir::createCSEPass());
+        pm.addPass(mlir::createGpuAsyncRegionPass());
+
+        // mlir::gpu::GPUToNVVMPipelineOptions nvvmOptions;
+        // nvvmOptions.cubinChip = "sm_75";
+        // nvvmOptions.optLevel = 3;
+        // // nvvmOptions.kernelUseBarePtrCallConv = true;
+        // // nvvmOptions.hostUseBarePtrCallConv = true;
+        // mlir::gpu::buildLowerToNVVMPassPipeline(pm, nvvmOptions);
 
         // // 2. Standard MLIR to LLVM lowering:
         // //    The following passes lower various MLIR dialects to LLVM.

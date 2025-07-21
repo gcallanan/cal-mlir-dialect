@@ -25,7 +25,8 @@ namespace mlir {
 /// GPU memory with host-shared access.
 ///
 /// Input:
-///   %1 = linalg.fill ins(%c4_i32 : i32) outs(%0 : tensor<2x2xi32>) -> tensor<2x2xi32>
+///   %1 = linalg.fill ins(%c4_i32 : i32) outs(%0 : tensor<2x2xi32>) ->
+///   tensor<2x2xi32>
 ///
 /// Output:
 ///   %memref = gpu.alloc host_shared () : memref<2x2xi32>
@@ -57,18 +58,23 @@ public:
             mlir::ValueRange dynShape,
             unsigned alignment) -> mlir::FailureOr<mlir::Value> {
       // if (type.getMemorySpaceAsInt() == 1) {
-      auto allocOp = b.create<mlir::gpu::AllocOp>(loc, type, dynShape);
-      allocOp.setHostShared(true);
-      return allocOp.getResult(0);
+        auto allocOp = b.create<mlir::gpu::AllocOp>(loc, type, dynShape);
+        allocOp.setHostShared(false);
+        return allocOp.getResult(0);
       // }
+      // return b.create<mlir::memref::AllocOp>(loc, type, dynShape);
     };
 
     // Simple copy function
     options.memCpyFn = [&](mlir::OpBuilder &b, mlir::Location loc,
                            mlir::Value from,
                            mlir::Value to) -> mlir::LogicalResult {
-      mlir::emitError(loc, "GPUAwareBufferize: memCpyFn not yet dealt with.");
-      return mlir::failure();
+      b.create<gpu::MemcpyOp>(loc,
+                              /*asyncToken=*/Type(),
+                              /*asyncDependencies=*/ValueRange(),
+                              /*dst=*/to,
+                              /*src=*/from);
+      return mlir::success();
     };
 
     if (failed(mlir::bufferization::runOneShotBufferize(module, options))) {

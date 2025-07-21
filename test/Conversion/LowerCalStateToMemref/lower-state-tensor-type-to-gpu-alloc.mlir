@@ -1,4 +1,4 @@
-// RUN: cal-opt --lower-cal-state-to-memref="which-alloc=GPU_HOST_SHARED" %s | FileCheck %s
+// RUN: cal-opt --lower-cal-state-to-memref="which-alloc=GPU" %s | FileCheck %s
     
 %c0_f64 = arith.constant 0.0 : f64
 %c1_f64 = arith.constant 1.0 : f64
@@ -10,7 +10,7 @@
 %fill = linalg.fill ins(%c0_f64 : f64) outs(%accum_val : tensor<2x2xf64>) -> tensor<2x2xf64>
 cal.set(%accumulator: !cal.state_ref<tensor<2x2xf64>>, %fill: tensor<2x2xf64>)
 
-// CHECK: %memref = gpu.alloc  host_shared () : memref<2x2xf64>
+// CHECK: %memref = gpu.alloc () : memref<2x2xf64>
 // CHECK: %0 = bufferization.to_tensor %memref restrict : memref<2x2xf64> to tensor<2x2xf64>
 // CHECK: %1 = linalg.fill ins(%cst : f64) outs(%0 : tensor<2x2xf64>) -> tensor<2x2xf64>
 // CHECK: %2 = bufferization.to_memref %1 : tensor<2x2xf64> to memref<2x2xf64>

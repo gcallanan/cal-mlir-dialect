@@ -342,9 +342,58 @@ def Fifo_PrintOp : Fifo_Op<"print", []> {
 }
 
 def Fifo_PrintTensorOp : Fifo_Op<"print_tensor", []> {
-  let summary = "";
+  let summary = "Prints the contents of a tensor or memref in a readable matrix format.";
   let description = [{
-    
+    The `fifo.print_tensor` operation prints the contents of a tensor or memref
+    in a human-readable format. The operation handles tensors of arbitrary dimensions
+    by treating the last two dimensions as a matrix and printing index indicators
+    for higher dimensions.
+
+    **Printing Format:**
+    - **1D tensors**: Elements are printed in a single row with spaces between them.
+    - **2D tensors**: Elements are printed as a matrix with rows separated by newlines.
+    - **Higher-dimensional tensors**: For each slice of the outer dimensions, an index
+      indicator like "At index [0][][]:" is printed, followed by the 2D matrix representation
+      of the innermost dimensions.
+
+    **Type Support:**
+    - Supports both `tensor` and `memref` types.
+    - Automatically converts tensors to memrefs using bufferization for efficient access.
+    - Uses appropriate format specifiers based on element type ("%f" for floats, "%d" for integers).
+
+    **Examples:**
+
+    1D tensor:
+    ```
+    %vector = arith.constant dense<[1.0, 2.0, 3.0]> : tensor<3xf32>
+    fifo.print_tensor(%vector) : tensor<3xf32>
+    // Output: 1.000000 2.000000 3.000000
+    ```
+
+    2D tensor:
+    ```
+    %matrix = arith.constant dense<[[1.0, 2.0], [3.0, 4.0]]> : tensor<2x2xf32>
+    fifo.print_tensor(%matrix) : tensor<2x2xf32>
+    // Output: 
+    // 1.000000 2.000000
+    // 3.000000 4.000000
+    ```
+
+    3D tensor:
+    ```
+    %tensor3d = arith.constant dense<[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]> : tensor<2x2x2xf32>
+    fifo.print_tensor(%tensor3d) : tensor<2x2x2xf32>
+    // Output:
+    // At index [0][][]:
+    // 1.000000 2.000000
+    // 3.000000 4.000000
+    // At index [1][][]:
+    // 5.000000 6.000000
+    // 7.000000 8.000000
+    ```
+
+    **Note:** This operation is primarily intended for debugging and visualization purposes.
+    For production code, consider using more efficient I/O mechanisms.
   }];
 
   let arguments = (ins

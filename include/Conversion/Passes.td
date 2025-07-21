@@ -70,7 +70,7 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
 
   let options = [
     Option<"which_alloc", "which-alloc", "std::string", /*default=*/"\"HOST\"",
-           "Choose allocation target for tensor types: HOST | GPU_HOST_SHARED">,
+           "Choose allocation target for tensor types: HOST | GPU">,
   ];
 
   let dependentDialects = [

@@ -8,8 +8,8 @@ module {
     // Allocate two 2x2 tensors and fill them
     %tA = tensor.empty() : tensor<2x2xf32>
     %tB = tensor.empty() : tensor<2x2xf32>
-    // CHECK: %memref = gpu.alloc  host_shared () : memref<2x2xf32>
-    // CHECK: %memref_1 = gpu.alloc  host_shared () : memref<2x2xf32>
+    // CHECK: %memref = gpu.alloc () : memref<2x2xf32>
+    // CHECK: %memref_1 = gpu.alloc () : memref<2x2xf32>
     
     %A = linalg.fill ins(%c1 : f32) outs(%tA : tensor<2x2xf32>) -> tensor<2x2xf32>
     %B = linalg.fill ins(%c2 : f32) outs(%tB : tensor<2x2xf32>) -> tensor<2x2xf32>

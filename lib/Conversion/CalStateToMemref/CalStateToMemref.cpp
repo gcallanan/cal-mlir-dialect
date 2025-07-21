@@ -45,10 +45,8 @@ using namespace cal;
 //
 // Tensors can be allocated to different memory locations depending on the pass
 // option `which-alloc`. By default, tensors are allocated in host memory, but
-// if the option is set to `GPU_HOST_SHARED`, tensor allocations use the GPU
-// dialect's `gpu.alloc` operation with host-shared memory semantics. This
-// allows for flexible placement of tensor buffers for heterogeneous execution
-// environments.
+// if the option is set to `GPU`, tensor allocations use the GPU
+// dialect's `gpu.alloc` operation.
 //
 // Input (scalar):
 //   %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
@@ -97,12 +95,12 @@ private:
     if (allocLocation == AllocLocation::HOST || !isTensor) {
       auto allocOp = rewriter.create<memref::AllocOp>(loc, memrefType);
       rewriter.replaceOp(op, allocOp.getResult());
-    } else if (allocLocation == AllocLocation::GPU_HOST_SHARED) {
+    } else if (allocLocation == AllocLocation::GPU) {
       auto allocOp = rewriter.create<gpu::AllocOp>(
           loc, memrefType, /*asyncToken=*/Type(),
           /*asyncDependencies=*/ValueRange(),
           /*dynamicSizes=*/ValueRange(), /*symbolOperands=*/ValueRange(),
-          /*hostShared=*/true);
+          /*hostShared=*/false);
       rewriter.replaceOp(op, allocOp.getResult(0));
     } else {
       return rewriter.notifyMatchFailure(op, "Unknown AllocLocation");
@@ -214,7 +212,7 @@ private:
     if (mlir::isa<mlir::TensorType>(stateValue.getType())) {
       auto buffer = rewriter.create<bufferization::ToMemrefOp>(
           loc, stateRef.getType(), stateValue);
-      if (allocLocation == AllocLocation::GPU_HOST_SHARED) {
+      if (allocLocation == AllocLocation::GPU) {
         rewriter.create<gpu::MemcpyOp>(loc,
                                        /*asyncToken=*/Type(),
                                        /*asyncDependencies=*/ValueRange(),
@@ -345,12 +343,12 @@ public:
     AllocLocation allocLocation;
     if (which_alloc == "HOST") {
       allocLocation = AllocLocation::HOST;
-    } else if (which_alloc == "GPU_HOST_SHARED") {
-      allocLocation = AllocLocation::GPU_HOST_SHARED;
+    } else if (which_alloc == "GPU") {
+      allocLocation = AllocLocation::GPU;
     } else {
       mlir::emitError(mlir::UnknownLoc::get(&getContext()))
           << "Invalid allocation location: " << which_alloc
-          << ". Valid options are: HOST, GPU_HOST_SHARED";
+          << ". Valid options are: HOST, GPU";
       signalPassFailure();
       return;
     }

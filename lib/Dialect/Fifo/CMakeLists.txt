@@ -5,6 +5,7 @@ add_mlir_dialect_library(MLIRFifo
         FifoPassesConvertFifoToMemref.cpp
         FifoPassesDecomposeTuples.cpp
         FifoPassesLowerFifoPrintToLLVM.cpp
+        BufferizableOpInterfaceImpl.cpp
 
         ADDITIONAL_HEADER_DIRS
         ${PROJECT_SOURCE_DIR}/include/Fifo

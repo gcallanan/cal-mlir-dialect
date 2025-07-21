@@ -20,7 +20,6 @@ namespace fifo {
 // we get an error - I have not yet figured out why
 std::unique_ptr<mlir::Pass> createLowerFifoToMemrefPass();
 std::unique_ptr<mlir::Pass> decomposeFifoTuples();
-std::unique_ptr<mlir::Pass> lowerFifoPrintToLLVM();
 
 #define GEN_PASS_DECL
 #include "Dialect/Fifo/FifoPasses.h.inc"

@@ -30,6 +30,41 @@ func.func @main() -> i32 {
     // CHECK: 1.000000 2.000000 
     // CHECK: 3.000000 4.000000 
 
+    %row = arith.constant dense<[[5.0, 6.0, 7.0, 8.0]]> : tensor<1x4xf32>
+    %col = arith.constant dense<[[9.0], [10.0], [11.0], [12.0]]> : tensor<4x1xf32>
+    fifo.print("Row\n")
+    fifo.print_tensor(%row) : tensor<1x4xf32>
+    fifo.print("Column\n")
+    fifo.print_tensor(%col) : tensor<4x1xf32>
+    // CHECK: Row
+    // CHECK: 5.000000 6.000000 7.000000 8.000000 
+    // CHECK: Column
+    // CHECK: 9.000000 
+    // CHECK: 10.000000 
+    // CHECK: 11.000000 
+    // CHECK: 12.000000 
+
+    %vals3d = arith.constant dense<[
+      [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+      [[10.0, 11.0, 12.0], [13.0, 14.0, 15.0], [16.0, 17.0, 18.0]],
+      [[19.0, 20.0, 21.0], [22.0, 23.0, 24.0], [25.0, 26.0, 27.0]]
+    ]> : tensor<3x3x3xf32>
+    fifo.print("3x3x3 matrix:\n")
+    fifo.print_tensor(%vals3d) : tensor<3x3x3xf32>
+    // CHECK: 3x3x3 matrix:
+    // CHECK: At index [0][][]:
+    // CHECK: 1.000000 2.000000 3.000000 
+    // CHECK: 4.000000 5.000000 6.000000 
+    // CHECK: 7.000000 8.000000 9.000000 
+    // CHECK: At index [1][][]:
+    // CHECK: 10.000000 11.000000 12.000000 
+    // CHECK: 13.000000 14.000000 15.000000 
+    // CHECK: 16.000000 17.000000 18.000000 
+    // CHECK: At index [2][][]:
+    // CHECK: 19.000000 20.000000 21.000000 
+    // CHECK: 22.000000 23.000000 24.000000 
+    // CHECK: 25.000000 26.000000 27.000000 
+
 
     func.return %constant0 : i32
 }

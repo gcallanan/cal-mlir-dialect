@@ -13,7 +13,7 @@ namespace mlir {
 
 enum class AllocLocation {
   HOST,
-  GPU_HOST_SHARED
+  GPU
 };
 
 #define GEN_PASS_REGISTRATION

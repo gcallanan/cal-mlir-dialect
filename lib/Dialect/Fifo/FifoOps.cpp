@@ -140,3 +140,11 @@ LogicalResult SpaceOp::verify() {
 
   return success();
 }
+
+LogicalResult PrintTensorOp::verify() {
+  Type tensorType = getTensor().getType();
+  if (!mlir::isa<TensorType>(tensorType) && !mlir::isa<MemRefType>(tensorType)) {
+    return emitOpError() << "expected tensor to be of type TensorType or MemRefType, but got " << tensorType;
+  }
+  return success();
+}

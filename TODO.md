@@ -5,3 +5,4 @@ The following is a list of outstanding tasks:
 4. Most of the passes defined have a constructor defined:
     let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";
 This is not necessary, and can be removed in all these classes. The names may change slightly. 
+5. The LowerFifoPrintToLLVM pass relies on a flag being passed to it which states if the memref is located on the host or the device. It would be nice if it could infer this
