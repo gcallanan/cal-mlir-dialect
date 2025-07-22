@@ -2,8 +2,6 @@ add_mlir_dialect_library(MLIRFifo
         FifoTypes.cpp
         FifoDialect.cpp
         FifoOps.cpp
-        FifoPassesConvertFifoToMemref.cpp
-        FifoPassesDecomposeTuples.cpp
         FifoPassesLowerFifoPrintToLLVM.cpp
         BufferizableOpInterfaceImpl.cpp
 

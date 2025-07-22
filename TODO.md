@@ -1,8 +1,8 @@
 The following is a list of outstanding tasks:
-1. Move transformation passes. Currently transformation passes are in the Dialect/"Dialect Name"/ directory. We have created a Conversion/"Conversion Sub Directory"/ where some passes are, but we need to move the rest there.
 2. Define the cal.network properly. Currently only one cal.network operand is supported per program. It does not allow for input or output or for the composition of subnetworks. This whole operation needs to be reworked.
 3. In cal-opt.cpp, we have defined all our pipelines, they should be defined in their own file. Currently it just takes a long time to build and link every time we modify a pipeline and its not very good modulatrisation in general.
 4. Most of the passes defined have a constructor defined:
     let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";
 This is not necessary, and can be removed in all these classes. The names may change slightly. 
-5. The LowerFifoPrintToLLVM pass relies on a flag being passed to it which states if the memref is located on the host or the device. It would be nice if it could infer this
+5. The LowerFifoPrintToLLVM pass relies on a flag being passed to it which states if the memref is located on the host or the device. It would be nice if it could infer this. Next point gives more information about this.
+6. Currently, all memrefs types do not encode information about which device they are on. All memrefs are memref<2x2xi32> where it would be better if we were more explicit: memref<2x2xi32, #gpu.address_space<global>>. This allows other ops to locate where the memref they are working on is. I managed to make all the logic in place to do this, but then I could not get the MLIR GPU pipelines to work with this. To change this, you would need to make changes to GPUAwareBufferize.cpp, CalStateToMemref.cpp, ConvertFifoToMemref. Then update the LowerFifoPrintToLLVM pass to account for this when transforming the fifo.print_tensor operation.

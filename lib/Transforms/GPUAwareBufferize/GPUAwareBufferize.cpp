@@ -46,10 +46,10 @@ public:
     mlir::bufferization::OneShotBufferizationOptions options;
     options.bufferizeFunctionBoundaries = true;
 
-    // Configure default memory space (GPU = 1)
     // options.defaultMemorySpaceFn =
-    //     [](mlir::TensorType t) -> std::optional<mlir::Attribute> {
-    //   return mlir::IntegerAttr::get(mlir::IndexType::get(t.getContext()), 1);
+    //     [](mlir::TensorType tensorType) -> std::optional<mlir::Attribute> {
+    //   return mlir::gpu::AddressSpaceAttr::get(tensorType.getContext(),
+    //                                           mlir::gpu::AddressSpace::Global);
     // };
 
     // Create GPU allocation
@@ -57,12 +57,15 @@ public:
         [&](mlir::OpBuilder &b, mlir::Location loc, mlir::MemRefType type,
             mlir::ValueRange dynShape,
             unsigned alignment) -> mlir::FailureOr<mlir::Value> {
-      // if (type.getMemorySpaceAsInt() == 1) {
-        auto allocOp = b.create<mlir::gpu::AllocOp>(loc, type, dynShape);
-        allocOp.setHostShared(false);
-        return allocOp.getResult(0);
+      // Check if this is a GPU address space
+      // if (auto addrSpace = dyn_cast_or_null<mlir::gpu::AddressSpaceAttr>(type.getMemorySpace())) {
+      //   if (addrSpace.getValue() == mlir::gpu::AddressSpace::Global) {
+          auto allocOp = b.create<mlir::gpu::AllocOp>(loc, type, dynShape);
+          allocOp.setHostShared(false);
+          return allocOp.getResult(0);
+      //   }
       // }
-      // return b.create<mlir::memref::AllocOp>(loc, type, dynShape);
+      // return b.create<mlir::memref::AllocOp>(loc, type, dynShape).getResult();
     };
 
     // Simple copy function

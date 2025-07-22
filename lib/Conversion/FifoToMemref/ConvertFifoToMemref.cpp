@@ -10,6 +10,7 @@
 // Disclaimer - I have wrote the code myself but used ChatGPT to generate
 // top level comments describing each class with the hope that it will make
 // the code easier to understand.
+#include "Conversion/FifoToMemref/ConvertFifoToMemref.h"
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
@@ -31,9 +32,11 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include <iostream>
 
-namespace mlir::fifo {
+namespace mlir {
 #define GEN_PASS_DEF_LOWERFIFOTOMEMREFPASS
-#include "Dialect/Fifo/FifoPasses.h.inc"
+#include "Conversion/Passes.h.inc"
+
+using namespace fifo;
 
 /// Creates a MemRef type for FIFO data storage by prepending a buffer size
 /// dimension to the element type. Handles MemRef, Tensor, and scalar element
@@ -989,12 +992,4 @@ public:
   }
 };
 
-} // namespace mlir::fifo
-
-// Creates and returns a new instance of the LowerFifoToMemrefPass.
-// This pass is responsible for lowering operations in the FIFO dialect to
-// equivalent operations in the MemRef dialect, enabling further optimizations
-// and transformations that work on the MemRef data model.
-std::unique_ptr<mlir::Pass> mlir::fifo::createLowerFifoToMemrefPass() {
-  return std::make_unique<mlir::fifo::LowerFifoToMemrefPass>();
-}
+} // namespace mlir

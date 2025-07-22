@@ -85,6 +85,10 @@ private:
     if (auto tensorType = stateType.dyn_cast<TensorType>()) {
       memrefType =
           MemRefType::get(tensorType.getShape(), tensorType.getElementType());
+          // MemRefType::get(
+          // tensorType.getShape(), tensorType.getElementType(), {},
+          // mlir::gpu::AddressSpaceAttr::get(t.getContext(),
+          //                                  mlir::gpu::AddressSpace::Global));
       isTensor = true;
     } else if (auto memrefTy = stateType.dyn_cast<MemRefType>()) {
       memrefType = memrefTy;

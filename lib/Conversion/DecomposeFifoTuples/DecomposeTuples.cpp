@@ -19,7 +19,7 @@
 // Disclaimer - I wrote the code myself but used ChatGPT to generate
 // top level comments describing each class.
 //===----------------------------------------------------------------------===//
-
+#include "Conversion/DecomposeFifoTuples/DecomposeFifoTuples.h"
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Fifo/FifoDialect.h"
@@ -39,9 +39,11 @@
 #include "mlir/Transforms/OneToNTypeConversion.h"
 #include <iostream>
 
-namespace mlir::fifo {
+namespace mlir {
 #define GEN_PASS_DEF_DECOMPOSEFIFOTUPLES
-#include "Dialect/Fifo/FifoPasses.h.inc"
+#include "Conversion/Passes.h.inc"
+
+using namespace fifo;
 
 class ConvertMakeTuple : public OneToNOpConversionPattern<MakeTuple> {
 public:
@@ -278,8 +280,4 @@ public:
   }
 };
 
-} // namespace mlir::fifo
-
-std::unique_ptr<mlir::Pass> mlir::fifo::decomposeFifoTuples() {
-  return std::make_unique<mlir::fifo::DecomposeFifoTuplesPass>();
-}
+} // namespace mlir
