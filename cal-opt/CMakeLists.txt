@@ -11,6 +11,12 @@ set(LIBS
 add_llvm_executable(cal-opt cal-opt.cpp)
 
 llvm_update_compile_flags(cal-opt)
-target_link_libraries(cal-opt PRIVATE ${LIBS})
+target_link_libraries(cal-opt
+        PRIVATE
+        MLIRGPUToLLVMIRTranslation
+        MLIRLLVMToLLVMIRTranslation
+        MLIRNVVMToLLVMIRTranslation
+        ${LIBS}
+        )
 
 mlir_check_all_link_libraries(cal-opt)

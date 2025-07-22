@@ -9,6 +9,7 @@
 // MLIR Core
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
+#include "mlir/InitAllExtensions.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -25,6 +26,7 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 
 // MLIR Dialect Transforms
+#include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
 #include "mlir/Dialect/Arith/Transforms/BufferViewFlowOpInterfaceImpl.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
@@ -37,7 +39,8 @@
 #include "mlir/Dialect/SCF/Transforms/BufferDeallocationOpInterfaceImpl.h"
 #include "mlir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
-#include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
+#include "mlir/Target/LLVMIR/Dialect/GPU/GPUToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 
 // Project-specific dialects
 #include "Dialect/Cal/CalDialect.h"
@@ -77,26 +80,46 @@ int main(int argc, char **argv) {
   // We need this to be able to run the --buffer-deallocation pass which can
   // automatically insert deallocation operations
   mlir::memref::registerAllocationOpInterfaceExternalModels(registry);
+  mlir::registerGpuDeallocInterface(registry);
+  mlir::arith::registerBufferDeallocationOpInterfaceExternalModels(registry);
+  mlir::cf::registerBufferDeallocationOpInterfaceExternalModels(registry);
+  mlir::scf::registerBufferDeallocationOpInterfaceExternalModels(registry);
 
   // These were all the things we needed to register to get bufferisation
   // working with the Cal dialect. Bufferisztion converts tensor types to memref
   // types which we need to get the linalg dialect to work properly.
-  mlir::arith::registerBufferDeallocationOpInterfaceExternalModels(registry);
   mlir::arith::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::arith::registerBufferViewFlowOpInterfaceExternalModels(registry);
   mlir::arith::registerValueBoundsOpInterfaceExternalModels(registry);
-  mlir::scf::registerBufferDeallocationOpInterfaceExternalModels(registry);
   mlir::scf::registerBufferizableOpInterfaceExternalModels(registry);
-  mlir::cf::registerBufferDeallocationOpInterfaceExternalModels(registry);
   mlir::cf::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::linalg::registerAllDialectInterfaceImplementations(registry);
   mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
       registry);
-
-  mlir::registerGpuDeallocInterface(registry);
-
   mlir::fifo::registerBufferizableOpInterfaceExternalModels(registry);
+
+  // This was needed by the pipeline created in
+  // the registerLowerCalToLLVMWithGPUTensorsPipeline(...)
+  mlir::arith::registerConvertArithToLLVMInterface(registry);
+  mlir::registerConvertComplexToLLVMInterface(registry);
+  mlir::cf::registerConvertControlFlowToLLVMInterface(registry);
+  // mlir::func::registerAllExtensions(registry);
+  // mlir::tensor::registerAllExtensions(registry);
+  mlir::registerConvertFuncToLLVMInterface(registry);
+  mlir::index::registerConvertIndexToLLVMInterface(registry);
+  mlir::registerConvertMathToLLVMInterface(registry);
+  mlir::registerConvertMemRefToLLVMInterface(registry);
+  mlir::registerConvertNVVMToLLVMInterface(registry);
+  // mlir::registerConvertOpenMPToLLVMInterface(registry);
+  mlir::ub::registerConvertUBToLLVMInterface(registry);
+  // mlir::registerConvertAMXToLLVMInterface(registry);
+  mlir::gpu::registerConvertGpuToLLVMInterface(registry);
+  mlir::NVVM::registerConvertGpuToNVVMInterface(registry);
+  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
+  mlir::registerGPUDialectTranslation(registry);
+  mlir::registerLLVMDialectTranslation(registry);
+  mlir::registerNVVMDialectTranslation(registry);
 
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that
@@ -312,7 +335,8 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
         pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
         pm.addPass(mlir::fifo::decomposeFifoTuples());
         mlir::fifo::LowerFifoPrintToLLVMOptions printOptions;
-        printOptions.tensors_on_gpu = true; // We want to lower the prints to GPU
+        printOptions.tensors_on_gpu =
+            true; // We want to lower the prints to GPU
         pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM(printOptions));
 
         pm.addPass(mlir::createGpuAwareBufferizePass());
@@ -331,52 +355,11 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
         pm.addPass(mlir::createCSEPass());
         pm.addPass(mlir::createGpuAsyncRegionPass());
 
-        // mlir::gpu::GPUToNVVMPipelineOptions nvvmOptions;
-        // nvvmOptions.cubinChip = "sm_75";
-        // nvvmOptions.optLevel = 3;
-        // // nvvmOptions.kernelUseBarePtrCallConv = true;
-        // // nvvmOptions.hostUseBarePtrCallConv = true;
-        // mlir::gpu::buildLowerToNVVMPassPipeline(pm, nvvmOptions);
-
-        // // 2. Standard MLIR to LLVM lowering:
-        // //    The following passes lower various MLIR dialects to LLVM.
-        // //    (The ordering and combination of these passes follow similar
-        // //    pipelines
-        // //     as in the LLVM project, for example in TestLowertoLLVM.cpp.)
-
-        // // pm.addNestedPass<func::FuncOp>(createConvertVectorToSCFPass());
-        // // // Blanket-convert any remaining linalg ops to loops if any
-        // remain.
-        // // pm.addNestedPass<func::FuncOp>(createConvertLinalgToLoopsPass());
-        // // // Blanket-convert any remaining affine ops if any remain.
-        // // pm.addPass(createLowerAffinePass());
-        // // Convert SCF to CF (always needed).
-        // pm.addPass(mlir::createConvertSCFToCFPass());
-        // // Sprinkle some cleanups.
-        // pm.addPass(mlir::createCanonicalizerPass());
-        // pm.addPass(mlir::createCSEPass());
-        // // Convert vector to LLVM (always needed).
-        // // pm.addPass(createConvertVectorToLLVMPass(
-        // //     // TODO: add more options on a per-need basis.
-        // // ConvertVectorToLLVMPassOptions{options.reassociateFPReductions}));
-        // // // Convert Math to LLVM (always needed).
-        // pm.addNestedPass<mlir::func::FuncOp>(
-        //     mlir::createConvertMathToLLVMPass());
-        // // Expand complicated MemRef operations before lowering them.
-        // pm.addPass(mlir::memref::createExpandStridedMetadataPass());
-        // // // The expansion may create affine expressions. Get rid of them.
-        // pm.addPass(mlir::createLowerAffinePass());
-        // // // Convert MemRef to LLVM (always needed).
-        // pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
-        // // // Convert Func to LLVM (always needed).
-        // pm.addPass(mlir::createConvertFuncToLLVMPass());
-        // // // Convert Arith to LLVM (always needed).
-        // pm.addPass(mlir::createArithToLLVMConversionPass());
-        // // // Convert CF to LLVM (always needed).
-        // pm.addPass(mlir::createConvertControlFlowToLLVMPass());
-        // // // Convert Index to LLVM (always needed).
-        // pm.addPass(mlir::createConvertIndexToLLVMPass());
-        // // // Convert remaining unrealized_casts (always needed).
-        // pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+        mlir::gpu::GPUToNVVMPipelineOptions nvvmOptions;
+        nvvmOptions.cubinChip = "sm_75";
+        nvvmOptions.optLevel = 3;
+        // nvvmOptions.kernelUseBarePtrCallConv = true;
+        // nvvmOptions.hostUseBarePtrCallConv = true;
+        mlir::gpu::buildLowerToNVVMPassPipeline(pm, nvvmOptions);
       });
 }
