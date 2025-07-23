@@ -75,7 +75,7 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
 
   let dependentDialects = [
     "cal::CalDialect",
-    "mlir::gpu::GPUDialect",
+    "gpu::GPUDialect",
     "index::IndexDialect",
     "arith::ArithDialect",
     "memref::MemRefDialect",
@@ -160,12 +160,17 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
+  let options = [
+    Option<"which_alloc", "which-alloc", "std::string", /*default=*/"\"HOST\"",
+           "Choose allocation target for tensor types: HOST | GPU">,
+  ];
   let dependentDialects = [
     "memref::MemRefDialect",
     "index::IndexDialect",
     "arith::ArithDialect",
     "fifo::FifoDialect",
     "tensor::TensorDialect",
+    "gpu::GPUDialect",
     "bufferization::BufferizationDialect"
   ];
 }

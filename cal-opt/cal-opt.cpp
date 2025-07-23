@@ -94,6 +94,8 @@ int main(int argc, char **argv) {
   mlir::scf::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::cf::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::tensor::registerValueBoundsOpInterfaceExternalModels(registry);
+  mlir::tensor::registerInferTypeOpInterfaceExternalModels(registry);
   mlir::linalg::registerAllDialectInterfaceImplementations(registry);
   mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
       registry);
@@ -173,8 +175,8 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
         pm.addPass(mlir::createLowerCalStateToMemref());
-        pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
-        pm.addPass(mlir::fifo::decomposeFifoTuples());
+        pm.addPass(mlir::createLowerFifoToMemrefPass());
+        pm.addPass(mlir::createDecomposeFifoTuples());
         pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
         mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
@@ -252,8 +254,8 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
         pm.addPass(mlir::createLowerCalStateToMemref());
-        pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
-        pm.addPass(mlir::fifo::decomposeFifoTuples());
+        pm.addPass(mlir::createLowerFifoToMemrefPass());
+        pm.addPass(mlir::createDecomposeFifoTuples());
         pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
         // 2. We need to add deallocation operations. However the
@@ -332,8 +334,10 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
         mlir::LowerCalStateToMemrefOptions stateOptions;
         stateOptions.which_alloc = std::string("GPU");
         pm.addPass(mlir::createLowerCalStateToMemref(stateOptions));
-        pm.addPass(mlir::fifo::createLowerFifoToMemrefPass());
-        pm.addPass(mlir::fifo::decomposeFifoTuples());
+        mlir::LowerFifoToMemrefPassOptions fifoOptions;
+        fifoOptions.which_alloc = std::string("GPU");
+        pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
+        pm.addPass(mlir::createDecomposeFifoTuples());
         mlir::fifo::LowerFifoPrintToLLVMOptions printOptions;
         printOptions.tensors_on_gpu =
             true; // We want to lower the prints to GPU
@@ -354,6 +358,10 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
         pm.addPass(mlir::createGpuKernelOutliningPass());
         pm.addPass(mlir::createCSEPass());
         pm.addPass(mlir::createGpuAsyncRegionPass());
+
+        // pm.addPass(mlir::memref::createExpandStridedMetadataPass());
+        // pm.addPass(mlir::createLowerAffinePass());
+        // pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
 
         mlir::gpu::GPUToNVVMPipelineOptions nvvmOptions;
         nvvmOptions.cubinChip = "sm_75";

@@ -1,5 +1,8 @@
 source venv/bin/activate
 
+set -e
+rm -f example main.ll main.opt.ll main.o main_executable_from_mlir actual_results.txt plot-mlir-results.png
+
 O=0
 while getopts O: flag
 do

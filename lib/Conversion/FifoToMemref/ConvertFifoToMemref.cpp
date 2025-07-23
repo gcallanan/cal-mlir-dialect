@@ -11,6 +11,7 @@
 // top level comments describing each class with the hope that it will make
 // the code easier to understand.
 #include "Conversion/FifoToMemref/ConvertFifoToMemref.h"
+#include "Conversion/Passes.h"
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
@@ -22,6 +23,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -116,7 +118,12 @@ static MemRefType createFifoDataMemRefType(mlir::Type elementType,
 //     memref.store %c0_i32, %alloc_0[%c0] : memref<2xi32>
 //     memref.store %c0_i32, %alloc_0[%c1] : memref<2xi32>
 class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
-  using OpConversionPattern<CreateOp>::OpConversionPattern;
+public:
+  ConvertFifoCreateOpToMemref(MLIRContext *context, AllocLocation allocLocation)
+      : OpConversionPattern<CreateOp>(context), allocLocation(allocLocation) {}
+
+private:
+  AllocLocation allocLocation;
 
   LogicalResult
   matchAndRewrite(CreateOp op, OpAdaptor adaptor,
@@ -129,7 +136,21 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
 
     // 1. Allocate the data memref
     auto memRefType_data = createFifoDataMemRefType(elementType, bufferSize);
-    auto alloc_data = rewriter.create<memref::AllocOp>(loc, memRefType_data);
+    Value allocDataValue;
+    if (mlir::isa<mlir::TensorType>(elementType) &&
+        allocLocation == AllocLocation::GPU) {
+      // If the element type is a tensor and location is GPU, we need to
+      // allocate the tensor using gpu.alloc.
+      auto alloc_data = rewriter.create<gpu::AllocOp>(
+          loc, memRefType_data, /*asyncToken=*/Type(),
+          /*asyncDependencies=*/ValueRange(),
+          /*dynamicSizes=*/ValueRange(), /*symbolOperands=*/ValueRange(),
+          /*hostShared=*/false);
+      allocDataValue = alloc_data.getResult(0);
+    } else {
+      auto alloc_data = rewriter.create<memref::AllocOp>(loc, memRefType_data);
+      allocDataValue = alloc_data.getResult();
+    }
 
     // 2. Allocate the metadata memref and zero its elements
     auto memRefType_metadata = MemRefType::get(2, rewriter.getI32Type());
@@ -146,7 +167,7 @@ class ConvertFifoCreateOpToMemref : public OpConversionPattern<CreateOp> {
         getContext(), {memRefType_data, memRefType_metadata, i32Type});
     auto make_tuple_op = rewriter.create<fifo::MakeTuple>(
         loc, tupleType,
-        ValueRange{alloc_data.getResult(), alloc_metadata.getResult(),
+        ValueRange{allocDataValue, alloc_metadata.getResult(),
                    bufferSizeConstant.getResult()});
 
     // 5. Create a tuple type to hold the data and metadata memrefs as well as
@@ -321,8 +342,11 @@ class ConvertFifoPopToMemref : public OpConversionPattern<Pop> {
 /// - src: The source memref/tensor value to copy from.
 /// - dstIndex: The index in the FIFO data buffer to copy to (index-typed).
 /// - fifoDataMemref: The FIFO data memref to copy into.
+/// - copyToGpu: If true, uses GPU-specific operations for copying (default is
+///   false).
 static void copyMemrefToFifo(PatternRewriter &rewriter, Location loc, Value src,
-                             Value dstIndex, Value fifoDataMemref) {
+                             Value dstIndex, Value fifoDataMemref,
+                             bool copyToGpu = false) {
   auto srcType = mlir::cast<MemRefType>(src.getType());
   auto dstType = mlir::cast<MemRefType>(fifoDataMemref.getType());
 
@@ -378,7 +402,16 @@ static void copyMemrefToFifo(PatternRewriter &rewriter, Location loc, Value src,
       loc, subview.getResult(), reassociation);
 
   // 5. Copy the source memref into the reshaped subview
-  rewriter.create<memref::CopyOp>(loc, src, reshapedSubview);
+  if (copyToGpu) {
+    // If copying to GPU, use gpu.copy
+    rewriter.create<gpu::MemcpyOp>(loc,
+                                       /*asyncToken=*/Type(),
+                                       /*asyncDependencies=*/ValueRange(),
+                                       /*dst=*/reshapedSubview,
+                                       /*src=*/src);
+  } else {
+    rewriter.create<memref::CopyOp>(loc, src, reshapedSubview);
+  }
 }
 
 // This transformation converts a `fifo.push` operation into a series of
@@ -421,7 +454,12 @@ static void copyMemrefToFifo(PatternRewriter &rewriter, Location loc, Value src,
 //   %7 = arith.remsi %6, %3 : i32
 //   memref.store %7, %2[%c1_1] : memref<2xi32>
 class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
-  using OpConversionPattern<Push>::OpConversionPattern;
+public:
+  ConvertFifoPushToMemref(MLIRContext *context, AllocLocation allocLocation)
+      : OpConversionPattern<Push>(context), allocLocation(allocLocation) {}
+
+private:
+  AllocLocation allocLocation;
 
   LogicalResult
   matchAndRewrite(Push op, OpAdaptor adaptor,
@@ -456,10 +494,13 @@ class ConvertFifoPushToMemref : public OpConversionPattern<Push> {
                                 tensorType.getElementType()),
           token);
 
-      copyMemrefToFifo(rewriter, loc, bufferizedToken, writeIndex, dataMemref);
+      bool copyToGpu = allocLocation == AllocLocation::GPU;
+      copyMemrefToFifo(rewriter, loc, bufferizedToken, writeIndex, dataMemref,
+                       copyToGpu);
 
     } else if (auto memrefType = mlir::dyn_cast<mlir::MemRefType>(tokenType)) {
-      copyMemrefToFifo(rewriter, loc, token, writeIndex, dataMemref);
+      bool copyToGpu = allocLocation == AllocLocation::GPU;
+      copyMemrefToFifo(rewriter, loc, token, writeIndex, dataMemref, copyToGpu);
     } else {
       rewriter.create<memref::StoreOp>(loc, token, dataMemref, writeIndex);
     }
@@ -924,10 +965,26 @@ public:
 class LowerFifoToMemrefPass
     : public impl::LowerFifoToMemrefPassBase<LowerFifoToMemrefPass> {
 public:
-  // using impl::LowerFifoToMemrefPassBase<
-  //  LowerFifoToMemrefPass>::LowerFifoToMemrefPassBase;
+  LowerFifoToMemrefPass(const LowerFifoToMemrefPassOptions &options)
+      : impl::LowerFifoToMemrefPassBase<LowerFifoToMemrefPass>(options) {}
+
+  LowerFifoToMemrefPass() {}
+
   void runOnOperation() final {
     ConversionTarget target(getContext());
+
+    AllocLocation allocLocation;
+    if (which_alloc == "HOST") {
+      allocLocation = AllocLocation::HOST;
+    } else if (which_alloc == "GPU") {
+      allocLocation = AllocLocation::GPU;
+    } else {
+      mlir::emitError(mlir::UnknownLoc::get(&getContext()))
+          << "Invalid allocation location: " << which_alloc
+          << ". Valid options are: HOST, GPU";
+      signalPassFailure();
+      return;
+    }
 
     TypeConverter typeConverter;
     populateFifoTypeConverterDynamic(typeConverter, &getContext());
@@ -936,8 +993,8 @@ public:
     patterns.add<ConvertFifoSizeOpToMemref>(&getContext());
     patterns.add<ConvertFifoSpaceOpToMemref>(&getContext());
     patterns.add<ConvertFifoPopToMemref>(&getContext());
-    patterns.add<ConvertFifoPushToMemref>(&getContext());
-    patterns.add<ConvertFifoCreateOpToMemref>(&getContext());
+    patterns.add<ConvertFifoPushToMemref>(&getContext(), allocLocation);
+    patterns.add<ConvertFifoCreateOpToMemref>(&getContext(), allocLocation);
     patterns.add<ConvertFifoPeekToMemref>(&getContext());
     patterns.add<ConvertCalActorArguments>(&getContext(), typeConverter);
     patterns.add<ConvertCalCreateInstanceOperands>(&getContext(),
@@ -955,7 +1012,8 @@ public:
                       fifo::PrintTensorOp>();
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
                            arith::ArithDialect, tensor::TensorDialect,
-                           bufferization::BufferizationDialect>();
+                           bufferization::BufferizationDialect,
+                           gpu::GPUDialect>();
 
     // Ensure that func.func and func.call operations can handle the new
     // types after the typeConverter has been applied.

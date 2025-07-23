@@ -4,9 +4,18 @@
 # Clone the LLVM project with the specified release tag (includes MLIR)
 git clone --branch llvmorg-20.1.0 https://github.com/llvm/llvm-project.git
 
+# Apply patches as needed
+cd llvm-project
+
+if git apply --check ../patches/gpu-memcpy-fix.patch; then
+  git apply ../patches/gpu-memcpy-fix.patch
+else
+  echo "Patch already applied."
+fi
+
 # Create and navigate to the build directory
-mkdir llvm-project/build
-cd llvm-project/build
+mkdir -f build
+cd build
 
 # Optional: Enable GPU support via CUDA runner
 CUDA_RUNNER=OFF

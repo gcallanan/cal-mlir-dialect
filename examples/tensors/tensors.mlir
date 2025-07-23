@@ -69,13 +69,7 @@ cal.actor @src(%max_tokens_to_send: i32)
         %c1_index = arith.constant 1 : index
         %c2_index = arith.constant 2 : index
         fifo.print("src: Sending Tensor\0A\00")
-        scf.for %i = %c0_index to %c2_index step %c1_index {
-          scf.for %j = %c0_index to %c2_index step %c1_index {
-            %elem = tensor.extract %tensor_to_send[%i, %j] : tensor<2x2xi32>
-            fifo.print("[%d] \00", %elem) : (i32)
-          }
-          fifo.print("\0A\00")
-        }
+        fifo.print_tensor(%tensor_to_send) : tensor<2x2xi32>
         fifo.print("\0A\00")
         
         // Send the tensor through the FIFO
@@ -113,13 +107,7 @@ cal.actor @accumulator()
         %c1_index = arith.constant 1 : index
         %c2_index = arith.constant 2 : index
         fifo.print("accumulator: Received Tensor\0A\00")
-        scf.for %i = %c0_index to %c2_index step %c1_index {
-            scf.for %j = %c0_index to %c2_index step %c1_index {
-                %elem = tensor.extract %tensor_sum[%i, %j] : tensor<2x2xi32>
-                fifo.print("[%d] \00", %elem) : (i32)
-            }
-            fifo.print("\0A\00")
-        }
+        fifo.print_tensor(%token_tensor) : tensor<2x2xi32>
         fifo.print("\0A\00")
 
         // Update the accumulator state with the new sum
