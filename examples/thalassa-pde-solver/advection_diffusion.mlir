@@ -16,16 +16,7 @@ cal.actor @merge()
     cal.set(%s: !cal.state_ref<i32>, %zzero: i32)
     cal.action priority=1 {
         %token = fifo.pop(%ic: !fifo.output_port<tensor<1x1000000xf64>>) : tensor<1x1000000xf64>
-        %2 = arith.constant 0 : index
-        %3 = arith.constant 1 : index
-        %4 = arith.constant 1000000 : index
-        %5 = arith.constant 1 : index
-        scf.for %6 = %2 to %5 step %3 {
-        scf.for %7 = %2 to %4 step %3 {
-            %elem = tensor.extract %token[%6, %7] : tensor<1x1000000xf64>
-            fifo.print("%f \00", %elem) : (f64)
-        }
-        }
+        fifo.print_tensor(%token) : tensor<1x1000000xf64>
         fifo.push(%out: !fifo.input_port<tensor<1x1000000xf64>>, %token: tensor<1x1000000xf64>)
     }
     cal.action priority=0 {
@@ -43,16 +34,7 @@ cal.actor @merge()
         %limit = arith.constant 400 : i32
         %8 = arith.cmpi eq, %s_loc_p1, %limit : i32
         scf.if %8 {
-            %9 = arith.constant 0 : index
-            %10 = arith.constant 1 : index
-            %11 = arith.constant 1000000 : index
-            %12 = arith.constant 1 : index
-            scf.for %13 = %9 to %12 step %10 {
-            scf.for %14 = %9 to %11 step %10 {
-                %elem = tensor.extract %token[%13, %14] : tensor<1x1000000xf64>
-                fifo.print("%f \00", %elem) : (f64)
-            }
-            }
+            fifo.print_tensor(%token) : tensor<1x1000000xf64>
         }
         fifo.push(%out: !fifo.input_port<tensor<1x1000000xf64>>, %token: tensor<1x1000000xf64>)
     }

@@ -4,10 +4,12 @@ set -e
 rm -f example main.ll main.opt.ll main.o main_executable_from_mlir actual_results.txt plot-mlir-results.png
 
 O=0
-while getopts O: flag
+GPU=false
+while getopts O:g flag
 do
     case "${flag}" in
         O) O=${OPTARG};; # Optimization level
+        g) GPU=true;;
     esac
 done
 
@@ -18,10 +20,15 @@ python advection_diffusion_example.py
 echo "Step 2: Compile the generated MLIR code to LLVM IR and then to an executable"
 echo "   Optimization level: ${O}"
 
-cal-opt --lower-cal-to-llvm advection_diffusion.mlir | cal-translate --mlir-to-llvmir > main.ll
-opt -O$O main.ll -o main.opt.ll
-llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
-clang main.o -o main_executable_from_mlir -lm
+if [ "$GPU" = false ]; then
+    cal-opt --lower-cal-to-llvm advection_diffusion.mlir | cal-translate --mlir-to-llvmir > main.ll
+    opt -O$O main.ll -o main.opt.ll
+    llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
+    clang main.o -o main_executable_from_mlir -lm
+else
+    cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors | cal-translate --mlir-to-llvmir > main.ll
+    clang++  main.ll -o main_executable_from_mlir  -lmlir_cuda_runtime -L../../llvm-project/build/lib
+fi
 
 echo "Step 3: Run the executable"
 echo "    This will take a few seconds..."
