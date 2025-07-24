@@ -5,6 +5,7 @@
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Transforms/GPUAwareBufferize/GPUAwareBufferize.h"
+#include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
 
 namespace mlir {
 

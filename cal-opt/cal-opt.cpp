@@ -52,6 +52,7 @@
 #include "Conversion/Passes.h"
 #include "Dialect/Fifo/BufferizableOpInterfaceImpl.h"
 #include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
+#include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
 #include "Transforms/Passes.h"
 
 void registerLowerCalToLLVMPipeline();
@@ -343,6 +344,7 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
             true; // We want to lower the prints to GPU
         pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM(printOptions));
 
+        pm.addPass(mlir::createDenseConstantsToGpuPass());
         pm.addPass(mlir::createGpuAwareBufferizePass());
 
         pm.addPass(mlir::createCanonicalizerPass());
@@ -352,7 +354,6 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
         pm.addPass(mlir::createCanonicalizerPass());
 
         // 2. Now we start the GPU-specific lowering
-
         pm.addPass(mlir::createGpuMapParallelLoopsPass());
         pm.addPass(mlir::createParallelLoopToGpuPass());
         pm.addPass(mlir::createGpuKernelOutliningPass());

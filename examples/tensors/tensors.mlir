@@ -65,9 +65,6 @@ cal.actor @src(%max_tokens_to_send: i32)
         
         
         // Print the tensor contents for debugging (pretty-print as a matrix)
-        %c0_index = arith.constant 0 : index
-        %c1_index = arith.constant 1 : index
-        %c2_index = arith.constant 2 : index
         fifo.print("src: Sending Tensor\0A\00")
         fifo.print_tensor(%tensor_to_send) : tensor<2x2xi32>
         fifo.print("\0A\00")
@@ -86,7 +83,7 @@ cal.actor @accumulator()
     ports_in(%in0: !fifo.output_port<tensor<2x2xi32>>)
 {
     // Initialize accumulator state with default values (4 in each cell)
-    %c_init = arith.constant 4 : i32
+    %c_init = arith.constant 0 : i32
     %accumulator = cal.create_state_var<tensor<2x2xi32>> : !cal.state_ref<tensor<2x2xi32>>
     %accum_val = cal.get(%accumulator: !cal.state_ref<tensor<2x2xi32>>) : tensor<2x2xi32>
     %fill = linalg.fill ins(%c_init : i32) outs(%accum_val : tensor<2x2xi32>) -> tensor<2x2xi32>
@@ -103,11 +100,8 @@ cal.actor @accumulator()
                             outs(%state_tensor_1 : tensor<2x2xi32>) -> tensor<2x2xi32>
 
         // Print the result tensor for debugging (pretty-print as a matrix)
-        %c0_index = arith.constant 0 : index
-        %c1_index = arith.constant 1 : index
-        %c2_index = arith.constant 2 : index
-        fifo.print("accumulator: Received Tensor\0A\00")
-        fifo.print_tensor(%token_tensor) : tensor<2x2xi32>
+        fifo.print("accumulator: Accumulated Result\0A\00")
+        fifo.print_tensor(%tensor_sum) : tensor<2x2xi32>
         fifo.print("\0A\00")
 
         // Update the accumulator state with the new sum
