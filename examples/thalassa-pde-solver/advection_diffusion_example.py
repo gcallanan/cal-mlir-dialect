@@ -6,6 +6,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-torch', action='store_true', default=False, help='Use PyTorch backend instead of MLIR. This is not supported in this repo, so we do not guarentee that it works.')
+parser.add_argument('-torch-target', choices=['cpu', 'gpu'], default='cpu', help='Select PyTorch target device (CPU or GPU).')
 args = parser.parse_args()
 
 # Step 1: Define the PDE system
@@ -35,12 +36,13 @@ dt = 0.00001 # Needs to be less than 0.5dx^2 for stability
 
 # Step 2: Compile the PDE system to MLIR or PyTorch
 hypercube_size=1000000
+iterations=50
 # Normal compilation path that generates MLIR code
 if not args.torch:
     with open('advection_diffusion.mlir', 'w') as output_file:
         code = thalassa.pde_compile(
             pde, disc, target='mlir-cal', ics='external', output='external',
-            sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=250
+            sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=iterations
         )
         output_file.write(code)
 
@@ -53,6 +55,6 @@ if args.torch:
     np.save('advection_diffusion_initial_conditions.npy', u0)
 
     with open('advection_diffusion_pytorch_program.py', 'w') as output_file:
-        code = thalassa.pde_compile(pde, disc, target='pytorch', ics='external', output='external',
-                                    sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=250)
+        code = thalassa.pde_compile(pde, disc, target='pytorch', ics='external', output='external', device=args.torch_target,
+                                    sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=iterations)
         output_file.write(code)

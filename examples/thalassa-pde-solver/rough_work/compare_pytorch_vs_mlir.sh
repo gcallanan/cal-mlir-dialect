@@ -17,8 +17,8 @@ echo
 #===============================================================================
 # CONFIGURATION
 #===============================================================================
-NUM_TESTS=20  # Number of times to run each test for averaging execution time
-sleep_time=5  # Sleep time between runs to avoid system overload
+NUM_TESTS=1  # Number of times to run each test for averaging execution time
+sleep_time=1  # Sleep time between runs to avoid system overload
 
 #===============================================================================
 # DATA STRUCTURES
@@ -45,11 +45,12 @@ extract_metrics() {
 # MLIR BACKEND TESTING
 #===============================================================================
 
-echo "Running MLIR backend with different optimization levels..."
+echo "Running MLIR backend with different optimization levels and CPU/GPU targets..."
 
-# Run MLIR backend with optimization levels 0-3
+# Run MLIR backend with optimization levels 0-3 and CPU/GPU targets
 for opt_level in 0 1 2 3; do
-    echo "  Running MLIR with -O${opt_level} (${NUM_TESTS} times for averaging)..."
+    # Test CPU compilation
+    echo "  Running MLIR with -O${opt_level} (CPU) (${NUM_TESTS} times for averaging)..."
     
     # Initialize arrays and variables for current optimization level
     declare -a times_for_avg
@@ -59,7 +60,7 @@ for opt_level in 0 1 2 3; do
     for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
         echo "    Test run ${test_run}/${NUM_TESTS}..."
         
-        # Execute MLIR solver and capture output
+        # Execute MLIR solver and capture output (CPU)
         output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} 2>&1)
         exit_code=$?
         
@@ -84,13 +85,63 @@ for opt_level in 0 1 2 3; do
     if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
         avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
         
-        backend_names+=("MLIR-O${opt_level}")
+        backend_names+=("MLIR-O${opt_level}-CPU")
         exec_times+=("$avg_time")
         rms_errors+=("$rms_error")
         
         echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
     else
-        backend_names+=("MLIR-O${opt_level}")
+        backend_names+=("MLIR-O${opt_level}-CPU")
+        exec_times+=("FAILED")
+        rms_errors+=("FAILED")
+    fi
+    
+    # Clean up array for next iteration
+    unset times_for_avg
+    
+    # Test GPU compilation
+    echo "  Running MLIR with -O${opt_level} -g (GPU) (${NUM_TESTS} times for averaging)..."
+    
+    # Initialize arrays and variables for current optimization level (GPU)
+    declare -a times_for_avg
+    rms_error=""
+    
+    # Run multiple times for averaging
+    for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
+        echo "    Test run ${test_run}/${NUM_TESTS}..."
+        
+        # Execute MLIR solver and capture output (GPU)
+        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -g 2>&1)
+        exit_code=$?
+        
+        if [ $exit_code -eq 0 ]; then
+            # Extract metrics from last two lines
+            metrics=$(extract_metrics "$output")
+            exec_time=$(echo "$metrics" | head -1)
+            if [ -z "$rms_error" ]; then
+                rms_error=$(echo "$metrics" | tail -1)
+            fi
+            echo "        Execution time: ${exec_time}s"
+            sleep $sleep_time
+            
+            times_for_avg+=("$exec_time")
+        else
+            echo "    Failed with exit code $exit_code"
+            break
+        fi
+    done
+    
+    # Calculate average execution time if all tests passed
+    if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
+        avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
+        
+        backend_names+=("MLIR-O${opt_level}-GPU")
+        exec_times+=("$avg_time")
+        rms_errors+=("$rms_error")
+        
+        echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
+    else
+        backend_names+=("MLIR-O${opt_level}-GPU")
         exec_times+=("FAILED")
         rms_errors+=("FAILED")
     fi
@@ -106,10 +157,10 @@ done
 echo
 echo "Running PyTorch backend..."
 
-# Run PyTorch backend
-echo "  Running PyTorch (${NUM_TESTS} times for averaging)..."
+# Run PyTorch backend (CPU)
+echo "  Running PyTorch (CPU) (${NUM_TESTS} times for averaging)..."
 
-# Initialize arrays and variables for PyTorch testing
+# Initialize arrays and variables for PyTorch CPU testing
 declare -a times_for_avg
 rms_error=""
 
@@ -117,7 +168,7 @@ rms_error=""
 for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
     echo "    Test run ${test_run}/${NUM_TESTS}..."
     
-    # Execute PyTorch solver and capture output
+    # Execute PyTorch solver and capture output (CPU)
     output=$(bash rough_work/compile_and_run_equations_using_pytorch.sh 2>&1)
     exit_code=$?
     
@@ -142,13 +193,63 @@ done
 if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
     avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
     
-    backend_names+=("PyTorch")
+    backend_names+=("PyTorch-CPU")
     exec_times+=("$avg_time")
     rms_errors+=("$rms_error")
     
     echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
 else
-    backend_names+=("PyTorch")
+    backend_names+=("PyTorch-CPU")
+    exec_times+=("FAILED")
+    rms_errors+=("FAILED")
+fi
+
+# Clean up array
+unset times_for_avg
+
+# Run PyTorch backend (GPU)
+echo "  Running PyTorch (GPU) (${NUM_TESTS} times for averaging)..."
+
+# Initialize arrays and variables for PyTorch GPU testing
+declare -a times_for_avg
+rms_error=""
+
+# Run multiple times for averaging
+for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
+    echo "    Test run ${test_run}/${NUM_TESTS}..."
+    
+    # Execute PyTorch solver and capture output (GPU)
+    output=$(bash rough_work/compile_and_run_equations_using_pytorch.sh -g 2>&1)
+    exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        # Extract metrics from last two lines
+        metrics=$(extract_metrics "$output")
+        exec_time=$(echo "$metrics" | head -1)
+        if [ -z "$rms_error" ]; then
+            rms_error=$(echo "$metrics" | tail -1)
+        fi
+        echo "        Execution time: ${exec_time}s"
+        sleep $sleep_time
+        
+        times_for_avg+=("$exec_time")
+    else
+        echo "    Failed with exit code $exit_code"
+        break
+    fi
+done
+
+# Calculate average execution time if all tests passed
+if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
+    avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
+    
+    backend_names+=("PyTorch-GPU")
+    exec_times+=("$avg_time")
+    rms_errors+=("$rms_error")
+    
+    echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
+else
+    backend_names+=("PyTorch-GPU")
     exec_times+=("FAILED")
     rms_errors+=("FAILED")
 fi

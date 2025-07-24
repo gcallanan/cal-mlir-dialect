@@ -1,6 +1,18 @@
 echo "Rough script to compile and run equations using PyTorch - not well supported or tested"
 echo "If you run this script, you will need to have the thalassa package installed with the torch extras, e.g. pip install thalassa-repo[torch]"
 
+DEVICE=cpu
+while getopts "g" opt; do
+    case $opt in
+        g)
+            DEVICE=gpu
+            ;;
+        *)
+            ;;
+    esac
+done
+echo "Selected device: $DEVICE"
+
 echo "Step 0: Activate the virtual environment and ensure torch is installed"
 
 source venv/bin/activate
@@ -8,11 +20,10 @@ pip install -e thalassa-repo[torch]
 
 echo "Step 1: Run thalassa package to generate pytorch code"
 
-python advection_diffusion_example.py -torch
+python advection_diffusion_example.py -torch -torch-target $DEVICE
 
 echo "Step 2: Run the generated code using PyTorch in python"
 
-python advection_diffusion_example.py 
 exec_time=$(/usr/bin/time -f "%e" python advection_diffusion_pytorch_program.py advection_diffusion_initial_conditions.npy advection_diffusion_pytorch_output.npy 2>&1 >/dev/null)
 echo "    Execution time: ${exec_time} seconds"
 
@@ -36,7 +47,7 @@ expected = load_data('expected_results.txt')
 init = np.load('advection_diffusion_initial_conditions.npy')
 results = np.load('advection_diffusion_pytorch_output.npy')
 actual = np.concatenate([init.flatten(), results.flatten()])
-diff = expected - actual
+diff = expected.flatten() - actual
 
 plt.plot(expected, label='Expected')
 plt.plot(actual, label='Actual')

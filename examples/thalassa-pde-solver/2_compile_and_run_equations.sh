@@ -1,7 +1,6 @@
 source venv/bin/activate
 
-set -e
-rm -f example main.ll main.opt.ll main.o main_executable_from_mlir actual_results.txt plot-mlir-results.png
+rm -f example main.ll main.opt.ll main.o main_executable_from_mlir actual_results.txt
 
 O=0
 GPU=false
@@ -15,7 +14,7 @@ done
 
 echo "Step 1: Run thalassa package in advection_diffusion_example.py to generate MLIR code"
 
-python advection_diffusion_example.py 
+python advection_diffusion_example.py
 
 echo "Step 2: Compile the generated MLIR code to LLVM IR and then to an executable"
 echo "   Optimization level: ${O}"
@@ -27,7 +26,9 @@ if [ "$GPU" = false ]; then
     clang main.o -o main_executable_from_mlir -lm
 else
     cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors | cal-translate --mlir-to-llvmir > main.ll
-    clang++  main.ll -o main_executable_from_mlir  -lmlir_cuda_runtime -L../../llvm-project/build/lib
+    opt -O$O main.ll -o main.opt.ll
+    llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
+    clang  main.o -o main_executable_from_mlir  -lmlir_cuda_runtime -L../../llvm-project/build/lib
 fi
 
 echo "Step 3: Run the executable"
@@ -67,8 +68,8 @@ plt.savefig('plot-mlir-results.png')
 # Compare the actual results with expected results
 rms_output=$(python -c "
 import numpy as np
-expected = np.loadtxt('expected_results.txt')
-actual = np.loadtxt('actual_results.txt')
+expected = np.loadtxt('expected_results.txt').reshape(2, 1000000)
+actual = np.loadtxt('actual_results.txt').reshape(2, 1000000)
 
 if expected.shape != actual.shape:
     print(f'Shape mismatch: {expected.shape} vs {actual.shape}')
