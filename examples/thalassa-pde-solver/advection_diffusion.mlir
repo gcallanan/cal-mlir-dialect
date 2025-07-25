@@ -21,7 +21,7 @@ cal.actor @merge()
     }
     cal.action priority=0 {
         cal.predicate {
-            %limit = arith.constant 50 : i32
+            %limit = arith.constant 1000 : i32
             %s_loc = cal.get(%s: !cal.state_ref<i32>) : i32
             %fire = arith.cmpi slt, %s_loc, %limit : i32
             cal.predicate_result %fire : i1
@@ -31,7 +31,7 @@ cal.actor @merge()
         %s_loc_1 = cal.get(%s: !cal.state_ref<i32>) : i32
         %s_loc_p1 = arith.addi %s_one, %s_loc_1 : i32
         cal.set(%s : !cal.state_ref<i32>, %s_loc_p1 : i32)
-        %limit = arith.constant 50 : i32
+        %limit = arith.constant 1000 : i32
         %2 = arith.cmpi eq, %s_loc_p1, %limit : i32
         scf.if %2 {
             fifo.print_tensor(%token) : tensor<1x1000000xf64>

@@ -36,7 +36,7 @@ dt = 0.00001 # Needs to be less than 0.5dx^2 for stability
 
 # Step 2: Compile the PDE system to MLIR or PyTorch
 hypercube_size=1000000
-iterations=50
+iterations=250
 # Normal compilation path that generates MLIR code
 if not args.torch:
     with open('advection_diffusion.mlir', 'w') as output_file:

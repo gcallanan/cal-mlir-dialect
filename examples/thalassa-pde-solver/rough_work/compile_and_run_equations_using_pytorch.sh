@@ -59,7 +59,7 @@ plt.savefig('plot-pytorch-results.png')
 # Compare the actual results with expected results
 rms_output=$(python -c "
 import numpy as np
-expected = np.loadtxt('expected_results.txt')
+expected = np.loadtxt('expected_results.txt').flatten()
 init = np.load('advection_diffusion_initial_conditions.npy')
 results = np.load('advection_diffusion_pytorch_output.npy')
 actual = np.concatenate([init.flatten(), results.flatten()])

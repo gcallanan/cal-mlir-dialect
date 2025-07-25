@@ -17,8 +17,8 @@ echo
 #===============================================================================
 # CONFIGURATION
 #===============================================================================
-NUM_TESTS=1  # Number of times to run each test for averaging execution time
-sleep_time=1  # Sleep time between runs to avoid system overload
+NUM_TESTS=1  # Number of times to run each test for averaging execution time (default 20)
+sleep_time=1  # Sleep time between runs to avoid system overload (default 5)
 
 #===============================================================================
 # DATA STRUCTURES

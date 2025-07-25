@@ -25,7 +25,7 @@ if [ "$GPU" = false ]; then
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang main.o -o main_executable_from_mlir -lm
 else
-    cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors | cal-translate --mlir-to-llvmir > main.ll
+    cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors="cubin-chip=sm_75 opt-level=$O" | cal-translate --mlir-to-llvmir > main.ll
     opt -O$O main.ll -o main.opt.ll
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang  main.o -o main_executable_from_mlir  -lmlir_cuda_runtime -L../../llvm-project/build/lib
