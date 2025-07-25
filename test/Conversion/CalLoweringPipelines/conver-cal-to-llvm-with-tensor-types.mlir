@@ -1,4 +1,4 @@
-// RUN: cal-opt --lower-cal-to-llvm %s | cal-translate --mlir-to-llvmir | lli | FileCheck %s
+// RUN: cal-opt --lower-cal-to-llvm-with-static-schedule %s | cal-translate --mlir-to-llvmir | lli | FileCheck %s
 
 //CHECK: src: Sending Tensor
 //CHECK: [1] [1] 
@@ -39,7 +39,7 @@ cal.actor @src(%max_tokens_to_send: i32)
     %c0 = arith.constant 0 : i32
     cal.set(%num_tokens_sent_state: !cal.state_ref<i32>, %c0: i32)
 
-    cal.action
+    cal.action "tx"
     {
         cal.predicate {
             %num_tokens_sent = cal.get(%num_tokens_sent_state: !cal.state_ref<i32>) : i32
@@ -87,7 +87,7 @@ cal.actor @accumulator()
     %fill = linalg.fill ins(%c_init : i32) outs(%accum_val : tensor<2x2xi32>) -> tensor<2x2xi32>
     cal.set(%accumulator: !cal.state_ref<tensor<2x2xi32>>, %fill: tensor<2x2xi32>)
 
-    cal.action
+    cal.action "rx"
     {
         %token_tensor = fifo.pop(%in0: !fifo.output_port<tensor<2x2xi32>>) : tensor<2x2xi32>
         

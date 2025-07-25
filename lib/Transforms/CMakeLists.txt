@@ -1,3 +1,4 @@
 add_subdirectory(GPUAwareBufferize)
 add_subdirectory(GPUDeallocInterface)
 add_subdirectory(DenseConstantsToGPU)
+add_subdirectory(HoistAllocs)

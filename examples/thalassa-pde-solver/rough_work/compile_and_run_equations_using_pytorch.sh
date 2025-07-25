@@ -24,6 +24,10 @@ python advection_diffusion_example.py -torch -torch-target $DEVICE
 
 echo "Step 2: Run the generated code using PyTorch in python"
 
+# Set environment variables to control threading for a fairer comparison
+# to the single threaded MLIR version.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 exec_time=$(/usr/bin/time -f "%e" python advection_diffusion_pytorch_program.py advection_diffusion_initial_conditions.npy advection_diffusion_pytorch_output.npy 2>&1 >/dev/null)
 echo "    Execution time: ${exec_time} seconds"
 

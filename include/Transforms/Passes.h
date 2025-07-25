@@ -6,6 +6,7 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Transforms/GPUAwareBufferize/GPUAwareBufferize.h"
 #include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
+#include "Transforms/HoistAllocs/HoistAllocs.h"
 
 namespace mlir {
 

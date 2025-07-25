@@ -37,6 +37,44 @@ def GpuAwareBufferizePass : Pass<"gpu-aware-bufferize", "mlir::ModuleOp"> {
     ];
 }
 
+def HoistAllocsPass : Pass<"hoist-allocs"> {
+    let summary = "Hoist memory allocations from called functions to their call sites in the main function to reduce allocation overhead";
+    let description = [{
+        This pass optimizes memory allocation patterns by moving expensive allocation 
+        operations from frequently-called functions to their call sites in the main function. 
+        It targets `memref.alloc`, `gpu.alloc`, and `arith.constant` operations with dense 
+        tensor attributes that would otherwise be repeated in execution loops.
+
+        The pass specifically looks for the main function containing an `scf.while` loop 
+        and identifies all callee functions called within that loop. This is particularly 
+        beneficial for CAL actors that have been lowered to functions, where the same 
+        allocations would occur on every loop iteration.
+
+        The transformation operates in two phases:
+        1. **Call Site Update**: Clones allocation operations from target functions to the 
+           main function's entry block and updates call sites to pass these allocations 
+           as additional operands.
+        2. **Function Signature Update**: Modifies target functions to accept hoisted 
+           allocations as parameters and removes the original allocation operations from 
+           their bodies.
+
+        This optimization significantly reduces allocation overhead, especially for expensive 
+        GPU allocations, by performing allocations once rather than repeatedly in loops.
+
+        Prerequisites: Run after CAL actors have been lowered to functions.
+
+        Description originally written by Gareth Callanan and refined using ChatGPT.
+    }];
+
+    let dependentDialects = [
+        "mlir::gpu::GPUDialect",
+        "mlir::memref::MemRefDialect",
+        "mlir::bufferization::BufferizationDialect",
+        "mlir::arith::ArithDialect",
+        "mlir::tensor::TensorDialect"
+    ];
+}
+
 def DenseConstantsToGpuPass : Pass<"convert-dense-constant-to-gpu"> {
     let summary = "Transform dense tensor constants into GPU memory allocations.";
     let description = [{

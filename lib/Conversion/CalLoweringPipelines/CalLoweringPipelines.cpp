@@ -47,6 +47,7 @@
 #include "Conversion/Passes.h"
 #include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
 #include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
+#include "Transforms/HoistAllocs/HoistAllocs.h"
 #include "Transforms/Passes.h"
 
 namespace mlir::cal {
@@ -105,6 +106,7 @@ void registerLowerCalToLLVMPipeline() {
         bufferizeOptions.bufferizeFunctionBoundaries = true;
         pm.addPass(
             mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
+        pm.addPass(mlir::createHoistAllocsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::bufferization::createBufferDeallocationPass());
         pm.addPass(mlir::createCanonicalizerPass());
@@ -181,6 +183,7 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         bufferizeOptions.bufferizeFunctionBoundaries = true;
         pm.addPass(
             mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
+        pm.addPass(mlir::createHoistAllocsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::bufferization::createBufferDeallocationPass());
         pm.addPass(mlir::createCanonicalizerPass());
@@ -246,8 +249,10 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   printOptions.tensors_on_gpu = true; // We want to lower the prints to GPU
   pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM(printOptions));
 
+  pm.addPass(mlir::createHoistAllocsPass());
   pm.addPass(mlir::createDenseConstantsToGpuPass());
   pm.addPass(mlir::createGpuAwareBufferizePass());
+  pm.addPass(mlir::createHoistAllocsPass());
 
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::bufferization::createBufferDeallocationPass());
