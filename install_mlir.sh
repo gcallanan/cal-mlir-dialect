@@ -7,11 +7,8 @@ git clone --branch llvmorg-20.1.0 https://github.com/llvm/llvm-project.git
 # Apply patches as needed
 cd llvm-project
 
-if git apply --check ../patches/gpu-memcpy-fix.patch; then
-  git apply ../patches/gpu-memcpy-fix.patch
-else
-  echo "Patch already applied."
-fi
+git apply ../patches/gpu-memcpy-fix.patch
+git apply ../patches/remove-repeated-gpu-module-loads.patch
 
 # Create and navigate to the build directory
 mkdir -f build
