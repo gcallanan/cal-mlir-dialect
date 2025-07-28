@@ -45,9 +45,6 @@
 
 // Project-specific conversions and transformations
 #include "Conversion/Passes.h"
-#include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
-#include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
-#include "Transforms/HoistAllocs/HoistAllocs.h"
 #include "Transforms/Passes.h"
 
 namespace mlir::cal {
@@ -81,10 +78,10 @@ void registerCalPipelines() {
  * the code author.
  */
 void registerLowerCalToLLVMPipeline() {
-  mlir::PassPipelineRegistration<>(
+  mlir::PassPipelineRegistration<CalGenericPipelineOptions>(
       "lower-cal-to-llvm",
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect.",
-      [](mlir::OpPassManager &pm) {
+      [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
         // 1. FIFO/CAL-specific lowering
         pm.addPass(mlir::cal::insertCalPortPredicates());
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
@@ -106,7 +103,8 @@ void registerLowerCalToLLVMPipeline() {
         bufferizeOptions.bufferizeFunctionBoundaries = true;
         pm.addPass(
             mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
-        pm.addPass(mlir::createHoistAllocsPass());
+        if (!options.disableHoistAllocs)
+          pm.addPass(mlir::createHoistAllocsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::bufferization::createBufferDeallocationPass());
         pm.addPass(mlir::createCanonicalizerPass());
@@ -153,12 +151,12 @@ void registerLowerCalToLLVMPipeline() {
  * statically schedules the execution order.
  */
 void registerLowerCalToLLVMWithStaticSchedulePipeline() {
-  mlir::PassPipelineRegistration<>(
+  mlir::PassPipelineRegistration<CalGenericPipelineOptions>(
       "lower-cal-to-llvm-with-static-schedule",
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect. Assumes the "
       "actors are SDF and CSDF actors and statically schedules the execution "
       "order.",
-      [](mlir::OpPassManager &pm) {
+      [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
         // 1. FIFO/CAL-specific lowering
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertCalToFuncWithStaticSchedulePass());
@@ -183,7 +181,8 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         bufferizeOptions.bufferizeFunctionBoundaries = true;
         pm.addPass(
             mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
-        pm.addPass(mlir::createHoistAllocsPass());
+        if (!options.disableHoistAllocs)
+          pm.addPass(mlir::createHoistAllocsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::bufferization::createBufferDeallocationPass());
         pm.addPass(mlir::createCanonicalizerPass());
@@ -249,13 +248,15 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   printOptions.tensors_on_gpu = true; // We want to lower the prints to GPU
   pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM(printOptions));
 
-  pm.addPass(mlir::createHoistAllocsPass());
+  if (!options.disableHoistAllocs)
+    pm.addPass(mlir::createHoistAllocsPass());
   pm.addPass(mlir::createDenseConstantsToGpuPass());
   pm.addPass(mlir::createGpuAwareBufferizePass());
-  pm.addPass(mlir::createHoistAllocsPass());
-
   pm.addPass(mlir::createCanonicalizerPass());
-  pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+  if (!options.disableHoistAllocs)
+    pm.addPass(mlir::createHoistAllocsPass());
+  pm.addPass(mlir::createCanonicalizerPass());
+  // pm.addPass(mlir::bufferization::createBufferDeallocationPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createConvertLinalgToParallelLoopsPass());
   pm.addPass(mlir::createCanonicalizerPass());
