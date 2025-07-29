@@ -112,4 +112,16 @@ def DenseConstantsToGpuPass : Pass<"convert-dense-constant-to-gpu"> {
     ];
 }
 
+def CalPrepareGpuAsyncRegionsPass : Pass<"cal-prepare-gpu-async-regions"> {
+    let summary = "";
+    let description = [{
+        
+    }];
+    
+    let dependentDialects = [
+        "mlir::gpu::GPUDialect",
+        "mlir::memref::MemRefDialect",
+    ];
+}
+
 #endif // CAL_TRANSFORM_PASSES

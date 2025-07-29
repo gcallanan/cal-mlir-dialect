@@ -4,6 +4,7 @@
 #include "mlir/Pass/Pass.h"
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Fifo/FifoDialect.h"
+#include "Transforms/CalPrepareGpuAsyncRegions/CalPrepareGpuAsyncRegions.h"
 #include "Transforms/GPUAwareBufferize/GPUAwareBufferize.h"
 #include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
 #include "Transforms/HoistAllocs/HoistAllocs.h"
@@ -17,6 +18,6 @@ namespace mlir {
 
 //===----------------------------------------------------------------------===//
 
-} // namespace mlir::cal
+} // namespace mlir
 
 #endif // CAL_GENERIC_TRANSFORM_PASSES
