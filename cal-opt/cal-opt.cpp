@@ -51,9 +51,8 @@
 // Project-specific conversions and Transformations
 #include "Conversion/Passes.h"
 #include "Dialect/Fifo/BufferizableOpInterfaceImpl.h"
-#include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
-#include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
 #include "Transforms/Passes.h"
+#include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
 
 // All the CAL pipelines
 #include "Conversion/CalLoweringPipelines/CalLoweringPipelines.h"

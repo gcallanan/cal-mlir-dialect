@@ -9,6 +9,90 @@
 
 include "mlir/Pass/PassBase.td"
 
+def CalPrepareGpuAsyncRegionsPass : Pass<"cal-prepare-gpu-async-regions"> {
+    let summary = "Thread gpu.async.tokens through main loop and callees to coordinate all asynchronous GPU operations on a single stream.";
+
+    let description = [{
+        This pass rewrites the main function and its callees to enable correct, single-stream
+        asynchronous execution of GPU operations by threading `gpu.async.token` values through
+        the main loop and all relevant function calls.
+
+        The pass expects input in the format produced by earlier CAL transformation passes,
+        where the main computation is structured as a `scf.while` loop and GPU operations
+        are present in the main function and its callees.
+
+        Specifically, this pass:
+        - Adds a `gpu.async.token` argument and result to the main `scf.while` loop.
+        - Threads the token through the loop's condition and body blocks.
+        - Updates all `func.call` operations within the loop body so that they take and return
+          a `gpu.async.token`, allowing GPU operations in called functions to be coordinated
+          asynchronously.
+        - Makes all GPU operations in the main function and its callees asynchronous and
+          chained on a single stream.
+        - Inserts initial and intermediate `gpu.wait` operations as needed to produce and
+          synchronize the async token before and after the loop.
+        - Makes all operations before the while loop asynchronous (by threading an async token),
+          but synchronizes (waits) after each one to ensure completion. This is done to support
+          further passes that expect all GPU ops to be asynchronous, even though these ops
+          still execute synchronously from the host's perspective.
+
+        Example main loop transformation:
+
+        Before:
+        ```mlir
+        scf.while (%arg0 = %true) : (i1) -> () {
+          scf.condition(%arg0)
+        } do {
+          %1 = func.call @src(...) : (...) -> i1
+          %2 = func.call @accumulator(...) : (...) -> i1
+          %3 = arith.ori %2, %1 : i1
+          scf.yield %3 : i1
+        }
+        ```
+
+        After:
+        ```mlir
+        %10 = gpu.wait async
+        %11 = scf.while (%arg0 = %true, %arg1 = %10) : (i1, !gpu.async.token) -> !gpu.async.token {
+          scf.condition(%arg0) %arg1 : !gpu.async.token
+        } do {
+        ^bb0(%arg0: !gpu.async.token):
+          %12:2 = func.call @src(..., %arg0) : (..., !gpu.async.token) -> (i1, !gpu.async.token)
+          %13:2 = func.call @accumulator(..., %12#1) : (..., !gpu.async.token) -> (i1, !gpu.async.token)
+          %14 = arith.ori %13#0, %12#0 : i1
+          scf.yield %14, %13#1 : i1, !gpu.async.token
+        }
+        ```
+
+        Example callee transformation:
+
+        Before:
+        ```mlir
+        func.func @accumulator(%arg0: i32, %arg1: memref<10x10xi32>) -> i1 {
+          %0 = gpu.launch_func @kernel ...
+          %1 = gpu.memcpy %arg1, %arg1 : memref<10x10xi32>, memref<10x10xi32>
+          return %true : i1
+        }
+        ```
+
+        After:
+        ```mlir
+        func.func @accumulator(%arg0: i32, %arg1: memref<10x10xi32>, %token: !gpu.async.token) -> (i1, !gpu.async.token) {
+          %0 = gpu.launch_func async [%token] @kernel ...
+          %1 = gpu.memcpy async [%0] %arg1, %arg1 : memref<10x10xi32>, memref<10x10xi32>
+          return %true, %1 : i1, !gpu.async.token
+        }
+        ```
+
+        TODO: Not all operations are currently supported. In particular, `scf.for`, `scf.while`, and `gpu.dealloc`
+        are not yet handled and will be ignored by this pass.
+    }];
+    let dependentDialects = [
+        "mlir::gpu::GPUDialect",
+        "mlir::memref::MemRefDialect",
+    ];
+}
+
 def GpuAwareBufferizePass : Pass<"gpu-aware-bufferize", "mlir::ModuleOp"> {
     let summary = "Run One-Shot Bufferization with GPU memory support.";
     let description = [{
@@ -109,18 +193,6 @@ def DenseConstantsToGpuPass : Pass<"convert-dense-constant-to-gpu"> {
         "mlir::tensor::TensorDialect",
         "mlir::memref::MemRefDialect",
         "mlir::bufferization::BufferizationDialect"
-    ];
-}
-
-def CalPrepareGpuAsyncRegionsPass : Pass<"cal-prepare-gpu-async-regions"> {
-    let summary = "";
-    let description = [{
-        
-    }];
-    
-    let dependentDialects = [
-        "mlir::gpu::GPUDialect",
-        "mlir::memref::MemRefDialect",
     ];
 }
 

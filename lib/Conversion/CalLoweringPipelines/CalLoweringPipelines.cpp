@@ -233,7 +233,7 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
 
   // We add this pass as we often get functions that are the same but with
   // different names.
-  pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
+  // pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
   mlir::LowerCalStateToMemrefOptions stateOptions;
   stateOptions.which_alloc = std::string("GPU");
@@ -260,13 +260,21 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createConvertLinalgToParallelLoopsPass());
   pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createConvertLinalgToLoopsPass());
 
   // 2. GPU-specific lowering
   pm.addPass(mlir::createGpuMapParallelLoopsPass());
   pm.addPass(mlir::createParallelLoopToGpuPass());
   pm.addPass(mlir::createGpuKernelOutliningPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addPass(mlir::createGpuAsyncRegionPass());
+  if (!options.disableAsyncGPUBehaviour) {
+    pm.addPass(mlir::createCalPrepareGpuAsyncRegionsPass());
+  } else {
+    // This pass makes the gpu ops async, but within a very limited scope
+    // We do this as the gpu ops need to be async to be compiled.
+    pm.addPass(mlir::createGpuAsyncRegionPass());
+  }
+  pm.addPass(mlir::createConvertSCFToCFPass());
 
   mlir::gpu::GPUToNVVMPipelineOptions nvvmOptions;
   nvvmOptions.cubinChip = options.cubinChip;

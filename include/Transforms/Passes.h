@@ -1,13 +1,13 @@
 #ifndef CAL_GENERIC_TRANSFORM_PASSES
 #define CAL_GENERIC_TRANSFORM_PASSES
 
-#include "mlir/Pass/Pass.h"
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Fifo/FifoDialect.h"
-#include "Transforms/CalPrepareGpuAsyncRegions/CalPrepareGpuAsyncRegions.h"
-#include "Transforms/GPUAwareBufferize/GPUAwareBufferize.h"
 #include "Transforms/DenseConstantsToGPU/DenseConstantsToGPU.h"
+#include "Transforms/GPUAwareBufferize/GPUAwareBufferize.h"
 #include "Transforms/HoistAllocs/HoistAllocs.h"
+#include "Transforms/CalPrepareGpuAsyncRegions/CalPrepareGpuAsyncRegions.h"
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
 

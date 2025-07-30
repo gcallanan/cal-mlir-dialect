@@ -12,8 +12,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#include "Transforms/HoistAllocs/HoistAllocs.h"
 #include "Transforms/Passes.h"
+#include "Transforms/HoistAllocs/HoistAllocs.h"
 
 namespace mlir {
 

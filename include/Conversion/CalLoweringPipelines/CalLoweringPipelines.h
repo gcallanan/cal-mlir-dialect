@@ -24,6 +24,10 @@ struct CalToLLVMWithGPUTensorsPipelineOptions
       *this, "opt-level",
       llvm::cl::desc("Optimization level for NVVM compilation"),
       llvm::cl::init(2)};
+  PassOptions::Option<bool> disableAsyncGPUBehaviour{
+      *this, "disable-asynch-gpu-behavior",
+      llvm::cl::desc("Disable experimental pass that makes GPU operations asynchonous."),
+      llvm::cl::init(false)};
 };
 
 void registerCalPipelines();
