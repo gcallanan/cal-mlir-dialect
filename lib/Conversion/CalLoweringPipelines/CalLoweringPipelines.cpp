@@ -261,13 +261,21 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   pm.addPass(mlir::createConvertLinalgToParallelLoopsPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createConvertLinalgToLoopsPass());
+  llvm::SmallVector<int64_t, 3> tileSizes;
+  if (!options.parallelLoopTileSizes.empty()) {
+    tileSizes.assign(options.parallelLoopTileSizes.begin(),
+                     options.parallelLoopTileSizes.end());
+  } else {
+    tileSizes = {1024, 1, 1};
+  }
+  pm.addPass(mlir::createParallelLoopTilingPass(tileSizes, true));
 
   // 2. GPU-specific lowering
   pm.addPass(mlir::createGpuMapParallelLoopsPass());
   pm.addPass(mlir::createParallelLoopToGpuPass());
   pm.addPass(mlir::createGpuKernelOutliningPass());
   pm.addPass(mlir::createCSEPass());
-  if (!options.disableAsyncGPUBehaviour) {
+  if (options.enableAsyncGPUBehaviour) {
     pm.addPass(mlir::createCalPrepareGpuAsyncRegionsPass());
   } else {
     // This pass makes the gpu ops async, but within a very limited scope

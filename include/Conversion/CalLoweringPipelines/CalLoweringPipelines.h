@@ -24,10 +24,16 @@ struct CalToLLVMWithGPUTensorsPipelineOptions
       *this, "opt-level",
       llvm::cl::desc("Optimization level for NVVM compilation"),
       llvm::cl::init(2)};
-  PassOptions::Option<bool> disableAsyncGPUBehaviour{
-      *this, "disable-asynch-gpu-behavior",
-      llvm::cl::desc("Disable experimental pass that makes GPU operations asynchonous."),
+  PassOptions::Option<bool> enableAsyncGPUBehaviour{
+      *this, "enable-asynch-gpu-behavior",
+      llvm::cl::desc(
+          "Enable experimental pass that makes GPU operations asynchonous."),
       llvm::cl::init(false)};
+  PassOptions::ListOption<int64_t> parallelLoopTileSizes{
+      *this, "parallel-loop-tile-sizes",
+      llvm::cl::desc("Tile sizes for scf.parallel loop tiling "
+                     "(comma-separated, e.g. 1024,1,1)"),
+      llvm::cl::ZeroOrMore};
 };
 
 void registerCalPipelines();
