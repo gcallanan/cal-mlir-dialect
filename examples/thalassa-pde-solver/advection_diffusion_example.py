@@ -7,6 +7,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('-torch', action='store_true', default=False, help='Use PyTorch backend instead of MLIR. This is not supported in this repo, so we do not guarentee that it works.')
 parser.add_argument('-torch-target', choices=['cpu', 'gpu'], default='cpu', help='Select PyTorch target device (CPU or GPU).')
+parser.add_argument('--hypercube-size', type=int, default=1000000, help='Size of the spatial discretization hypercube (default: 1000000)')
 args = parser.parse_args()
 
 # Step 1: Define the PDE system
@@ -35,7 +36,7 @@ disc = [
 dt = 0.00001 # Needs to be less than 0.5dx^2 for stability
 
 # Step 2: Compile the PDE system to MLIR or PyTorch
-hypercube_size=1000000
+hypercube_size = args.hypercube_size
 iterations=250
 # Normal compilation path that generates MLIR code
 if not args.torch:

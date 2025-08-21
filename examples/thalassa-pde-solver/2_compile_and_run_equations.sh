@@ -2,19 +2,27 @@ source venv/bin/activate
 
 rm -f example main.ll main.opt.ll main.o main_executable_from_mlir actual_results.txt
 
-O=0
+O=3
 GPU=false
-while getopts O:g flag
+HYPERCUBE_SIZE=1000000
+DISABLE_ALLOCS=""
+ENABLE_ASYNC_GPU_STREAMS=""
+MERGE_ACTOR_CHAINS=""
+while getopts O:h:gdsm flag
 do
     case "${flag}" in
         O) O=${OPTARG};; # Optimization level
+        h) HYPERCUBE_SIZE=${OPTARG};; # Hypercube size
         g) GPU=true;;
+        d) DISABLE_ALLOCS="disable-hoist-allocs";;
+        s) ENABLE_ASYNC_GPU_STREAMS="enable-asynch-gpu-behavior";;
+        m) MERGE_ACTOR_CHAINS="merge-actor-chains";;
     esac
 done
 
-echo "Step 1: Run thalassa package in advection_diffusion_example.py to generate MLIR code"
+echo "Step 1: Run thalassa package in advection_diffusion_example.py to generate MLIR code. Default flags compile to the CPU and use optimisation level ${O}"
 
-python advection_diffusion_example.py
+python advection_diffusion_example.py --hypercube-size $HYPERCUBE_SIZE
 
 echo "Step 2: Compile the generated MLIR code to LLVM IR and then to an executable"
 echo "   Optimization level: ${O}"
@@ -25,7 +33,9 @@ if [ "$GPU" = false ]; then
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang main.o -o main_executable_from_mlir -lm
 else
-    cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors="cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=256,4,1 enable-asynch-gpu-behavior" | cal-translate --mlir-to-llvmir > main.ll
+    CMD="cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors=\"cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=256,4,1 $DISABLE_ALLOCS $ENABLE_ASYNC_GPU_STREAMS $MERGE_ACTOR_CHAINS\""
+    # echo "    Running command: $CMD"
+    eval $CMD | cal-translate --mlir-to-llvmir > main.ll
     opt -O$O main.ll -o main.opt.ll
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang  main.o -o main_executable_from_mlir  -lmlir_cuda_runtime -L../../llvm-project/build/lib
@@ -45,8 +55,9 @@ echo "    The expected results are in expected_results.txt"
 echo "    The actual results are in actual_results.txt"
 echo "    The plot will be saved as plot-mlir-results.png"
 
-# Plot the results using matplotlib
-python -c "
+if [ $HYPERCUBE_SIZE -eq 1000000 ]; then
+    # Plot the results using matplotlib
+    python -c "
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -66,7 +77,7 @@ plt.savefig('plot-mlir-results.png')
 "
 
 # Compare the actual results with expected results
-rms_output=$(python -c "
+    rms_output=$(python -c "
 import numpy as np
 expected = np.loadtxt('expected_results.txt').reshape(2, 1000000)
 actual = np.loadtxt('actual_results.txt').reshape(2, 1000000)
@@ -91,15 +102,21 @@ else:
         raise RuntimeError('RMS error is greater than 1% of the max value!')
     print(f'    {rms_error}')
 ")
-echo "$rms_output"
-rms_error=$(echo "$rms_output" | tail -1)
+    echo "$rms_output"
+    rms_error=$(echo "$rms_output" | tail -1)
 
-if [ $? -eq 0 ]; then
-    echo "Test passed: The output matches the expected results."
-    echo $exec_time
-    echo $rms_error
+    if [ $? -eq 0 ]; then
+        echo "Test passed: The output matches the expected results."
+        echo $exec_time
+        echo $rms_error
+    else
+        echo "Test failed: The output does not match the expected results."
+        exit 1
+    fi
+
 else
-    echo "Test failed: The output does not match the expected results."
-    exit 1
+    echo "    Skipping comparison and plotting because hypercube size ($HYPERCUBE_SIZE) is not 1000000"
+    echo $exec_time
+    echo "0.0"  # Default RMS error when not comparing
 fi
 
