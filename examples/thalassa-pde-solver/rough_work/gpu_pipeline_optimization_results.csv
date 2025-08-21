@@ -1,0 +1,12 @@
+Backend,Size_1000000_Time(s),Size_1000000_RMS_Error,Size_3000000_Time(s),Size_3000000_RMS_Error,Size_10000000_Time(s),Size_10000000_RMS_Error
+pytorch |cpu,12.3300,1.815e-06,48.5900,0,237.4900,0
+cal-mlir|cpu,10.1237,0,32.2598,0,106.1550,0
+pytorch |gpu,2.3200,1.815e-06,3.6400,0,8.5500,0
+cal-mlir|gpu,3.1055,0,7.1367,0,21.5977,0
+cal-mlir|gpu|hoisting,2.0085,0,5.5060,0,17.6682,0
+cal-mlir|gpu|async,2.8401,0,7.1153,0,21.6169,0
+cal-mlir|gpu|async&hoisting,1.9730,0,5.4707,0,17.7477,0
+cal-mlir|gpu|merged,2.9312,0,7.2918,0,21.6821,0
+cal-mlir|gpu|merged&hoisted,2.0219,0,5.5337,0,17.8125,0
+cal-mlir|gpu|merged&async,2.9487,0,7.1116,0,21.5763,0
+cal-mlir|gpu|merged&async&hoisted,2.0090,0,5.5084,0,17.8133,0
