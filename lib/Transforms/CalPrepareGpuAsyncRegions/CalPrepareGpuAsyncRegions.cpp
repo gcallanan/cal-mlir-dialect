@@ -75,6 +75,34 @@ static Value makeGpuAllocOpAsynchronous(gpu::AllocOp allocOp, Value asyncToken,
   return newAllocOp.getAsyncToken();
 }
 
+/// Makes a gpu.dealloc op asynchronous by cloning it with an async dependency
+/// and returning the new async token.
+///
+/// \param deallocOp The gpu.dealloc operation to be made asynchronous.
+/// \param asyncToken The async token to use as a dependency.
+/// \param rewriter The pattern rewriter used to perform IR modifications.
+/// \return The new async token produced by the asynchronous alloc op.
+static Value makeGpuDeallocOpAsynchronous(gpu::DeallocOp deallocOp,
+                                          Value asyncToken,
+                                          PatternRewriter &rewriter) {
+  // llvm::outs() << "Making gpu.dealloc asynchronous\n";
+  // llvm::outs() << deallocOp << "\n";
+  rewriter.setInsertionPoint(deallocOp);
+  auto loc = deallocOp.getLoc();
+  auto tokenType = asyncToken.getType();
+  auto newDeallocOp = rewriter.create<mlir::gpu::DeallocOp>(
+      loc, tokenType, ValueRange{asyncToken}, deallocOp.getMemref());
+  // llvm::outs() << newDeallocOp << "\n";
+  // Copy all attributes except those set by the builder.
+  for (auto attr : newDeallocOp->getAttrs()) {
+    if (attr.getName() != "operandSegmentSizes")
+      newDeallocOp->setAttr(attr.getName(), attr.getValue());
+  }
+  // rewriter.replaceOp(allocOp, newAllocOp.getMemref());
+  rewriter.eraseOp(deallocOp);
+  return newDeallocOp.getAsyncToken();
+}
+
 /// Makes a gpu.memcpy op asynchronous by cloning it with an async dependency
 /// and returning the new async token.
 ///
@@ -316,8 +344,7 @@ static Value makeIfOpAsynchronous(scf::IfOp ifOp, PatternRewriter &rewriter,
 /// - gpu.alloc: Makes the allocation asynchronous and returns the new async
 /// token. For unsupported operations, the input token is returned unchanged.
 ///
-/// TODO: Handle additional operations such as scf.for, scf.while, and
-/// gpu.dealloc.
+/// TODO: Handle additional operations such as scf.for, scf.while ops.
 ///
 /// \param op The operation to potentially make asynchronous.
 /// \param rewriter The pattern rewriter used to perform IR modifications.
@@ -334,8 +361,10 @@ static Value makeGpuOpsAsynchronous(Operation *op, PatternRewriter &rewriter,
     return makeGpuLaunchOpAsynchronous(launchFuncOp, token, rewriter);
   } else if (auto allocOp = dyn_cast<mlir::gpu::AllocOp>(op)) {
     return makeGpuAllocOpAsynchronous(allocOp, token, rewriter);
+  } else if (auto deallocOp = dyn_cast<mlir::gpu::DeallocOp>(op)) {
+    return makeGpuDeallocOpAsynchronous(deallocOp, token, rewriter);
   }
-  // TODO: Handle scf.for, scf.while and gpu.dealloc ops
+  // TODO: Handle scf.for, scf.while ops
   return token;
 }
 
@@ -390,10 +419,11 @@ static Value makeGpuOpsInBlockAsynchronous(Block &block,
 ///
 /// Example after:
 /// ```mlir
-/// func.func @accumulator(%arg0: i32, %arg1: memref<10x10xi32>, %token: !gpu.async.token) -> (i1, !gpu.async.token) {
+/// func.func @accumulator(%arg0: i32, %arg1: memref<10x10xi32>, %token:
+/// !gpu.async.token) -> (i1, !gpu.async.token) {
 ///   %0 = gpu.launch_func async [%token] @kernel ...
-///   %1 = gpu.memcpy async [%0] %arg1, %arg1 : memref<10x10xi32>, memref<10x10xi32>
-///   return %true, %1 : i1, !gpu.async.token
+///   %1 = gpu.memcpy async [%0] %arg1, %arg1 : memref<10x10xi32>,
+///   memref<10x10xi32> return %true, %1 : i1, !gpu.async.token
 /// }
 /// ```
 ///
@@ -513,15 +543,23 @@ updateMainFuncWithGpuTokens(PatternRewriter &rewriter, func::FuncOp funcOp,
     return failure();
   }
 
-  // 2. Update all operations before the last while op to have async tokens
-  // but still wait on the host for the GPU asynchronous operations to complete.
-  // We do this as later phases require all gpu operations to be asynchronous.
-  // 2.1 Collect all operations before the last while op
-  SmallVector<Operation *, 8> otherOps;
+  // 2. Update all operations before and after the last while op to have async
+  // tokens but still wait on the host for the GPU asynchronous operations to
+  // complete. We do this as later phases require all gpu operations to be
+  // asynchronous. 2.1 Collect all operations before the last while op
+  SmallVector<Operation *, 8> beforeOps;
+  SmallVector<Operation *, 8> afterOps;
+  bool beforeLastWhile = true;
   for (auto &block : funcOp.getBody()) {
     for (auto &op : block) {
-      if (&op != lastWhileOp) {
-        otherOps.push_back(&op);
+      if (&op == lastWhileOp) {
+        beforeLastWhile = false;
+        continue;
+      }
+      if (beforeLastWhile) {
+        beforeOps.push_back(&op);
+      } else {
+        afterOps.push_back(&op);
       }
     }
   }
@@ -534,7 +572,7 @@ updateMainFuncWithGpuTokens(PatternRewriter &rewriter, func::FuncOp funcOp,
   Value initPhaseToken = initPhaseWait.getAsyncToken();
 
   // 2.3 Make all ops before the while op asynchronous, synchronizing as needed
-  for (auto *op : otherOps) {
+  for (auto *op : beforeOps) {
     auto *nextOp = op->getNextNode();
     Value newToken = makeGpuOpsAsynchronous(op, rewriter, initPhaseToken);
     if (newToken != initPhaseToken) {
@@ -615,11 +653,35 @@ updateMainFuncWithGpuTokens(PatternRewriter &rewriter, func::FuncOp funcOp,
     rewriter.create<scf::YieldOp>(lastWhileOp.getLoc(), yieldOperands);
   }
 
-  // 4. (Optional) Insert a synchronous wait on the returned token if needed
+  // 4. Terminate while and make the ops after the while op asynchronous
+  // 4.1 Insert a synchronous wait on the returned token if needed
   Value newToken = newWhileOp.getResults().back();
   rewriter.setInsertionPointAfter(newWhileOp);
-  // rewriter.create<mlir::gpu::WaitOp>(newWhileOp.getLoc(), Type{},
-  // ValueRange{newToken});
+  rewriter.create<mlir::gpu::WaitOp>(newWhileOp.getLoc(), Type{},
+                                     ValueRange{newToken});
+
+  auto cleanupPhaseWait = rewriter.create<mlir::gpu::WaitOp>(
+      funcOp.getLoc(), tokenType, ValueRange{});
+  Value cleanupPhaseToken = cleanupPhaseWait.getAsyncToken();
+
+  // 4.2 Make all ops after the while op asynchronous, synchronizing as
+  // needed
+  for (auto *op : afterOps) {
+    auto *nextOp = op->getNextNode();
+    Value newToken = makeGpuOpsAsynchronous(op, rewriter, cleanupPhaseToken);
+    if (newToken != cleanupPhaseToken) {
+      rewriter.setInsertionPoint(nextOp);
+      rewriter.create<mlir::gpu::WaitOp>(funcOp.getLoc(), Type{},
+                                         ValueRange{newToken});
+      cleanupPhaseWait = rewriter.create<mlir::gpu::WaitOp>(
+          funcOp.getLoc(), tokenType, ValueRange{});
+      cleanupPhaseToken = cleanupPhaseWait.getAsyncToken();
+    }
+  }
+
+  // 4.3 Wait on the last token on all of the after ops
+  rewriter.create<mlir::gpu::WaitOp>(funcOp.getLoc(), Type{},
+                                     ValueRange{cleanupPhaseToken});
 
   rewriter.eraseOp(lastWhileOp);
   return success();
@@ -735,8 +797,7 @@ struct UpdateFuncs : public OpRewritePattern<func::FuncOp> {
 /// correctness. It is typically run after outlining GPU regions and before
 /// lowering to lower-level GPU dialects or code generation.
 ///
-/// TODO: Extend support to other operations such as `scf.for`, `scf.while` and
-/// `gpu.dealloc`
+/// TODO: Extend support to other operations such as `scf.for`, `scf.while`
 ///
 /// Example Input:
 /// ```mlir

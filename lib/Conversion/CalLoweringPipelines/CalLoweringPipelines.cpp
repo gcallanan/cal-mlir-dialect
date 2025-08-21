@@ -256,7 +256,10 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   if (!options.disableHoistAllocs)
     pm.addPass(mlir::createHoistAllocsPass());
   pm.addPass(mlir::createCanonicalizerPass());
-  // pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+  // If we hoist the allocs, we need to disable deallocation as this causes
+  // the program to crash when deallocating. TODO: Fix this bug
+  if (options.disableHoistAllocs)
+    pm.addPass(mlir::bufferization::createBufferDeallocationPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createConvertLinalgToParallelLoopsPass());
   pm.addPass(mlir::createCanonicalizerPass());

@@ -208,12 +208,14 @@ module attributes {gpu.container_module} {
     // CHECK:   scf.condition(%arg0) %arg1 : !gpu.async.token
     // CHECK: } do {
     // CHECK: ^bb0(%arg0: !gpu.async.token):
-    // CHECK:   %12:2 = func.call @src(%c5000_i32, %cast, %alloc_4, %c4_i32, %alloc_5, %memref, %arg0) : (i32, memref<?x10x10xi32>, memref<2xi32>, i32, memref<1xi32>, memref<10x10xi32>, !gpu.async.token) -> (i1, !gpu.async.token)
-    // CHECK:   %13:2 = func.call @accumulator(%c5000_i32, %cast, %alloc_4, %c4_i32, %memref_6, %cast_11, %cast_12, %alloc_10, %alloc, %memref_0, %12#1) : (i32, memref<?x10x10xi32>, memref<2xi32>, i32, memref<10x10xi32>, memref<10x10xi32, strided<[?, ?], offset: ?>>, memref<10x10xi32, strided<[?, ?], offset: ?>>, memref<1xi32>, memref<10x10xi32>, memref<10x10xi32>, !gpu.async.token) -> (i1, !gpu.async.token)
-    // CHECK:   %14 = arith.ori %13#0, %12#0 : i1
-    // CHECK:   scf.yield %14, %13#1 : i1, !gpu.async.token
+    // CHECK:   %13:2 = func.call @src(%c5000_i32, %cast, %alloc_4, %c4_i32, %alloc_5, %memref, %arg0) : (i32, memref<?x10x10xi32>, memref<2xi32>, i32, memref<1xi32>, memref<10x10xi32>, !gpu.async.token) -> (i1, !gpu.async.token)
+    // CHECK:   %14:2 = func.call @accumulator(%c5000_i32, %cast, %alloc_4, %c4_i32, %memref_6, %cast_11, %cast_12, %alloc_10, %alloc, %memref_0, %13#1) : (i32, memref<?x10x10xi32>, memref<2xi32>, i32, memref<10x10xi32>, memref<10x10xi32, strided<[?, ?], offset: ?>>, memref<10x10xi32, strided<[?, ?], offset: ?>>, memref<1xi32>, memref<10x10xi32>, memref<10x10xi32>, !gpu.async.token) -> (i1, !gpu.async.token)
+    // CHECK:   %15 = arith.ori %14#0, %13#0 : i1
+    // CHECK:   scf.yield %15, %14#1 : i1, !gpu.async.token
     // CHECK: }
-
+    // CHECK: gpu.wait [%11]
+    // CHECK: %12 = gpu.wait async
+    // CHECK: gpu.wait [%12]
     return
   }
   gpu.module @main_kernel {

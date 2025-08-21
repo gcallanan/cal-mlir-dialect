@@ -84,7 +84,7 @@ def CalPrepareGpuAsyncRegionsPass : Pass<"cal-prepare-gpu-async-regions"> {
         }
         ```
 
-        TODO: Not all operations are currently supported. In particular, `scf.for`, `scf.while`, and `gpu.dealloc`
+        TODO: Not all operations are currently supported. In particular, `scf.for` and `scf.while`
         are not yet handled and will be ignored by this pass.
     }];
     let dependentDialects = [
