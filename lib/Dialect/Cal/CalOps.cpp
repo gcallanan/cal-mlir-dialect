@@ -707,3 +707,69 @@ llvm::MapVector<mlir::Value, int> ActionOp::getPortRates() {
   }
   return portRates;
 }
+
+int ActorOp::inDegree() {
+  int portsIn = 0;
+  for (Value arg : getBody().getArguments()) {
+    if (mlir::isa<mlir::fifo::OutputPortType>(arg.getType())) {
+      portsIn++;
+    }
+  }
+  return portsIn;
+}
+
+int ActorOp::outDegree() {
+  int portsOut = 0;
+  for (Value arg : getBody().getArguments()) {
+    if (mlir::isa<mlir::fifo::InputPortType>(arg.getType())) {
+      portsOut++;
+    }
+  }
+  return portsOut;
+}
+
+bool ActorOp::isSimpleActor() {
+  if (inDegree() != 1) {
+    return false; // Need to have 1 port in to be a simple actor
+  }
+
+  if (outDegree() != 1) {
+    return false; // Need to have 1 port out to be a simple actor
+  }
+
+  int actionCount = 0;
+  cal::ActionOp savedActionOp;
+  for (Operation &op : getBody().getOps()) {
+    if (auto actionOp = llvm::dyn_cast<ActionOp>(&op)) {
+      actionCount++;
+      savedActionOp = actionOp;
+    }
+  }
+
+  if (actionCount != 1) {
+    return false; // Need to have exactly one action in the actor to be a simple
+                  // actor
+  }
+
+  int predicateCount = 0;
+  for (Operation &op : savedActionOp.getBody().getOps()) {
+    if (llvm::isa<cal::Predicate>(op)) {
+      return false; // If any predicate is present in the action body, it is not a
+                    // simple actor
+    }
+  }
+
+  return true;
+}
+
+cal::ActorOp CreateInstanceOp::getActor() {
+  FlatSymbolRefAttr actorRef = getActorRefAttr();
+  SymbolTableCollection symbolTable;
+  ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, actorRef);
+  if (!actor) {
+    emitOpError() << "'" << actorRef.getValue()
+                  << "' does not reference a valid cal.actor";
+    return nullptr;
+  }
+  return actor;
+}

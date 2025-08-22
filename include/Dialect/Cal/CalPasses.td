@@ -173,4 +173,21 @@ def ConvertCalActionsToExecutionBodies: Pass<"convert-cal-actions-to-execution-b
   ];
 }
 
+def MergeSimpleCalActors: Pass<"merge-simple-cal-actors"> {
+  let summary = "";
+  let description = [{
+
+  }];
+  let options = [
+      Option<"print_edges_for_testing", "print-edges-for-testing", "bool", /*default=*/"false",
+            "Print out the edges in the network.">,
+      Option<"print_chains_for_testing", "print-chains-for-testing", "bool", /*default=*/"false",
+            "Print out the chains that can be merged in the network.">,
+  ];
+  let dependentDialects = [
+    "cal::CalDialect",
+    "fifo::FifoDialect",
+  ];
+}
+
 #endif // CAL_PASS

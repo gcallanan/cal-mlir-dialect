@@ -101,6 +101,18 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
 
   //let assemblyFormat = "$sym_name  `(` $input_port `)`  ( $body^ )? attr-dict ";
   let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    // Get the number of input ports declared in the actor.
+    int inDegree();
+
+    // Get the number of output ports declared in the actor.
+    int outDegree();
+
+    // Determine if the actor is a simple actor, meaning it has only one action
+    // and no predicates and a single input and output port.
+    bool isSimpleActor();
+  }];
 }
 
 
@@ -156,6 +168,10 @@ def Cal_CreateInstanceOp : Cal_Op<"create_instance", [DeclareOpInterfaceMethods<
     Variadic<AnyType>:$operands // The operands to be passed to the actor instance
   );
 
+  let extraClassDeclaration = [{
+    // Get the actor definition this instance is based on.
+    cal::ActorOp getActor();
+  }];
 
   let hasCustomAssemblyFormat = 1;
 }

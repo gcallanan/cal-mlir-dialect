@@ -7,7 +7,7 @@ GPU=false
 HYPERCUBE_SIZE=1000000
 DISABLE_ALLOCS=""
 ENABLE_ASYNC_GPU_STREAMS=""
-MERGE_ACTOR_CHAINS=""
+MERGE_SIMPLE_CAL_ACTORS=""
 while getopts O:h:gdsm flag
 do
     case "${flag}" in
@@ -16,7 +16,7 @@ do
         g) GPU=true;;
         d) DISABLE_ALLOCS="disable-hoist-allocs";;
         s) ENABLE_ASYNC_GPU_STREAMS="enable-asynch-gpu-behavior";;
-        m) MERGE_ACTOR_CHAINS="merge-actor-chains";;
+        m) MERGE_SIMPLE_CAL_ACTORS="merge-simple-cal-actors";;
     esac
 done
 
@@ -33,7 +33,7 @@ if [ "$GPU" = false ]; then
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang main.o -o main_executable_from_mlir -lm
 else
-    CMD="cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors=\"cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=512,4,1 $DISABLE_ALLOCS $ENABLE_ASYNC_GPU_STREAMS $MERGE_ACTOR_CHAINS\""
+    CMD="cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors=\"cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=512,4,1 $DISABLE_ALLOCS $ENABLE_ASYNC_GPU_STREAMS $MERGE_SIMPLE_CAL_ACTORS\""
     # echo "    Running command: $CMD"
     eval $CMD | cal-translate --mlir-to-llvmir > main.ll
     opt -O$O main.ll -o main.opt.ll

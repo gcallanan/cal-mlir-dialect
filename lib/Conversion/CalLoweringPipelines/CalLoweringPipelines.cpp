@@ -83,6 +83,9 @@ void registerLowerCalToLLVMPipeline() {
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect.",
       [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
         // 1. FIFO/CAL-specific lowering
+        if (options.mergeSimpleCalActors)
+          pm.addPass(mlir::cal::createMergeSimpleCalActors());
+
         pm.addPass(mlir::cal::insertCalPortPredicates());
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
@@ -158,6 +161,9 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
       "order.",
       [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
         // 1. FIFO/CAL-specific lowering
+        if (options.mergeSimpleCalActors)
+          pm.addPass(mlir::cal::createMergeSimpleCalActors());
+
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertCalToFuncWithStaticSchedulePass());
 
@@ -224,6 +230,9 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
 void buildLowerCalToLLVMWithGPUTensorsPipeline(
     OpPassManager &pm, const CalToLLVMWithGPUTensorsPipelineOptions &options) {
   // 1. FIFO/CAL-specific lowering
+  if (options.mergeSimpleCalActors)
+    pm.addPass(mlir::cal::createMergeSimpleCalActors());
+
   pm.addPass(mlir::cal::insertCalPortPredicates());
   pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
