@@ -61,7 +61,7 @@ for opt_level in 0 1 2 3; do
         echo "    Test run ${test_run}/${NUM_TESTS}..."
         
         # Execute MLIR solver and capture output (CPU)
-        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} 2>&1)
+        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -m 2>&1)
         exit_code=$?
         
         if [ $exit_code -eq 0 ]; then
@@ -111,7 +111,7 @@ for opt_level in 0 1 2 3; do
         echo "    Test run ${test_run}/${NUM_TESTS}..."
         
         # Execute MLIR solver and capture output (GPU)
-        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -g 2>&1)
+        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -g -m 2>&1)
         exit_code=$?
         
         if [ $exit_code -eq 0 ]; then

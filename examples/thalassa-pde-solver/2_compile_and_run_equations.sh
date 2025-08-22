@@ -28,7 +28,7 @@ echo "Step 2: Compile the generated MLIR code to LLVM IR and then to an executab
 echo "   Optimization level: ${O}"
 
 if [ "$GPU" = false ]; then
-    cal-opt --lower-cal-to-llvm advection_diffusion.mlir | cal-translate --mlir-to-llvmir > main.ll
+    cal-opt --lower-cal-to-llvm="$MERGE_SIMPLE_CAL_ACTORS" advection_diffusion.mlir | cal-translate --mlir-to-llvmir > main.ll
     opt -O$O main.ll -o main.opt.ll
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang main.o -o main_executable_from_mlir -lm

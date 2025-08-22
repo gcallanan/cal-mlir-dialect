@@ -751,6 +751,15 @@ bool ActorOp::isSimpleActor() {
                   // actor
   }
 
+  // Check that all port rates are either +1 or -1
+  llvm::MapVector<mlir::Value, int> portRates = savedActionOp.getPortRates();
+  for (const auto &entry : portRates) {
+    int rate = entry.second;
+    if (rate != 1 && rate != -1) {
+      return false; // Port rate must be exactly +1 or -1 for a simple actor
+    }
+  }
+
   int predicateCount = 0;
   for (Operation &op : savedActionOp.getBody().getOps()) {
     if (llvm::isa<cal::Predicate>(op)) {

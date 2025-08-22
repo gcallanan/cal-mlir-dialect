@@ -272,6 +272,7 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createConvertLinalgToParallelLoopsPass());
   pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createParallelLoopFusionPass());
   pm.addPass(mlir::createConvertLinalgToLoopsPass());
   llvm::SmallVector<int64_t, 3> tileSizes;
   if (!options.parallelLoopTileSizes.empty()) {
