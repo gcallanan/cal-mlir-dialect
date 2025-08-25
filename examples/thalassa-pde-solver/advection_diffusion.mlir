@@ -90,7 +90,9 @@ cal.actor @initial_conditions()
             %xN_i64 = arith.index_cast %xN : index to i64
             %xif = arith.uitofp %x_i64 : i64 to f64
             %xNf = arith.uitofp %xN_i64 : i64 to f64
-            %dx = arith.divf %xif, %xNf : f64
+            %x_one = arith.constant 1.0 : f64
+            %xNfp1 = arith.subf %xNf, %x_one : f64
+            %dx = arith.divf %xif, %xNfp1 : f64
             %start = arith.constant 0.000000000 : f64
             %end = arith.constant 1.000000000 : f64
             %d = arith.subf %end, %start : f64
