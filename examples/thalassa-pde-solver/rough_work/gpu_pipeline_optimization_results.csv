@@ -1,12 +1,11 @@
 Backend,Size_1000000_Time(s),Size_1000000_RMS_Error,Size_3000000_Time(s),Size_3000000_RMS_Error,Size_10000000_Time(s),Size_10000000_RMS_Error
-pytorch |cpu,12.0500,1.815e-06,38.9133,0,231.1833,0
-cal-mlir|cpu,10.0935,0,32.4932,0,106.6336,0
-pytorch |gpu,2.2333,1.815e-06,3.4867,0,7.9700,0
-cal-mlir|gpu,2.8934,0,6.9135,0,20.9163,0
-cal-mlir|gpu|hoisting,1.9316,0,5.3255,0,17.1369,0
-cal-mlir|gpu|async,2.8086,0,6.9696,0,20.8278,0
-cal-mlir|gpu|async&hoisting,1.8680,0,5.2345,0,16.9783,0
-cal-mlir|gpu|merged,2.8869,0,6.9476,0,20.8832,0
-cal-mlir|gpu|merged&hoisted,1.9378,0,5.3096,0,17.0831,0
-cal-mlir|gpu|merged&async,2.7927,0,6.8682,0,20.8391,0
-cal-mlir|gpu|merged&async&hoisted,1.8806,0,5.2412,0,17.0180,0
+pytorch |cpu,10.5900,1.815e-06,49.1567,0,246.8300,0
+cal-mlir|cpu,9.8883,0,31.1583,0,105.0576,0
+cal-mlir|cpu|merged,5.3999,0,17.6603,0,61.0654,0
+pytorch |gpu,2.2633,1.815e-06,3.4633,0,7.9067,0
+cal-mlir|gpu,2.8306,0,6.6492,0,19.9157,0
+cal-mlir|gpu|hoisting,1.9416,0,5.2976,0,16.9968,0
+cal-mlir|gpu|async,2.7283,0,6.5509,0,19.8096,0
+cal-mlir|gpu|async&hoisting,1.8757,0,5.2205,0,16.9036,0
+cal-mlir|gpu|merged,1.7669,0,4.2846,0,13.0443,0
+cal-mlir|gpu|merged&hoisted,1.3335,0,3.5668,0,11.3808,0

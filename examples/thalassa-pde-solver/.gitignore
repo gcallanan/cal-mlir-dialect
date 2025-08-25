@@ -10,3 +10,5 @@ advection_diffusion_pytorch_program.py
 actual_results_pytorch.txt
 plot-mlir-results.png
 plot-pytorch-results.png
+rough_work/advection_diffusion_cal_mlir_output.txt
+rough_work/advection_diffusion_pytorch_output.npy

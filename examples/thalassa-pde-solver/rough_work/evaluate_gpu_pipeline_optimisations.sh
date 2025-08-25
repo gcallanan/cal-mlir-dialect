@@ -124,10 +124,10 @@ echo "Running CAL-MLIR backend on the GPU with actor chains merged"
 run_benchmark_tests "bash 2_compile_and_run_equations.sh -g -d -m" "cal-mlir|gpu|merged"
 echo "Running CAL-MLIR backend on the GPU with actor chains merged and hoisting"
 run_benchmark_tests "bash 2_compile_and_run_equations.sh -g -m" "cal-mlir|gpu|merged&hoisted"
-echo "Running CAL-MLIR backend on the GPU with actor chains merged and asynchonous streams"
-run_benchmark_tests "bash 2_compile_and_run_equations.sh -g -d -m -s" "cal-mlir|gpu|merged&async"
-echo "Running CAL-MLIR backend on the GPU with actor chains merged, hoisting and asynchonous streams"
-run_benchmark_tests "bash 2_compile_and_run_equations.sh -g -m -s" "cal-mlir|gpu|merged&async&hoisted"
+#echo "Running CAL-MLIR backend on the GPU with actor chains merged and asynchonous streams"
+#run_benchmark_tests "bash 2_compile_and_run_equations.sh -g -d -m -s" "cal-mlir|gpu|merged&async"
+#echo "Running CAL-MLIR backend on the GPU with actor chains merged, hoisting and asynchonous streams"
+#run_benchmark_tests "bash 2_compile_and_run_equations.sh -g -m -s" "cal-mlir|gpu|merged&async&hoisted"
 
 #===============================================================================
 # RESULTS DISPLAY AND ANALYSIS
