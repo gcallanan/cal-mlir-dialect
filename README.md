@@ -18,7 +18,7 @@ Before installing, ensure you have:
 - CMake (version 3.13.4 or higher)
 - Ninja build system
 - Python 3.6 or higher
-- libeigen3-dev (for solving systems of linear equations)
+- (eigen3) libeigen3-dev (for solving systems of linear equations)
 
 ### 2. Installation Instructions:
 
