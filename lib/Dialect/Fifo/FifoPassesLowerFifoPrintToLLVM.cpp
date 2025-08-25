@@ -192,7 +192,7 @@ public:
 
       // Print the element with format based on type
       if (mlir::isa<FloatType>(elementType)) {
-        rewriter.create<fifo::PrintOp>(loc, StringRef("%.10f "),
+        rewriter.create<fifo::PrintOp>(loc, StringRef("%.12f "),
                                        ArrayRef<Value>{loadOp});
       } else if (mlir::isa<IntegerType>(elementType)) {
         rewriter.create<fifo::PrintOp>(loc, StringRef("%d "),
@@ -217,7 +217,7 @@ public:
           rewriter.create<memref::LoadOp>(loc, tensorVal, ValueRange{idx});
 
       if (mlir::isa<FloatType>(elementType)) {
-        rewriter.create<fifo::PrintOp>(loc, StringRef("%.10f "),
+        rewriter.create<fifo::PrintOp>(loc, StringRef("%.12f "),
                                        ArrayRef<Value>{loadOp});
       } else if (mlir::isa<IntegerType>(elementType)) {
         rewriter.create<fifo::PrintOp>(loc, StringRef("%d "),
