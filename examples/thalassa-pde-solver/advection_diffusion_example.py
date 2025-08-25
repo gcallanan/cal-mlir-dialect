@@ -57,5 +57,5 @@ if args.torch:
 
     with open('advection_diffusion_pytorch_program.py', 'w') as output_file:
         code = thalassa.pde_compile(pde, disc, target='pytorch', ics='external', output='external', device=args.torch_target,
-                                    sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=iterations)
+                                    sol_hypercube=[4, hypercube_size], dt=dt, loop_iterations=iterations, num_acc="f64")
         output_file.write(code)
