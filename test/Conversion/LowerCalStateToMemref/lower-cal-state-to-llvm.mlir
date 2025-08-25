@@ -1,9 +1,6 @@
-// By running lli, this test compiles the MLIR code to LLVM IR and then runs it
-// using the LLVM interpreter. This allows the output of the program to be
-// checked against the expected output.
 //RUN: cal-opt --lower-cal-to-llvm %s | \
-//RUN: cal-translate --mlir-to-llvmir | \
-//RUN: lli | FileCheck %s
+//RUN: mlir-runner --entry-point-result=i32 | \
+//RUN: FileCheck %s
 module {
   func.func @main() -> i32 {
     %constant0 = arith.constant 0 : i32

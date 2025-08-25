@@ -1,4 +1,4 @@
-// RUN: cal-opt %s --lower-cal-to-llvm-with-static-schedule | cal-translate --mlir-to-llvmir | lli | FileCheck %s
+// RUN: cal-opt %s --lower-cal-to-llvm-with-static-schedule | mlir-runner --entry-point-result=void | FileCheck %s
 
 //CHECK: R5: row 1: 0 20666 
 //CHECK-NEXT: Q5: row 0: 264696 452560 

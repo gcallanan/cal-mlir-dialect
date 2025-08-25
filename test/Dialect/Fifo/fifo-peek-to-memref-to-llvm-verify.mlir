@@ -1,4 +1,4 @@
-// RUN: cal-opt --lower-cal-to-llvm %s | cal-translate --mlir-to-llvmir | lli | FileCheck %s
+// RUN: cal-opt --lower-cal-to-llvm %s | mlir-runner --entry-point-result=i32 | FileCheck %s
 
 func.func @main() -> i32 {
     %c0 = arith.constant 0 : i32

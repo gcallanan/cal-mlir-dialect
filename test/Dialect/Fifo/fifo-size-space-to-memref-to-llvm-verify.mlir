@@ -1,8 +1,8 @@
 // Verify the fifo.size and fifo.space operations report the correct values
 // when executed in LLVM.
 // RUN: cal-opt --lower-cal-to-llvm %s | \
-// RUN: cal-translate --mlir-to-llvmir | \
-// RUN: lli | FileCheck %s
+// RUN: mlir-runner --entry-point-result=i32 | \
+// RUN: FileCheck %s
 
 func.func @main() -> i32 {
     %constant0 = arith.constant 0 : i32

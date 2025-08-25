@@ -1,6 +1,6 @@
 //RUN: cal-opt %s | FileCheck %s
 
-// cal-opt fifo-print.mlir --lower-cal-to-llvm | cal-translate --mlir-to-llvmir | /home/gareth/software-repos/mlir-cal/cal-mlir-dialect/llvm-project/build/bin/lli
+// cal-opt fifo-print.mlir --lower-cal-to-llvm | mlir-runner --entry-point-result=i32 | FileCheck %s
 
 func.func @main() -> i32 {
     %constant0 = arith.constant 0 : i32

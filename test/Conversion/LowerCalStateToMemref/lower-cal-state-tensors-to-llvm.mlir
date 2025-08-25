@@ -1,6 +1,6 @@
 //RUN: cal-opt --lower-cal-to-llvm %s | \
-//RUN: cal-translate --mlir-to-llvmir | \
-//RUN: lli | FileCheck %s
+//RUN: mlir-runner --entry-point-result=void | \
+//RUN: FileCheck %s
 
 // CHECK: Accumulated Tensor
 // CHECK: [0.000000] [1.000000] 

@@ -1,4 +1,4 @@
-// RUN: cal-opt --lower-cal-to-llvm %s | cal-translate --mlir-to-llvmir | lli | FileCheck %s
+// RUN: cal-opt --lower-cal-to-llvm %s | mlir-runner --entry-point-result=void | FileCheck %s
 
 //CHECK: src: Sending Tensor
 //CHECK: [1] [1] 
