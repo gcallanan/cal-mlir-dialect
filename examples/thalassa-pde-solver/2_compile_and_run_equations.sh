@@ -8,7 +8,9 @@ HYPERCUBE_SIZE=1000000
 DISABLE_ALLOCS=""
 ENABLE_ASYNC_GPU_STREAMS=""
 MERGE_SIMPLE_CAL_ACTORS=""
-while getopts O:h:gdsm flag
+DELTA_T=0.00001
+ITERATIONS=250
+while getopts O:h:t:i:gdsm flag
 do
     case "${flag}" in
         O) O=${OPTARG};; # Optimization level
@@ -17,12 +19,14 @@ do
         d) DISABLE_ALLOCS="disable-hoist-allocs";;
         s) ENABLE_ASYNC_GPU_STREAMS="enable-asynch-gpu-behavior";;
         m) MERGE_SIMPLE_CAL_ACTORS="merge-simple-cal-actors";;
+        t) DELTA_T=${OPTARG};; # Time step
+        i) ITERATIONS=${OPTARG};; # Number of time iterations
     esac
 done
 
 echo "Step 1: Run thalassa package in advection_diffusion_example.py to generate MLIR code. Default flags compile to the CPU and use optimisation level ${O}"
 
-python advection_diffusion_example.py --hypercube-size $HYPERCUBE_SIZE
+python advection_diffusion_example.py --hypercube-size $HYPERCUBE_SIZE --dt $DELTA_T --iterations $ITERATIONS
 
 echo "Step 2: Compile the generated MLIR code to LLVM IR and then to an executable"
 echo "   Optimization level: ${O}"

@@ -3,7 +3,9 @@ echo "If you run this script, you will need to have the thalassa package install
 
 DEVICE=cpu
 HYPERCUBE_SIZE=1000000
-while getopts "gh:" opt; do
+DELTA_T=0.00001
+ITERATIONS=250
+while getopts "gh:i:t:" opt; do
     case $opt in
         g)
             DEVICE=gpu
@@ -11,6 +13,8 @@ while getopts "gh:" opt; do
         h)
             HYPERCUBE_SIZE=$OPTARG
             ;;
+        t) DELTA_T=${OPTARG};; # Time step
+        i) ITERATIONS=${OPTARG};; # Number of time iterations
         *)
             ;;
     esac
@@ -24,7 +28,7 @@ pip install -e thalassa-repo[torch]
 
 echo "Step 1: Run thalassa package to generate pytorch code"
 
-python advection_diffusion_example.py -torch -torch-target $DEVICE --hypercube-size $HYPERCUBE_SIZE
+python advection_diffusion_example.py -torch -torch-target $DEVICE --hypercube-size $HYPERCUBE_SIZE --dt $DELTA_T --iterations $ITERATIONS
 
 echo "Step 2: Run the generated code using PyTorch in python"
 
