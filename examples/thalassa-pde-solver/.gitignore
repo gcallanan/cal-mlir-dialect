@@ -1,5 +1,6 @@
 venv
 actual_results.txt
+actual_results_cuda.txt
 main.o
 main.ll
 main.opt.ll
@@ -12,3 +13,4 @@ plot-mlir-results.png
 plot-pytorch-results.png
 rough_work/advection_diffusion_cal_mlir_output.txt
 rough_work/advection_diffusion_pytorch_output.npy
+cuda_solver_bin
