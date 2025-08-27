@@ -196,7 +196,7 @@ namespace qrd:
         // this variable and assigning a to it, the result of the multiplication of this with b
         // is of type int(size = 2*m+2*n), meaning that no information is thrown away before the
         // bitshift.
-        //var int(size = 2*m+2*n) temp = a:
+        // var int(size = 2*m+2*n) temp = a:
         a*b >> n
     end
 
@@ -278,7 +278,7 @@ namespace qrd:
         int(size = m+n) r := 0;
         uint count := 0;
         
-        action x_in:[x_in], cordic_angles_in:[rotation_angles]  ==> x_out:[x_out], cordic_angles_out:[rotation_angles]
+        normal: action x_in:[x_in], cordic_angles_in:[rotation_angles]  ==> x_out:[x_out], cordic_angles_out:[rotation_angles]
         guard
             count < M
         var 
@@ -322,7 +322,7 @@ namespace qrd:
             count := count + 1;
         end
 
-        action ==> r_out:[r]
+        final: action ==> r_out:[r]
         guard
             count = M
         do
@@ -377,7 +377,7 @@ namespace qrd:
         int(size = m+n) r := 0;
         uint count := 0;
         
-        action x_in:[x_in]  ==> cordic_angles_out:[rotation_angles]
+        normal: action x_in:[x_in]  ==> cordic_angles_out:[rotation_angles]
         guard
             count < M
         var
@@ -426,7 +426,7 @@ namespace qrd:
             count := count + 1;
         end
 
-        action ==> r_out:[r]
+        final: action ==> r_out:[r]
         guard
             count = M
         do
@@ -472,7 +472,9 @@ namespace qrd:
         var 
             List(type:int(size = m+n), size = N) output
         do
-            print("A"+matrix_number+": row " + row_index + ": ");
+            //if(matrix_number = num_matrices - 10) then
+                print("A"+matrix_number+": row " + row_index + ": ");
+            //end
             foreach uint(size=8) index in 0..N-1 do
 
                 // ======= Generated Source Value: Start =======
@@ -497,7 +499,9 @@ namespace qrd:
                 // printFixedPoint(output[index]);
                 // print(" ");
                 // And comment this line out
-                print("" + output[index] + " ");
+                //if(matrix_number = num_matrices - 10) then
+                    print("" + output[index] + " ");
+                //end
                 next := next + fp_increment;
 
                 // ======= Print Generated Source Values: End =======
@@ -507,7 +511,10 @@ namespace qrd:
                 end
             end
             row_index := row_index + 1;
-            println("");
+
+            //if(matrix_number = num_matrices - 10) then
+                println("");
+            //end
             
             if(row_index = M) then
                 row_index := 0;
@@ -598,21 +605,23 @@ namespace qrd:
 
         action r_in[0..ports_in_row-1]:[input] ==> r_out:[input] repeat ports_in_row
         do
-            print("R"+matrix_number+": row " + row_index + ": ");
-            if(row_index != 0) then
-                foreach uint(size=8) index in 0..(K-ports_in_row)-1 do
-                    print("0 ");
+            //if(matrix_number = num_matrices - 10) then
+                print("R"+matrix_number+": row " + row_index + ": ");
+                if(row_index != 0) then
+                    foreach uint(size=8) index in 0..(K-ports_in_row)-1 do
+                        print("0 ");
+                    end
                 end
-            end
-            foreach uint(size=8) index in 0..ports_in_row-1 do
-                // Uncomment these two lines if you want to print the value
-                // interpreted as a real value instead of as an integer
-                // printFixedPoint(input[index]);
-                // print(" ");
-                // And comment this line out
-                print("" + input[index] + " ");
-            end
-            println("");
+                foreach uint(size=8) index in 0..ports_in_row-1 do
+                    // Uncomment these two lines if you want to print the value
+                    // interpreted as a real value instead of as an integer
+                    // printFixedPoint(input[index]);
+                    // print(" ");
+                    // And comment this line out
+                    print("" + input[index] + " ");
+                end
+                println("");
+            //end
             matrix_number := matrix_number + 1;
         end
     end
@@ -639,16 +648,18 @@ namespace qrd:
 
         action r_in[0..K-1]:[input] ==> q_out:[input] repeat K
         do
-            print("Q"+matrix_number+": row " + row_index + ": ");
-            foreach uint(size=8) index in 0..K-1 do
-                // Uncomment these two lines if you want to print the value
-                // interpreted as a real value instead of as an integer
-                //printFixedPoint(input[index]);
-                //print(" ");
-                // And comment this line out
-                print("" + input[index] + " ");
-            end
-            println("");
+            //if(matrix_number = num_matrices - 10) then
+                print("Q"+matrix_number+": row " + row_index + ": ");
+                foreach uint(size=8) index in 0..K-1 do
+                    // Uncomment these two lines if you want to print the value
+                    // interpreted as a real value instead of as an integer
+                    //printFixedPoint(input[index]);
+                    //print(" ");
+                    // And comment this line out
+                    print("" + input[index] + " ");
+                end
+                println("");
+            //end
             matrix_number := matrix_number + 1;
         end
     end
