@@ -5,7 +5,7 @@ DEVICE=cpu
 HYPERCUBE_SIZE=1000000
 DELTA_T=0.00001
 ITERATIONS=250
-while getopts "gh:i:t:" opt; do
+while getopts "gh:i:" opt; do
     case $opt in
         g)
             DEVICE=gpu
@@ -13,7 +13,6 @@ while getopts "gh:i:t:" opt; do
         h)
             HYPERCUBE_SIZE=$OPTARG
             ;;
-        t) DELTA_T=${OPTARG};; # Time step
         i) ITERATIONS=${OPTARG};; # Number of time iterations
         *)
             ;;
@@ -28,7 +27,7 @@ pip install -e thalassa-repo[torch]
 
 echo "Step 1: Run thalassa package to generate pytorch code"
 
-python advection_diffusion_example.py -torch -torch-target $DEVICE --hypercube-size $HYPERCUBE_SIZE --dt $DELTA_T --iterations $ITERATIONS
+python advection_diffusion_example.py -torch -torch-target $DEVICE --hypercube-size $HYPERCUBE_SIZE --iterations $ITERATIONS
 
 echo "Step 2: Run the generated code using PyTorch in python"
 
@@ -39,7 +38,11 @@ export MKL_NUM_THREADS=1
 exec_time=$(/usr/bin/time -f "%e" python advection_diffusion_pytorch_program.py advection_diffusion_initial_conditions.npy advection_diffusion_pytorch_output.npy 2>&1 >/dev/null)
 echo "    Execution time: ${exec_time} seconds"
 
-python -c "import numpy as np; arr = np.load('advection_diffusion_pytorch_output.npy'); print(' '.join(map(str, arr.flatten())))" > actual_results_pytorch.txt
+python -c "
+import numpy as np
+init = np.load('advection_diffusion_initial_conditions.npy')
+arr = np.load('advection_diffusion_pytorch_output.npy').flatten()
+print(' '.join(map(str, np.concatenate([init, arr]))))" > actual_results_pytorch.txt
 
 echo "Step 3: Compare the output with expected results and plot the results"
 echo "    The expected results are in expected_results.txt"
