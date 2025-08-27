@@ -92,7 +92,7 @@ int main(int argc, char* argv[])
 	const double dx = 0.01;
 	const double alpha = 0.001;
 	for (size_t i = 0; i < nt; i++) {
-		adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, alpha, dx, 0.5 * 0.5 * dx * dx, sz + 2);
+		adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, alpha, dx, 0.5 * 0.5 * dx * dx, sz);
 		std::swap(d_u, d_u_next);
 	}
 	
