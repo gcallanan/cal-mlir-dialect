@@ -14,3 +14,5 @@ plot-pytorch-results.png
 rough_work/advection_diffusion_cal_mlir_output.txt
 rough_work/advection_diffusion_pytorch_output.npy
 cuda_solver_bin
+timeline.nsys-rep
+timeline.sqlite

@@ -12,7 +12,7 @@ done
 
 ITERATIONS=$((ITERATIONS * 4))
 
-nvcc -O$O -arch=sm_75 rough_work/cuda_ad.cu -o cuda_solver_bin
+nvcc -O$O -arch=sm_75 rough_work/cuda_ac.cu -o cuda_solver_bin
 
 start_time=$(date +%s.%N)
 ./cuda_solver_bin $HYPERCUBE_SIZE $ITERATIONS > actual_results_cuda.txt
