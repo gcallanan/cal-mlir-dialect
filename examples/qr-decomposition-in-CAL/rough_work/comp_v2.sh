@@ -4,12 +4,13 @@ mlir_times_dynamic=()
 mlir_times_static=()
 c_times=()
 numTests=3
+sleepTime=5
 
 # Build and Run CPP project
 
 rm -rf myproject
 streamblocks multicore --set experimental-network-elaboration=on --set reduction-algorithm=ordered-condition-checking --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
-sleep 15
+sleep $sleepTime
 
 for O in "${opt_levels[@]}"; do
 
@@ -19,7 +20,7 @@ for O in "${opt_levels[@]}"; do
   cmake --build . -j24 2> /dev/null
   cd ../..
   cp myproject/bin/Top main_executable_from_cpp
-  sleep 10
+  sleep $sleepTime
 
   echo "Running CPP binary with -0$O..."
   total_time=0
@@ -27,7 +28,7 @@ for O in "${opt_levels[@]}"; do
     run_time=$(/usr/bin/time -f "%e" ./main_executable_from_cpp 2>&1 1>/dev/null)
     total_time=$(echo "$total_time + $run_time" | bc)
     echo "    Test $i: $run_time seconds"
-    sleep 10
+    sleep $sleepTime
   done
   cpp_time=$(echo "scale=3; $total_time / $numTests" | bc)
   echo "Average CPP time: $cpp_time seconds"
@@ -40,7 +41,7 @@ rm -rf myproject
 bash generate_mlir.sh
 for O in "${opt_levels[@]}"; do
     bash create_binary_from_mlir.sh -O $O
-    sleep 15
+    sleep $sleepTime
 
     echo "Running MLIR binary with dynamic schedule and -0$O..."
     total_time=0
@@ -48,7 +49,7 @@ for O in "${opt_levels[@]}"; do
       run_time=$(/usr/bin/time -f "%e" ./main_executable 2>&1 1>/dev/null)
       total_time=$(echo "$total_time + $run_time" | bc)
       echo "    Test $i: $run_time seconds"
-      sleep 10
+      sleep $sleepTime
     done
     mlir_time=$(echo "scale=3; $total_time / $numTests" | bc)
     echo "MLIR Dynamic Schedule time: $mlir_time seconds"
@@ -60,7 +61,7 @@ rm -rf myproject
 bash generate_mlir.sh
 for O in "${opt_levels[@]}"; do
     bash create_binary_from_mlir.sh -O $O -s
-    sleep 15
+    sleep $sleepTime
 
     echo "Running MLIR binary with static schedule and -0$O..."
     total_time=0
@@ -68,7 +69,7 @@ for O in "${opt_levels[@]}"; do
       run_time=$(/usr/bin/time -f "%e" ./main_executable 2>&1 1>/dev/null)
       total_time=$(echo "$total_time + $run_time" | bc)
       echo "    Test $i: $run_time seconds"
-      sleep 10
+      sleep $sleepTime
     done
     mlir_time=$(echo "scale=3; $total_time / $numTests" | bc)
     echo "MLIR Static Schedule time: $mlir_time seconds"
@@ -83,7 +84,7 @@ tychoc --set experimental-network-elaboration=on --set reduction-algorithm=order
 
 for O in "${opt_levels[@]}"; do
   clang myproject/*.c -O$O -o main_executable_from_c
-  sleep 10
+  sleep $sleepTime
   #clang -S -emit-llvm myproject/*.c -o myproject/output.ll
   echo "Running C binary with -0$O..."
   total_time=0
@@ -91,7 +92,7 @@ for O in "${opt_levels[@]}"; do
     run_time=$(/usr/bin/time -f "%e" ./main_executable_from_c 2>&1 1>/dev/null)
     total_time=$(echo "$total_time + $run_time" | bc)
     echo "    Test $i: $run_time seconds"
-    sleep 10
+    sleep $sleepTime
   done
   c_time=$(echo "scale=3; $total_time / $numTests" | bc)
   echo "C time: $c_time seconds"
