@@ -26,7 +26,7 @@ __global__ void initial_conditions(double *__restrict__ u, size_t n)
 {
 	size_t i = threadIdx.x + blockDim.x * blockIdx.x;
 	if (i < n) {
-		const double x = i / static_cast<double>(n);
+		const double x = i / (static_cast<double>(n) - 1);
 		u[i] = exp(-(x-0.5)*(x-0.5)/0.01);
 	}
 }
@@ -75,12 +75,11 @@ int main(int argc, char* argv[])
 	double *d_u, *d_u_next;
 	double *u = new double[sz];
 	double *initial_u = new double[sz];
-	cudaMalloc(&d_u, sz*sizeof(double));
-	cudaMalloc(&d_u_next, sz*sizeof(double));
+	cudaMalloc(&d_u, sz * sizeof(double));
+	cudaMalloc(&d_u_next, sz * sizeof(double));
 	
 	constexpr dim3 block_size{1024};
 	dim3 grid_size{static_cast<unsigned int>((sz + block_size.x - 1) / block_size.x)};
-
 	// Create CUDA stream for adv_diff kernels
 	cudaStream_t stream;
 	cudaStreamCreate(&stream);
@@ -90,18 +89,19 @@ int main(int argc, char* argv[])
 
 	cudaMemcpy(initial_u, d_u, sz*sizeof(double), cudaMemcpyDeviceToHost);
 	
+	const double dx = 0.01;
+	const double alpha = 0.001;
 	for (size_t i = 0; i < nt; i++) {
-		adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, 0.001, 0.01, 0.00001, sz);
+		adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, alpha, dx, 0.5 * 0.5 * dx * dx, sz + 2);
 		std::swap(d_u, d_u_next);
 	}
 	
 	// Synchronize the stream at the end of the loop
 	cudaStreamSynchronize(stream);
 	
-	cudaMemcpy(u, d_u, sz*sizeof(double), cudaMemcpyDeviceToHost);
-
-
-	//std::cout << u[sz / 2] << std::endl;
+	// Check whether nt is even or odd: where the result is depends on that due to swapping the pointers every loop iteration
+	double *res = (nt & 0x1) ? d_u_next : d_u;
+	cudaMemcpy(u, res, sz*sizeof(double), cudaMemcpyDeviceToHost);
 
 	// Print initial_u in a line separated by a space, with precision 12
 
@@ -119,6 +119,11 @@ int main(int argc, char* argv[])
 	}
 	std::cout << std::endl;
 
+	cudaFree(d_u);
+	cudaFree(d_u_next);
+
+	delete[] initial_u;
+	delete[] u;
 
 	return 0;
 }
