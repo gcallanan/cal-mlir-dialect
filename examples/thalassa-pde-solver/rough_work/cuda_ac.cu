@@ -5,12 +5,14 @@
 
 #define DIX(u)  (u[i] - u[i-1])
 #define D2IX(u) (u[i-1] - 2 * u[i] + u[i+1])
+#define DX 0.01
+#define DX_INV 100.0
 
-__global__ void adv_diff(double *__restrict__ u_next, const double *__restrict__ u, const double alpha, const double dx, const double dt, size_t n)
+__global__ void adv_diff(double *__restrict__ u_next, const double *__restrict__ u, const double alpha, const double dt, size_t n)
 {
 	size_t i = threadIdx.x + blockDim.x * blockIdx.x;
 	if ((i > 0) && (i < n - 1)) {
-		u_next[i] = u[i] - (dt * DIX(u) / dx) + (alpha * dt * D2IX(u) / dx / dx);
+		u_next[i] = u[i] - (dt * DIX(u) * DX_INV) + (alpha * dt * D2IX(u) * DX_INV * DX_INV);
 	}
 }
 
@@ -89,10 +91,9 @@ int main(int argc, char* argv[])
 
 	cudaMemcpy(initial_u, d_u, sz*sizeof(double), cudaMemcpyDeviceToHost);
 	
-	const double dx = 0.01;
 	const double alpha = 0.001;
 	for (size_t i = 0; i < nt; i++) {
-		adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, alpha, dx, 0.5 * 0.5 * dx * dx, sz);
+		adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, alpha, 0.5 * 0.5 * DX * DX, sz);
 		std::swap(d_u, d_u_next);
 	}
 	
