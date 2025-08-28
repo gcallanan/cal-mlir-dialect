@@ -1,0 +1,19 @@
+=== Performance Comparison Results ===
+
+Backend      | Num Tests  | Exec Time (s)   | RMS Error      
+-------------+------------+-----------------+----------------
+MLIR-O0-CPU  | 3          | 45.5555         | 1.8775e-05     
+MLIR-O0-GPU  | 3          | 9.5854          | 1.8775e-05     
+MLIR-O1-CPU  | 3          | 39.9721         | 1.8775e-05     
+MLIR-O1-GPU  | 3          | 6.3384          | 1.8775e-05     
+MLIR-O2-CPU  | 3          | 39.1566         | 1.8775e-05     
+MLIR-O2-GPU  | 3          | 6.3393          | 1.8775e-05     
+MLIR-O3-CPU  | 3          | 39.2818         | 1.8775e-05     
+MLIR-O3-GPU  | 3          | 6.3240          | 1.8775e-05     
+PyTorch-CPU  | 3          | 39.4400         | 1.8775e-05     
+PyTorch-GPU  | 3          | 4.3367          | 1.8775e-05     
+Results saved to rough_work/comparison_results.csv
+
+=== Summary ===
+Fastest execution: PyTorch-GPU with 4.3367s
+

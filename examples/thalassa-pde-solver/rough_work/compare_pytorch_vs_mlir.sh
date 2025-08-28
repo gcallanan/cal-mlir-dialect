@@ -19,6 +19,7 @@ echo
 #===============================================================================
 NUM_TESTS=3  # Number of times to run each test for averaging execution time (default 20)
 sleep_time=5  # Sleep time between runs to avoid system overload (default 5)
+iterations=1000  # Number of iterations for the solver (default 1000)
 
 #===============================================================================
 # DATA STRUCTURES
@@ -61,7 +62,7 @@ for opt_level in 0 1 2 3; do
         echo "    Test run ${test_run}/${NUM_TESTS}..."
         
         # Execute MLIR solver and capture output (CPU)
-        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} 2>&1)
+        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -i $iterations 2>&1)
         exit_code=$?
         
         if [ $exit_code -eq 0 ]; then
@@ -111,7 +112,7 @@ for opt_level in 0 1 2 3; do
         echo "    Test run ${test_run}/${NUM_TESTS}..."
         
         # Execute MLIR solver and capture output (GPU)
-        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -g 2>&1)
+        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -i $iterations -g 2>&1)
         exit_code=$?
         
         if [ $exit_code -eq 0 ]; then
@@ -169,7 +170,7 @@ for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
     echo "    Test run ${test_run}/${NUM_TESTS}..."
     
     # Execute PyTorch solver and capture output (CPU)
-    output=$(bash rough_work/compile_and_run_equations_using_pytorch.sh 2>&1)
+    output=$(bash rough_work/compile_and_run_equations_using_pytorch.sh -i $iterations 2>&1)
     exit_code=$?
     
     if [ $exit_code -eq 0 ]; then
@@ -219,7 +220,7 @@ for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
     echo "    Test run ${test_run}/${NUM_TESTS}..."
     
     # Execute PyTorch solver and capture output (GPU)
-    output=$(bash rough_work/compile_and_run_equations_using_pytorch.sh -g 2>&1)
+    output=$(bash rough_work/compile_and_run_equations_using_pytorch.sh -i $iterations -g 2>&1)
     exit_code=$?
     
     if [ $exit_code -eq 0 ]; then
