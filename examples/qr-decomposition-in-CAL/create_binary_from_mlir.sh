@@ -22,10 +22,10 @@ rm -f main.ll main.o main_executable main.opt.ll
 
 if [ "$generateStaticSchedule" -eq 1 ]; then
     echo "Generating static schedule"
-    cal-opt --lower-cal-to-llvm-with-static-schedule myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > main.ll
+    cal-opt --lower-cal-to-llvm-with-static-schedule="disable-hoist-allocs" myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > main.ll
 else
     echo "Using dynamic schedule generation."
-    cal-opt --lower-cal-to-llvm myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > main.ll
+    cal-opt --lower-cal-to-llvm="disable-hoist-allocs" myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > main.ll
 fi
 
 opt -O$O main.ll -o main.opt.ll
