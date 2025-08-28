@@ -18,11 +18,12 @@ echo
 #===============================================================================
 # CONFIGURATION
 #===============================================================================
-sleep_time=5
+sleep_time=10
 opt_level=3
 NUM_TESTS=3
+iterations=1000
 HYPERCUBE_SIZES=(1000000 3000000 10000000)
-#HYPERCUBE_SIZES=(10000000)
+#HYPERCUBE_SIZES=(1000000)
 
 #===============================================================================
 # DATA STRUCTURES
@@ -70,7 +71,7 @@ run_benchmark_tests() {
             echo "        Test run ${test_run}/${NUM_TESTS}..."
 
             # Add hypercube size parameter to command
-            local full_command="$command -h $hypercube_size"
+            local full_command="$command -h $hypercube_size -i $iterations"
             output=$(eval "$full_command" 2>&1)
             exit_code=$?
 
