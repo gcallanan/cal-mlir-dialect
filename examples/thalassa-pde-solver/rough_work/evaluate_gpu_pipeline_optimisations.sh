@@ -18,10 +18,10 @@ echo
 #===============================================================================
 # CONFIGURATION
 #===============================================================================
-sleep_time=10
+sleep_time=1
 opt_level=3
 NUM_TESTS=3
-iterations=1000
+iterations=2000
 HYPERCUBE_SIZES=(1000000 3000000 10000000)
 #HYPERCUBE_SIZES=(1000000)
 
@@ -65,6 +65,8 @@ run_benchmark_tests() {
     for hypercube_size in "${HYPERCUBE_SIZES[@]}"; do
         echo "    Testing with hypercube size: $hypercube_size"
         local -a times_for_avg=()
+        local -a times_for_avg_gpu_memcpy=()
+        local -a times_for_avg_gpu_kern=()
         local rms_error=""
         
         for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
@@ -92,28 +94,33 @@ run_benchmark_tests() {
                 all_rms_errors+=("FAILED")
                 continue 2  # Skip to next hypercube size
             fi
-        done
 
-        if [ "$prof_enabled" = true ]; then
-            # Run GPU profiling and extract memcpy and kernel times using nsys
-            nsys_command="nsys profile --trace-fork-before-exec true --force-overwrite true --trace=cuda,nvtx --output=timeline --stats=true ${full_command}"
-            eval "$nsys_command" > /dev/null 2>&1
-            mem_time_ns=$(nsys stats --report cuda_gpu_mem_time_sum --force-export=true timeline.nsys-rep --format csv 2>/dev/null | awk -F',' 'NR>1 {sum += $2} END {printf "%.0f", sum}')
-            kern_time_ns=$(nsys stats --report cuda_gpu_kern_sum --force-export=true --format csv timeline.nsys-rep 2>/dev/null | awk -F',' '/^[0-9]/ {sum += $2} END {printf "%.0f", sum}')
-            sleep $sleep_time
-        else
-            mem_time_ns="N/A"
-            kern_time_ns="N/A"
-        fi
-        echo "            GPU MemCpy Time: ${mem_time_ns}ns"
-        echo "            GPU Kernel Time: ${kern_time_ns}ns"
+            if [ "$prof_enabled" = true ]; then
+                # Run GPU profiling and extract memcpy and kernel times using nsys
+                nsys_command="nsys profile --trace-fork-before-exec true --force-overwrite true --trace=cuda,nvtx --output=timeline --stats=true ${full_command}"
+                eval "$nsys_command" > /dev/null 2>&1
+                mem_time_ns=$(nsys stats --report cuda_gpu_mem_time_sum --force-export=true timeline.nsys-rep --format csv 2>/dev/null | awk -F',' 'NR>1 {sum += $2} END {printf "%.0f", sum}')
+                kern_time_ns=$(nsys stats --report cuda_gpu_kern_sum --force-export=true --format csv timeline.nsys-rep 2>/dev/null | awk -F',' '/^[0-9]/ {sum += $2} END {printf "%.0f", sum}')
+                sleep $sleep_time
+            else
+                mem_time_ns="-1"
+                kern_time_ns="-1"
+            fi
+            times_for_avg_gpu_memcpy+=("$mem_time_ns")
+            times_for_avg_gpu_kern+=("$kern_time_ns")
+            echo "            GPU MemCpy Time: ${mem_time_ns}ns"
+            echo "            GPU Kernel Time: ${kern_time_ns}ns"
+            echo "${backend_name},${hypercube_size},${exec_time},${rms_error},${mem_time_ns},${kern_time_ns},$((mem_time_ns + kern_time_ns))" >> rough_work/gpu_pipeline_optimization_log.csv
+        done
 
         if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
             local avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
             all_times+=("$avg_time")
             all_rms_errors+=("$rms_error")
-            all_gpu_memcpy_times+=("$mem_time_ns")
-            all_gpu_kernel_times+=("$kern_time_ns")
+            local avg_mem_time_ns=$(echo "${times_for_avg_gpu_memcpy[@]}" | tr ' ' '\n' | awk '{sum+=$1} END {printf "%.0f", sum/NR}')
+            local avg_kern_time_ns=$(echo "${times_for_avg_gpu_kern[@]}" | tr ' ' '\n' | awk '{sum+=$1} END {printf "%.0f", sum/NR}')
+            all_gpu_memcpy_times+=("$avg_mem_time_ns")
+            all_gpu_kernel_times+=("$avg_kern_time_ns")
             echo "        Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
         else
             echo "        Some test runs failed, not calculating average time."
@@ -136,6 +143,9 @@ run_benchmark_tests() {
 #===============================================================================
 # GPU OPTIMIZATION TESTING
 #===============================================================================
+
+echo "Log generated at: $(date)" >> rough_work/gpu_pipeline_optimization_log.csv
+echo "backend,hypercube_size,exec_time,rms_error,memcpy_time_ns,kernel_time_ns,gpu_total_ns" >> rough_work/gpu_pipeline_optimization_log.csv
 
 echo "Running pytorch backend on the CPU"
 run_benchmark_tests "bash rough_work/compile_and_run_equations_using_pytorch.sh" "pytorch |cpu"

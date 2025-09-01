@@ -8,10 +8,10 @@ git clone --branch llvmorg-20.1.0 https://github.com/llvm/llvm-project.git
 cd llvm-project
 
 git apply ../patches/gpu-memcpy-fix.patch
-git apply ../patches/remove-repeated-gpu-module-loads.patch
+#git apply ../patches/remove-repeated-gpu-module-loads.patch
 
 # Create and navigate to the build directory
-mkdir -f build
+mkdir -p build
 cd build
 
 # Optional: Enable GPU support via CUDA runner
