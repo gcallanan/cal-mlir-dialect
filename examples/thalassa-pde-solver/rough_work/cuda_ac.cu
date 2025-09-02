@@ -6,13 +6,27 @@
 #define DIX(u)  (u[i] - u[i-1])
 #define D2IX(u) (u[i-1] - 2 * u[i] + u[i+1])
 #define DX 0.01
-#define DX_INV 100.0
 
-__global__ void adv_diff(double *__restrict__ u_next, const double *__restrict__ u, const double alpha, const double dt, size_t n)
+__global__ void adv_diff(double *__restrict__ u_next, const double *__restrict__ u, const double alpha, const double dt, const double dx_inv, size_t n)
 {
 	size_t i = threadIdx.x + blockDim.x * blockIdx.x;
 	if ((i > 0) && (i < n - 1)) {
-		u_next[i] = u[i] - (dt * DIX(u) * DX_INV) + (alpha * dt * D2IX(u) * DX_INV * DX_INV);
+		u_next[i] = u[i] - (dt * DIX(u) * dx_inv) + (alpha * dt * D2IX(u) * dx_inv * dx_inv);
+	}
+}
+
+__global__ void conv(double *__restrict__ u_next, const double *__restrict__ u, const double *__restrict__ filter, const uint filter_size , const double alpha, const double dt, const double dx_inv, size_t n)
+{
+	size_t i = threadIdx.x + blockDim.x * blockIdx.x;
+	if (i < n) {
+		double sum = 0.0;
+		for (int k = 0; k < filter_size; ++k) {
+			int idx = i + k - filter_size / 2;
+			if (idx >= 0 && idx < n) {
+				sum += u[idx] * filter[k];
+			}
+		}
+		u_next[i] = sum;
 	}
 }
 
@@ -71,14 +85,26 @@ int main(int argc, char* argv[])
 			return 1;
 		}
 	}
+	// Parse optional third argument for conv_kernel flag
+	bool conv_kernel = false;
+	if (argc >= 4 && std::atoi(argv[3]) != 0) {
+		conv_kernel = true;
+	}
 	
 	//std::cout << "Running with hypercube size: " << sz << ", iterations: " << nt << std::endl;
 	
+	uint filter_length = 3;
 	double *d_u, *d_u_next;
 	double *u = new double[sz];
 	double *initial_u = new double[sz];
 	cudaMalloc(&d_u, sz * sizeof(double));
 	cudaMalloc(&d_u_next, sz * sizeof(double));
+
+	// Create and initialize filter array on host
+	double filter[3] = {0.00275, 0.997, 0.00025};
+	double *filter_device;
+	cudaMalloc(&filter_device, 3 * sizeof(double));
+	cudaMemcpy(filter_device, filter, 3 * sizeof(double), cudaMemcpyHostToDevice);
 	
 	constexpr dim3 block_size{1024};
 	dim3 grid_size{static_cast<unsigned int>((sz + block_size.x - 1) / block_size.x)};
@@ -92,8 +118,13 @@ int main(int argc, char* argv[])
 	cudaMemcpy(initial_u, d_u, sz*sizeof(double), cudaMemcpyDeviceToHost);
 	
 	const double alpha = 0.001;
+	const double dx_inv = 1.0 / DX;
 	for (size_t i = 0; i < nt; i++) {
-		adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, alpha, 0.5 * 0.5 * DX * DX, sz);
+		if (conv_kernel) {
+			conv<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, filter_device, filter_length, alpha, 0.5 * 0.5 * DX * DX, dx_inv, sz);
+		} else {
+			adv_diff<<<grid_size, block_size, 0, stream>>>(d_u_next, d_u, alpha, 0.5 * 0.5 * DX * DX, dx_inv, sz);
+		}
 		std::swap(d_u, d_u_next);
 	}
 	

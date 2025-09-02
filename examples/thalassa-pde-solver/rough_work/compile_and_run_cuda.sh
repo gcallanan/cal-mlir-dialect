@@ -1,12 +1,14 @@
 O=3
 HYPERCUBE_SIZE=1000000
 ITERATIONS=250
-while getopts O:h:i: flag
+USE_CONV_KERNEL="0"
+while getopts O:h:i:c flag
 do
     case "${flag}" in
         O) O=${OPTARG};; # Optimization level
         h) HYPERCUBE_SIZE=${OPTARG};; # Hypercube size
         i) ITERATIONS=${OPTARG};; # Number of time iterations
+        c) USE_CONV_KERNEL="1";; # Use convolution kernel if -c is present
     esac
 done
 
@@ -15,7 +17,7 @@ ITERATIONS=$((ITERATIONS * 4))
 nvcc -O$O -arch=sm_75 rough_work/cuda_ac.cu -o cuda_solver_bin
 
 start_time=$(date +%s.%N)
-./cuda_solver_bin $HYPERCUBE_SIZE $ITERATIONS > actual_results_cuda.txt
+./cuda_solver_bin $HYPERCUBE_SIZE $ITERATIONS $USE_CONV_KERNEL > actual_results_cuda.txt
 end_time=$(date +%s.%N)
 exec_time=$(echo "$end_time - $start_time" | bc)
 echo "    Execution time: ${exec_time} seconds"

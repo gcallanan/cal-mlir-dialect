@@ -155,8 +155,10 @@ echo "Running CAL-MLIR backend on the CPU"
 run_benchmark_tests "bash 2_compile_and_run_equations.sh -m" "cal-mlir|cpu|merged"
 echo "Running pytorch backend on the GPU"
 run_benchmark_tests "bash rough_work/compile_and_run_equations_using_pytorch.sh -g" "pytorch |gpu" -gpu_prof
-echo "Running cuda implementation on the GPU"
-run_benchmark_tests "bash rough_work/compile_and_run_cuda.sh" "cuda |gpu" -gpu_prof
+echo "Running cuda implementation on the GPU with optomised kernel"
+run_benchmark_tests "bash rough_work/compile_and_run_cuda.sh" "cuda |gpu & advec_diff kernel" -gpu_prof
+echo "Running cuda implementation on the GPU with standard convolution kernel"
+run_benchmark_tests "bash rough_work/compile_and_run_cuda.sh -c" "cuda |gpu & conv kernel" -gpu_prof
 echo "Running CAL-MLIR backend on the GPU"
 run_benchmark_tests "bash 2_compile_and_run_equations.sh -g -d" "cal-mlir|gpu" -gpu_prof
 echo "Running CAL-MLIR backend on the GPU with hoisting"
