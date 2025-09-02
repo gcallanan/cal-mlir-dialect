@@ -17,10 +17,11 @@ echo
 #===============================================================================
 # CONFIGURATION
 #===============================================================================
-NUM_TESTS=3  # Number of times to run each test for averaging execution time (default 20)
-sleep_time=5  # Sleep time between runs to avoid system overload (default 5)
-iterations=1000  # Number of iterations for the solver (default 1000)
+NUM_TESTS=5  # Number of times to run each test for averaging execution time (default 20)
+sleep_time=3  # Sleep time between runs to avoid system overload (default 5)
+iterations=2000  # Number of iterations for the solver (default 1000)
 
+echo "Iterations: $iterations"
 #===============================================================================
 # DATA STRUCTURES
 #===============================================================================
@@ -43,7 +44,7 @@ extract_metrics() {
 }
 
 #===============================================================================
-# MLIR BACKEND TESTING
+# MLIR BACKEND TESTING - No Optimisations
 #===============================================================================
 
 echo "Running MLIR backend with different optimization levels and CPU/GPU targets..."
@@ -143,6 +144,115 @@ for opt_level in 0 1 2 3; do
         echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
     else
         backend_names+=("MLIR-O${opt_level}-GPU")
+        exec_times+=("FAILED")
+        rms_errors+=("FAILED")
+    fi
+    
+    # Clean up array for next iteration
+    unset times_for_avg
+done
+
+#===============================================================================
+# MLIR BACKEND TESTING - Merging Pass Enabled
+#===============================================================================
+
+echo "Running MLIR backend with different optimization levels and CPU/GPU targets..."
+
+# Run MLIR backend with optimization levels 0-3 and CPU/GPU targets
+for opt_level in 0 1 2 3; do
+    # Test CPU compilation
+    echo "  Running MLIR with -O${opt_level} (CPU) and merging (${NUM_TESTS} times for averaging)..."
+    
+    # Initialize arrays and variables for current optimization level
+    declare -a times_for_avg
+    rms_error=""
+    
+    # Run multiple times for averaging
+    for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
+        echo "    Test run ${test_run}/${NUM_TESTS}..."
+        
+        # Execute MLIR solver and capture output (CPU)
+        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -m -i $iterations 2>&1)
+        exit_code=$?
+        
+        if [ $exit_code -eq 0 ]; then
+            # Extract metrics from last two lines
+            metrics=$(extract_metrics "$output")
+            exec_time=$(echo "$metrics" | head -1)
+            if [ -z "$rms_error" ]; then
+                rms_error=$(echo "$metrics" | tail -1)
+            fi
+            echo "        Execution time: ${exec_time}s"
+            sleep $sleep_time
+            
+            times_for_avg+=("$exec_time")
+        else
+            echo "    Failed with exit code $exit_code"
+            break
+        fi
+    done
+    
+    # Calculate average execution time if all tests passed
+    if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
+        avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
+        
+        backend_names+=("MLIR-O${opt_level}-CPU-m")
+        exec_times+=("$avg_time")
+        rms_errors+=("$rms_error")
+        
+        echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
+    else
+        backend_names+=("MLIR-O${opt_level}-CPU-m")
+        exec_times+=("FAILED")
+        rms_errors+=("FAILED")
+    fi
+    
+    # Clean up array for next iteration
+    unset times_for_avg
+    
+    # Test GPU compilation
+    echo "  Running MLIR with -O${opt_level} -g (GPU) and merging (${NUM_TESTS} times for averaging)..."
+    
+    # Initialize arrays and variables for current optimization level (GPU)
+    declare -a times_for_avg
+    rms_error=""
+    
+    # Run multiple times for averaging
+    for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
+        echo "    Test run ${test_run}/${NUM_TESTS}..."
+        
+        # Execute MLIR solver and capture output (GPU)
+        output=$(bash 2_compile_and_run_equations.sh -O ${opt_level} -m -i $iterations -g 2>&1)
+        exit_code=$?
+        
+        if [ $exit_code -eq 0 ]; then
+            # Extract metrics from last two lines
+            metrics=$(extract_metrics "$output")
+            exec_time=$(echo "$metrics" | head -1)
+            if [ -z "$rms_error" ]; then
+                rms_error=$(echo "$metrics" | tail -1)
+            fi
+            echo "        Execution time: ${exec_time}s"
+            sleep $sleep_time
+            
+            times_for_avg+=("$exec_time")
+        else
+            echo "    Failed with exit code $exit_code"
+            break
+        fi
+    done
+    
+    # Calculate average execution time if all tests passed
+    if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
+        avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
+        
+        backend_names+=("MLIR-O${opt_level}-GPU-m")
+        exec_times+=("$avg_time")
+        rms_errors+=("$rms_error")
+        
+        echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
+    else
+        backend_names+=("MLIR-O${opt_level}-GPU-m")
         exec_times+=("FAILED")
         rms_errors+=("FAILED")
     fi
