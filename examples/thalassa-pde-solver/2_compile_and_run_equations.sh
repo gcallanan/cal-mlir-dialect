@@ -35,7 +35,7 @@ if [ "$GPU" = false ]; then
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang main.o -o main_executable_from_mlir -lm
 else
-    CMD="cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors=\"cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=512,4,1 $DISABLE_ALLOCS $ENABLE_ASYNC_GPU_STREAMS $MERGE_SIMPLE_CAL_ACTORS\""
+    CMD="cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors=\"cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=256,1,1 $DISABLE_ALLOCS $ENABLE_ASYNC_GPU_STREAMS $MERGE_SIMPLE_CAL_ACTORS\""
     # echo "    Running command: $CMD"
     eval $CMD | cal-translate --mlir-to-llvmir > main.ll
     opt -O$O main.ll -o main.opt.ll
