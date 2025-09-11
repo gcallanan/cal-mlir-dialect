@@ -1,16 +1,58 @@
 === Performance Results ===
-iiterations=1000
+
 Backend                             || Size 1000000                             || Size 3000000                             || Size 10000000                            
                                     || Time   |RMS      |MemCpy |Kern   |GPU_Tot|| Time   |RMS      |MemCpy |Kern   |GPU_Tot|| Time   |RMS      |MemCpy |Kern   |GPU_Tot
 ------------------------------------++------------------------------------------++------------------------------------------++------------------------------------------
-pytorch |cpu                        || 39.8967| 1.88e-05|    N/A|    N/A|      0|| 184.3267| 0.00e+00|    N/A|    N/A|      0|| 893.1967| 0.00e+00|    N/A|    N/A|      0
-cal-mlir|cpu                        || 40.2061| 1.88e-05|    N/A|    N/A|      0|| 124.8961| 0.00e+00|    N/A|    N/A|      0|| 412.9366| 0.00e+00|    N/A|    N/A|      0
-cal-mlir|cpu|merged                 || 21.0289| 1.88e-05|    N/A|    N/A|      0|| 69.4053| 0.00e+00|    N/A|    N/A|      0|| 234.0308| 0.00e+00|    N/A|    N/A|      0
-pytorch |gpu                        ||  4.3167| 1.88e-05|  0.950|  1.690|  2.640||  9.2300| 0.00e+00|  2.770|  4.897|  7.667|| 26.6467| 0.00e+00|  9.131| 16.195| 25.326
-cuda |gpu                           ||  4.5745| 1.88e-05|  0.006|  3.714|  3.720|| 13.1981| 0.00e+00|  0.017| 10.841| 10.858|| 43.6497| 0.00e+00|  0.061| 36.056| 36.117
-cal-mlir|gpu                        ||  9.8073| 1.88e-05|  4.521|  1.051|  5.572|| 23.1293| 0.00e+00| 14.435|  3.100| 17.535|| 68.7916| 0.00e+00| 48.944| 10.341| 59.285
-cal-mlir|gpu|hoisting               ||  6.2547| 1.88e-05|  4.233|  1.211|  5.444|| 17.6420| 0.00e+00| 12.350|  3.557| 15.907|| 57.3653| 0.00e+00| 40.792| 11.751| 52.543
-cal-mlir|gpu|async                  ||  9.4553| 1.88e-05|  4.623|  1.056|  5.679|| 22.7255| 0.00e+00| 14.527|  3.111| 17.638|| 68.6975| 0.00e+00| 49.089| 10.354| 59.443
-cal-mlir|gpu|async&hoisting         ||  5.9933| 1.88e-05|  4.235|  1.205|  5.440|| 17.3537| 0.00e+00| 12.350|  3.529| 15.879|| 57.0992| 0.00e+00| 40.769| 11.653| 52.422
-cal-mlir|gpu|merged                 ||  5.6025| 1.88e-05|  2.193|  0.985|  3.178|| 13.6615| 0.00e+00|  6.967|  3.063| 10.030|| 41.5686| 0.00e+00| 24.123| 10.333| 34.456
-cal-mlir|gpu|merged&hoisted         ||  3.8063| 1.88e-05|  1.893|  1.249|  3.142|| 10.6927| 0.00e+00|  5.505|  3.615|  9.120|| 34.9370| 0.00e+00| 18.179| 11.945| 30.124
+pytorch |cpu                        || 39.0500| 1.88e-05|    N/A|    N/A|      0|| 174.6333| 0.00e+00|    N/A|    N/A|      0|| 890.3167| 0.00e+00|    N/A|    N/A|      0
+cal-mlir|cpu                        || 40.0398| 1.88e-05|    N/A|    N/A|      0|| 124.9810| 0.00e+00|    N/A|    N/A|      0|| 406.3921| 0.00e+00|    N/A|    N/A|      0
+cal-mlir|cpu|merged                 || 21.1458| 1.88e-05|    N/A|    N/A|      0|| 69.7551| 0.00e+00|    N/A|    N/A|      0|| 238.0003| 0.00e+00|    N/A|    N/A|      0
+pytorch |gpu                        ||  4.3167| 1.88e-05|  0.952|  1.688|  2.640||  9.2233| 0.00e+00|  2.771|  4.915|  7.686|| 26.6300| 0.00e+00|  9.132| 16.147| 25.279
+cuda |gpu                           ||  2.2577| 1.88e-05|  0.005|  1.352|  1.357||  6.2247| 0.00e+00|  0.017|  3.795|  3.812|| 20.1289| 0.00e+00|  0.062| 12.229| 12.291
+cal-mlir|gpu                        ||  9.8177| 1.88e-05|  4.519|  1.027|  5.546|| 23.2990| 0.00e+00| 14.357|  3.095| 17.452|| 69.1253| 0.00e+00| 49.030| 10.365| 59.395
+cal-mlir|gpu|hoisting               ||  6.2600| 1.88e-05|  4.236|  1.207|  5.443|| 17.6628| 0.00e+00| 12.357|  3.535| 15.892|| 57.5376| 0.00e+00| 40.791| 11.664| 52.455
+cal-mlir|gpu|async                  ||  9.4719| 1.88e-05|  4.633|  1.060|  5.693|| 22.7503| 0.00e+00| 14.510|  3.112| 17.622|| 68.7777| 0.00e+00| 49.136| 10.372| 59.508
+cal-mlir|gpu|async&hoisting         ||  6.0371| 1.88e-05|  4.238|  1.209|  5.447|| 17.3973| 0.00e+00| 12.359|  3.533| 15.892|| 57.3586| 0.00e+00| 40.783| 11.678| 52.461
+cal-mlir|gpu|merged                 ||  5.5873| 1.88e-05|  2.193|  1.010|  3.203|| 13.6759| 0.00e+00|  6.968|  3.052| 10.020|| 41.7331| 0.00e+00| 24.109| 10.208| 34.317
+cal-mlir|gpu|merged&hoisted         ||  3.8252| 1.88e-05|  1.897|  1.255|  3.152|| 10.7275| 0.00e+00|  5.505|  3.617|  9.122|| 35.0771| 0.00e+00| 18.177| 12.014| 30.191
+
+=== GPU Pipeline Optimization Evaluation ===
+iterations: 2000
+
+Testing CAL-MLIR GPU optimizations across different hypercube sizes
+
+Running pytorch backend on the CPU
+    Testing with hypercube size: 25000000
+        Test run 1/1...
+            Execution time: 4546.88s
+            GPU MemCpy Time: -1ns
+            GPU Kernel Time: -1ns
+        Completed successfully (avg time: 4546.8800s, rms error: 0.0)
+    Testing with hypercube size: 100000000
+        Test run 1/1...
+            Execution time: 17215.01s
+            GPU MemCpy Time: -1ns
+            GPU Kernel Time: -1ns
+        Completed successfully (avg time: 17215.0100s, rms error: 0.0)
+Running CAL-MLIR backend on the CPU
+    Testing with hypercube size: 25000000
+        Test run 1/1...
+            Execution time: 1171.259885854s
+            GPU MemCpy Time: -1ns
+            GPU Kernel Time: -1ns
+        Completed successfully (avg time: 1171.2599s, rms error: 0.0)
+    Testing with hypercube size: 100000000
+        Test run 1/1...
+            Execution time: 4639.037245107s
+            GPU MemCpy Time: -1ns
+            GPU Kernel Time: -1ns
+        Completed successfully (avg time: 4639.0372s, rms error: 0.0)
+
+=== Performance Results ===
+
+Backend                             || Size 25000000                            || Size 100000000                           
+                                    || Time   |RMS      |MemCpy |Kern   |GPU_Tot|| Time   |RMS      |MemCpy |Kern   |GPU_Tot
+------------------------------------++------------------------------------------++------------------------------------------
+pytorch |cpu                        || 4546.8800| 0.00e+00|     -1|     -1|      0|| 17215.0100| 0.00e+00|     -1|     -1|      0
+cal-mlir|cpu|merged                 || 1171.2599| 0.00e+00|     -1|     -1|      0|| 4639.0372| 0.00e+00|     -1|     -1|      0
+Results saved to rough_work/gpu_pipeline_optimization_results.csv
+

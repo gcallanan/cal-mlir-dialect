@@ -1,17 +1,19 @@
 M=4
-O=0
-P=1000000
+O=3
+P=10000000
 
 
-opt_levels=(0 1 2 3)
+#M_values=(2 3 4 5 6 7 8 9)
+M_values=(2 3 4 5 6 7 8 9)
 cpp_times=()
 mlir_times=()
 c_times=()
 
 # Build and Run Cpp project using Streamblocks multicore
-rm -rf myproject
-bash compile_to_cpp_then_to_binary.sh -M $M -O $O -P $P
-for O in "${opt_levels[@]}"; do
+for M in "${M_values[@]}"; do
+  echo "M: $M" 
+  rm -rf myproject
+  bash compile_to_cpp_then_to_binary.sh -M $M -O $O -P $P
 
   mkdir -p  myproject/build/
   cd myproject/build/
@@ -19,7 +21,7 @@ for O in "${opt_levels[@]}"; do
   cmake --build . -j24 2> /dev/null
   cd ../..
   cp myproject/bin/BigNetwork main_executable_from_cpp
-  sleep 10
+  sleep 3
 
   echo "Running CPP binary..."
   cpp_time=$(/usr/bin/time -f "%e" ./main_executable_from_cpp 2>&1 1>/dev/null)
@@ -30,11 +32,11 @@ done
 
 # Build and Run MLIR project
 
-for O in "${opt_levels[@]}"; do
-
+for M in "${M_values[@]}"; do
+  echo "M: $M"
   rm -rf myproject
   bash compile_to_mlir_then_to_binary.sh -M $M -O $O -P $P
-  sleep 10
+  sleep 3
 
   echo "Time taken to execute MLIR binary:"
   echo "Running MLIR binary..."
@@ -48,15 +50,23 @@ done
 
 # Build and Run C project using Tycho
 
-rm -rf myproject
-mkdir myproject
-tychoc --set experimental-network-elaboration=on --set reduction-algorithm=ordered-condition-checking --source-path config.cal:BigNetwork.cal:Messenger.cal:Sink.cal --target-path myproject big.BigNetwork
+
 
 echo "2. Generating a binary from the C files"
 
-for O in "${opt_levels[@]}"; do
+for M in "${M_values[@]}"; do
+  echo "M: $M"
+  echo "namespace big:
+      uint numMessengers = $M;
+      uint numPingPongs = $P;
+  end
+  " > config.cal
+  rm -rf myproject
+  mkdir myproject
+  tychoc --set experimental-network-elaboration=on --set reduction-algorithm=ordered-condition-checking --source-path config.cal:BigNetwork.cal:Messenger.cal:Sink.cal --target-path myproject big.BigNetwork
+
   clang myproject/*.c -O$O -o main_executable_from_c
-  sleep 10
+  sleep 3
 
   echo "Running C binary..."
   c_time=$(/usr/bin/time -f "%e" ./main_executable_from_c 2>&1 1>/dev/null)
@@ -65,8 +75,8 @@ for O in "${opt_levels[@]}"; do
 done
 
 # Print header
-echo -n "Opt Level,"
-printf "%s," "${opt_levels[@]}"
+echo -n "M,"
+printf "%s," "${M_values[@]}"
 echo
 
 # Function to join array with commas
