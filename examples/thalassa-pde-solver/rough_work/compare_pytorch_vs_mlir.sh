@@ -369,6 +369,65 @@ fi
 unset times_for_avg
 
 #===============================================================================
+# CUDA KERNEL TESTING
+#===============================================================================
+
+echo "Running CUDA kernel with different optimisation levels..."
+
+# Run MLIR backend with optimization levels 0-3 and CPU/GPU targets
+for opt_level in 0 1 2 3; do
+    # Test CPU compilation
+    echo "  Running CUDA with -O${opt_level} (${NUM_TESTS} times for averaging)..."
+    
+    # Initialize arrays and variables for current optimization level
+    declare -a times_for_avg
+    rms_error=""
+    
+    # Run multiple times for averaging
+    for ((test_run=1; test_run<=NUM_TESTS; test_run++)); do
+        echo "    Test run ${test_run}/${NUM_TESTS}..."
+        
+        # Execute MLIR solver and capture output (GPU)
+        output=$(bash rough_work/compile_and_run_cuda.sh -O ${opt_level} -i $iterations 2>&1)
+        exit_code=$?
+        
+        if [ $exit_code -eq 0 ]; then
+            # Extract metrics from last two lines
+            metrics=$(extract_metrics "$output")
+            exec_time=$(echo "$metrics" | head -1)
+            if [ -z "$rms_error" ]; then
+                rms_error=$(echo "$metrics" | tail -1)
+            fi
+            echo "        Execution time: ${exec_time}s"
+            sleep $sleep_time
+            
+            times_for_avg+=("$exec_time")
+        else
+            echo "    Failed with exit code $exit_code"
+            break
+        fi
+    done
+    
+    # Calculate average execution time if all tests passed
+    if [ ${#times_for_avg[@]} -eq $NUM_TESTS ]; then
+        avg_time=$(echo "${times_for_avg[@]}" | tr ' ' '\n' | LC_NUMERIC=C awk '{sum+=$1} END {printf "%.4f", sum/NR}')
+        
+        backend_names+=("CUDA-O${opt_level}")
+        exec_times+=("$avg_time")
+        rms_errors+=("$rms_error")
+        
+        echo "    Completed successfully (avg time: ${avg_time}s, rms error: ${rms_error})"
+    else
+        backend_names+=("CUDA-O${opt_level}")
+        exec_times+=("FAILED")
+        rms_errors+=("FAILED")
+    fi
+    
+    # Clean up array for next iteration
+    unset times_for_avg
+done
+
+#===============================================================================
 # RESULTS DISPLAY AND ANALYSIS
 #===============================================================================
 
