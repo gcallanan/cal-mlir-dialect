@@ -4,4 +4,4 @@
 PATH="../../llvm-project/build/bin:$PATH"
 PATH="$PATH:../../build/bin"
 
-cal-opt --lower-cal-to-llvm merge.mlir | cal-translate --mlir-to-llvmir | lli
+cal-opt --lower-cal-to-llvm merge.mlir | mlir-runner --entry-point-result=void

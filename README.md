@@ -1,14 +1,116 @@
-NOTE: Tips on hoisting: https://mlir.llvm.org/doxygen/Hoisting_8cpp_source.html
-
 # CAL Actor Language Dialect for the MLIR Compilation Framework
 
-## Introduction and Motivation 
+## Quick Start
+
+1. Install the MLIR project with `bash install_mlir.sh` (this may take a long time).
+2. Install this project with `bash install_cal_dialect.sh`.
+3. Navigate to the simple [merge](examples/merge/): `cd examples/merge`
+3. Run [run.sh](examples/merge/run.sh) to compile and run the example: `bash run.sh`.
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Table of Contents](#table-of-contents)
+- [Introduction and Motivation](#introduction-and-motivation)
+- [Dialects](#dialects)
+- [Transformation Pipelines](#transformation-pipelines)
+- [Frontends](#frontends)
+- [Getting Started](#getting-started)
+  - [Installation Requirements](#1-installation-requirements)
+  - [Installation Instructions](#2-installation-instructions)
+  - [GPU Support](#3-gpu-support)
+  - [Examples](#4-examples)
+- [License](#license)
+- [Acknowledgement](#acknowledgement)
+
+## Introduction and Motivation
+
+This repository provides a way to express programs as networks of independent computing units (called "actors") that communicate by sending data through channels. Think of actors as small programs that can run independently and communicate only by sending and receiving messages.
+
+**What is CAL?** CAL (CAL Actor Language) is a programming model where computation happens through independent actors exchanging data through First-In-First-Out (FIFO) channels. Unlike traditional programming, where instructions execute sequentially, in actor models:
+- Each actor operates independently
+- Actors communicate only by sending/receiving messages
+- Processing happens when data is available
+
+```
+   +--------+     message     +--------+     message     +--------+
+   | Actor1 |---------------->| Actor2 |---------------->| Actor3 |
+   +--------+     (FIFO)      +--------+     (FIFO)      +--------+
+       |                                                      |
+       |              message (FIFO feedback)                 |
+       +------------------------------------------------------+
+```
+
+Our MLIR dialect makes it possible to represent CAL programs in the MLIR compiler framework, allowing powerful optimizations while maintaining the actor model's simplicity. We provide tools to:
+- Convert CAL programs into our MLIR dialect
+- Perform some simple optimizations on the network
+- Generate efficient code for CPUs and GPUs
+
+This approach separates the actor language from the optimization process, making it easier to target different hardware platforms with the same high-level program description.
+
+If you want to reference this work or read a more detailed explanation, please see the following paper:
+
+TODO: Add reference
+
+If you want to use this project, learn more about it, or modify it, please do not hesitate to get in touch. I am happy to answer your questions and help you get started.
 
 ### Dialects
 
+This repository defines two dialects: a FIFO dialect for creating and performing operations on FIFOs, and a CAL dialect for creating and defining actors. Actors defined in the CAL dialect are connected by FIFOs defined in the FIFO dialect. Below is a very simple example of the dialect, where a source actor sends 20 tokens to a destination actor that prints them. The `cal.network` operation defines how they fit together.
+
+```
+cal.actor @source(%arg0: i32) ports_out (%arg1: !fifo.input_port<i32>) {
+	%c1_i32 = arith.constant 1 : i32
+	%c0_i32 = arith.constant 0 : i32
+	%0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+	cal.set(%0 : !cal.state_ref<i32>, %c0_i32 : i32)
+	
+	cal.action "tx" priority=0 {
+		cal.predicate {
+			%3 = cal.get(%0 : !cal.state_ref<i32>) : i32
+			%4 = arith.cmpi slt , %3, %arg0 : i32 // signed less than (<)
+			cal.predicate_result %4 : i1
+		}
+		%1 = cal.get(%0 : !cal.state_ref<i32>) : i32
+		%2 = arith.addi %1, %c1_i32 : i32
+		cal.set(%0 : !cal.state_ref<i32>, %2 : i32)
+		fifo.push(%arg1 : !fifo.input_port<i32>, %2 : i32)
+	}
+}
+
+cal.actor @sink() ports_in (%arg0: !fifo.output_port<i32>) {
+	cal.action "rx" priority=0 {
+		%0 = fifo.pop(%arg0 : !fifo.output_port<i32>) : i32
+		fifo.print("Rx: %i\n", %0 ) : (i32)
+	}
+}
+
+cal.network {
+	%c20_i32 = arith.constant 20 : i32
+	%inputPort, %outputPort = fifo.create<i32> (10) : !fifo.input_port<i32>,  !fifo.output_port<i32>
+	cal.create_instance @source "source" (%c20_i32 : i32)
+		ports_out (%inputPort : !fifo.input_port<i32>)
+	cal.create_instance @sink "sink" ()
+		ports_in (%outputPort : !fifo.output_port<i32>)
+}
+```
+
 ### Transformation Pipelines
 
-### Optimisation Passes
+MLIR enables transformation through a series of passes that gradually lower high-level dialects into lower-level representations like LLVM IR for execution. These passes can be grouped into pipelines that can be invoked with a single command line argument. We provide three specialized pipelines:
+1. **lower-cal-to-llvm** - The standard pipeline for lowering CAL and FIFO dialects to LLVM IR. It creates a dynamic, data-dependent execution schedule that works with all actors. This is the recommended default pipeline.
+2. **lower-cal-to-llvm-with-static-schedule** - This pipeline attempts to generate a static schedule for actors, which can significantly improve performance. It requires that your actors conform to Synchronous Dataflow (SDF) or Cyclo-Static Dataflow (CSDF) models, where token production and consumption rates are predictable. Use this pipeline when your network fits these models and you want to optimize throughput.
+3. **lower-cal-to-llvm-with-gpu-tensors** - This specialized pipeline targets GPU acceleration by lowering tensor operations to NVIDIA GPU kernels. It's ideal for computationally intensive applications that manipulate tensors and perform linear algebra operations that can benefit from GPU parallelism.
+
+Each pipeline applies a different sequence of transformation passes. The complete pipeline definitions can be found in [CalLoweringPipelines.h](include/Conversion/CalLoweringPipelines/CalLoweringPipelines.h) and [CalLoweringPipelines.cpp](lib/Conversion/CalLoweringPipelines/CalLoweringPipelines.cpp).
+
+To use a pipeline with cal-opt, run: `cal-opt --<pipeline-name> input.mlir`
+
+### Frontends
+
+We have provided two frontends for generating this dialect (examples on how to use them are provided):
+1. StreamBlocks frontend for CAL - StreamBlocks is a CAL compiler that can target different platforms. We added a new platform that can take CAL code and generate this dialect. See [streamblocks-toolchain](examples/streamblocks-toolchain/) for details on how to install and use StreamBlocks for this purpose.
+2. Thalassa PDE Solver Framework - Thalassa is a tool for taking a system of PDE equations and generating a solver for them. We provide a target for Thalassa that generates a network in this dialect while passing tensor types around. It is a nice example for demonstrating GPU acceleration using the GPU pipeline. See [thalassa-pde-solver](examples/thalassa-pde-solver/) for details on how to install and use it.
 
 ## Getting Started
 
@@ -22,86 +124,34 @@ Before installing, ensure you have:
 
 ### 2. Installation Instructions:
 
-1. Install the MLIR dialect by running the [install_mlir.sh](./install_mlir.sh) script. It will pull and install the LLVM repo with MLIR into a new directory titled `llvm-project` in this repository. It will take many hours to install, but you should only need to install it once.
+1. Install the MLIR dialect by running the [install_mlir.sh](./install_mlir.sh) script with `bash install_mlir.sh`. It will pull and install the LLVM repo with MLIR into a new directory titled `llvm-project` in this repository. It will take many hours to install, but you should only need to install it once.
     - Optionally update your PATH with the `llvm-project/build/bin` directory
     - Optionally update your LD_LIBRARY_PATH with the `llvm-project/build/lib` directory
-2. Once the above step is complete, install this CAL dialect using the [install_cal_dialect.sh](./install_cal_dialect.sh) script. Every time you modify the code in this repo, you will need to run this script again.
+2. Once the above step is complete, install this CAL dialect using the [install_cal_dialect.sh](./install_cal_dialect.sh) script with `bash install_cal_dialect.sh`. Every time you modify the code in this repo, you will need to run this script again.
     - Optionally update your PATH with the `build/bin` directory
 
 ### 3. GPU Support
-To enable lowering to MLIR dialects with GPU support, ensure that you install MLIR with GPU support by using the `--enable-gpu` flag in the [install_mlir.sh](./install_mlir.sh) script. For more details on using NVIDIA GPUs with MLIR refer to the [README.md](./extras/using-nvidia-gpus/README.md) file in the [extras/using-nvidia-gpus](./extras/using-nvidia-gpus) directory.
 
-## Working with the Dialect
+To enable the pipeline for lowering tensor operations to the GPU and for using MLIR dialects with GPU support in general, ensure that you install MLIR with GPU support by using the `--enable-gpu` flag in the [install_mlir.sh](./install_mlir.sh) script: `bash install_mlir.sh --enable-gpu`. For more details on using NVIDIA GPUs with MLIR, refer to the [README.md](./extras/using-nvidia-gpus/README.md) file in the [extras/using-nvidia-gpus](./extras/using-nvidia-gpus) directory.
 
-### 1. Convert CAL to LLVM
+NOTE: This is an optional step and it's often simpler to skip it if you do not want to struggle with the CUDA installation.
 
-In the [cal-opt.cpp](cal-opt/cal-opt.cpp) we define a simple pass pipeline called `lower-cal-to-llvm`. This pipeline transforms the CAL and FIFO dialects to the LLVM dialect by transitioning through the a number of intermediary pipeline passes.
+### 4. Examples
 
-This is then transformed from the mlir version of LLVM to the actual version of LLVM expected by other tools using the [cal-translate.cpp](cal-translate/cal-translate.cpp) tool.
+To help you get started, we provide a number of example programs in [examples](examples/). These examples also contain scripts and instructions on how to build and run them.
 
-From there it can be run using the LLVM interpreter tool `lli` which interprets the values and generates a result. Ensure that you use `lli` built in this repository as often you will have a version of `lli` on your linux machine that can be old and incompatible with this version.
+The [merge](examples/merge/) example is the simplest example and the best place to get started.
 
-Here is the code to run it:
-```
-echo '
-// Simple example that creates a FIFO, pushes 672 to it, pops this 672 from it, adds
-// 17 to it and then prints the result.
-module {
-  func.func @main() -> i32 {
-    %constant0 = arith.constant 0 : i32
+The [streamblocks-toolchain](examples/streamblocks-toolchain/) is a good second step as it shows you how to install the StreamBlocks frontend for transforming CAL into this dialect. It is much simpler to write CAL code than generate this dialect yourself.
 
-    %in0,%out0 = fifo.create<i32>(10) : !fifo.input_port<i32>, !fifo.output_port<i32>
-    %constant672 = arith.constant 672 : i32
+The [tensors](examples/tensors/) example shows how the tensor types and related operations can be used in CAL.
 
-    fifo.push(%in0: !fifo.input_port<i32>, %constant672: i32)
-    %0 = fifo.pull(%out0: !fifo.output_port<i32>) : i32
+Descriptions of all the different examples can be found in [examples/README.md](examples/README.md).
 
-    %constant17 = arith.constant 17 : i32
-    %newResult = arith.addi %constant17, %0: i32
-    fifo.print("Result: %d\0A\00", %newResult) : (i32)
+## License
 
-    func.return %constant0 : i32
-  }
-}' > temp.mlir
-./build/bin/cal-opt --lower-cal-to-llvm -o lowered.mlir temp.mlir
-./build/bin/cal-translate --mlir-to-llvmir -o llvm-ir.ll lowered.mlir
-./llvm-project/build/bin/lli llvm-ir.ll
-```
+This project is licensed under the Apache License v2.0. Please see [LICENSE](LICENSE) for license information.
 
-Alternativly, once you have created temp.mlir, you can generate these commands in a single command: `cal-opt --lower-cal-to-llvm temp.mlir | cal-translate --mlir-to-llvmir | ./llvm-project/build/bin/lli`
+## Acknowledgement
 
-The expected output here is "Result: 689"
-
-Alternativly the valid LLVM-IR in llvm-ir.ll can be compiled using `llvm-as` and turned into an executable with `clang`. How to do this is left as an exercise to the reader
-
-### 2. Produce an image of a simple DAG graph
-
-If you want a simple visualisation of the CFG of MLIR code, run the following code:
-
-```
-# Create the file
-echo '
-    %c32 = arith.constant 32 : i32
-    %in0,%out0 = fifo.create<i32>(5) : !fifo.input_port<i32>, !fifo.output_port<i32>
-    %0 = fifo.pull(%out0: !fifo.output_port<i32>) : i32
-    fifo.push(%in0: !fifo.input_port<i32>, %c32: i32)
-' > temp.mlir
-# Generate a png of the graph
-./build/bin/cal-opt --view-op-graph  temp.mlir 2>&1 >/dev/null | dot -Tpng -o dag.png
-```
-
-## Development and Testing
-
-### Running Tests
-
-Whenever you install the CAL-MLIR-DIALECT project, regression tests will be run. These tests are all located in [test/](test/)
-
-MLIR and LLVM have a specific way of running regression tests. I have written a bit more in one of the tests found at: [test/Cal/1_example_to_start.mlir](test/Cal/1_example_to_start.mlir). Read it if you want more details on how ro write tests. This is a very simple example. Looking at the other .mlir files in the
-[test](./test) directory can show you different transformations and dialect examples.
-
-This README can sometimes be out of date, but typically, the tests should always be working, so if
-some commands listed here are not working in the README, look at the tests instead.
-
-## DISCLAIMER:
-
-I, Gareth Callanan, am the author of this repository but I have made use of ChatGPT to generate a significant portion of this documentation for this repo. This is an attempt to make it more accesible for someone jumping in while at the same time not requiring a significant time investment on my side. Where AI has been used, the output has been verified by me.
+This repository was created and is maintained by Gareth Callanan. Some portions of the documentation were generated with the assistance of AI tools (specifically ChatGPT) to improve accessibility and reduce documentation overhead. All AI-generated content has been reviewed and verified for accuracy.
