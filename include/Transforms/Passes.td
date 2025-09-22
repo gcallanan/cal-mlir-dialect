@@ -196,4 +196,42 @@ def DenseConstantsToGpuPass : Pass<"convert-dense-constant-to-gpu"> {
     ];
 }
 
+def FifoMemrefAtomicizePass : Pass<"fifo-memref-atomicize"> {
+    let summary = "Convert FIFO counter memref operations to atomic operations for SPSC thread safety.";
+    let description = [{
+        This pass converts plain memref.load and memref.store operations on FIFO counter
+        metadata to atomic operations with appropriate memory ordering for Single Producer
+        Single Consumer (SPSC) thread safety.
+
+        This is an alternative to FifoAtomicizePass that works at the memref dialect level
+        instead of the LLVM dialect level, making pattern matching simpler and more reliable.
+
+        The pass should be run after FIFO dialect lowering but before LLVM conversion:
+        1. FIFO dialect lowering (--lower-fifo-to-memref='fifo-index-mode=spsc-lockfree')
+        2. This pass (--fifo-memref-atomicize)
+        3. Then LLVM conversion (--finalize-memref-to-llvm)
+
+        The pass identifies FIFO metadata allocations (memref<2xi64> for readCount and
+        writeCount) and converts subsequent load/store operations to use memref.atomic_rmw:
+
+        - Loads become atomic_rmw assign with Acquire ordering
+        - Stores become atomic_rmw assign with Release ordering
+
+        Example transformation:
+        Before:
+          %metadata = memref.alloc() : memref<2xi64>
+          %count = memref.load %metadata[%index] : memref<2xi64>
+          memref.store %new_count, %metadata[%index] : memref<2xi64>
+
+        After:
+          %metadata = memref.alloc() : memref<2xi64>
+          %count = memref.atomic_rmw assign %dummy, %metadata[%index] acquire : (i64, memref<2xi64>) -> i64
+          memref.atomic_rmw assign %new_count, %metadata[%index] release : (i64, memref<2xi64>) -> i64
+    }];
+
+    let dependentDialects = [
+        "mlir::memref::MemRefDialect"
+    ];
+}
+
 #endif // CAL_TRANSFORM_PASSES

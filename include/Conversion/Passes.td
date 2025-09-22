@@ -155,14 +155,30 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
     This pass works by transforming FIFO buffer operations (such as `fifo.create`, `fifo.push`,
     and `fifo.pop`) into MemRef-based operations that represent memory buffers. The pass
     supports scalar, tensor, and memref element types, handling tensor-to-memref conversions
-    as needed for FIFO operations. The pass is not thread-safe, meaning it should be used
-    in single-threaded execution contexts to avoid issues with concurrent transformations.
+    as needed for FIFO operations. 
+
+    Thread-safety / concurrency:
+
+    By default (index mode `legacy`) the lowered representation uses a circular buffer with
+    read/write indices stored modulo (capacity + 1) and assumes single-threaded scheduling.
+    An experimental SPSC lock-free mode can be enabled with the option
+    `--fifo-index-mode=spsc-lockfree`. In this mode the indices are treated as monotonically
+    increasing counters (no extra sentinel slot) and each push/pop uses the counter modulo
+    capacity for the physical slot. This mode is intended for Single-Producer / Single-Consumer
+    scenarios possibly executed on different threads orchestrated by the async dialect or host
+    threading. Atomics are not yet inserted at this lowering stage; correctness under true
+    parallel execution requires a subsequent pass (or future enhancement) to turn the loads /
+    stores of the index counters into acquire/release atomic operations. Until that follow-up
+    is implemented the SPSC mode should only be used in environments where the compiler or
+    runtime preserves program order between producer and consumer steps.
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
   let options = [
     Option<"which_alloc", "which-alloc", "std::string", /*default=*/"\"HOST\"",
            "Choose allocation target for tensor types: HOST | GPU">,
+    Option<"fifo_index_mode", "fifo-index-mode", "std::string", /*default=*/"\"legacy\"",
+      "FIFO index management mode: legacy | spsc-lockfree">,
   ];
   let dependentDialects = [
     "memref::MemRefDialect",

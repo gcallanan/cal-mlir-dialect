@@ -5,9 +5,12 @@ set(LIBS
         ${conversion_libs}
         MLIRArithDialect
         MLIRTensorDialect
+        MLIRAsyncDialect
+        MLIRAsyncTransforms
         MLIROptLib
         MLIRCal
         MLIRFifo
+        MLIRFifoAtomicize
         )
 add_llvm_executable(cal-opt cal-opt.cpp)
 

@@ -131,7 +131,7 @@ std::vector<cal::ActionOp> simulateNetwork(
   for (auto &pair : actorFiringsPerCycle) {
     actorOpToActorStructMap[pair.first] = Actor{
         .actorOp = pair.first,
-        .currentState = actorScheduleMap.find(pair.first)->second.initialStateValue,
+        .currentState = static_cast<int>(actorScheduleMap.find(pair.first)->second.initialStateValue),
         .numFiringsLeft = pair.second,
         .fsm = actorScheduleMap.find(pair.first)->second
     };

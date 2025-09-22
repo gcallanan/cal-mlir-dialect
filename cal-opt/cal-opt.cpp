@@ -24,6 +24,9 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
+// Async dialect
+#include "mlir/Dialect/Async/IR/Async.h"
+#include "mlir/Dialect/Async/Passes.h"
 
 // MLIR Dialect Transforms
 #include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
@@ -75,7 +78,8 @@ int main(int argc, char **argv) {
       mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
       mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect,
       mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect,
-      mlir::affine::AffineDialect, mlir::ub::UBDialect>();
+      mlir::affine::AffineDialect, mlir::ub::UBDialect,
+      mlir::async::AsyncDialect>();
 
   // We need this to be able to run the --buffer-deallocation pass which can
   // automatically insert deallocation operations
