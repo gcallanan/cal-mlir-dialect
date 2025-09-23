@@ -234,4 +234,48 @@ def FifoMemrefAtomicizePass : Pass<"fifo-memref-atomicize"> {
     ];
 }
 
+ def FlattenCalNetworksPass : Pass<"flatten-cal-networks", "mlir::ModuleOp"> {
+    let summary = "Inline (flatten) hierarchical cal.network instantiations so only actors remain";
+    let description = [{
+        This pass flattens hierarchical CAL networks by inlining the body of any
+        instantiated `cal.network` (via `cal.create_instance`) into the parent
+        network. After inlining, the `cal.create_instance` op referencing a
+        network is erased. Actor instances are preserved.
+
+        The transformation iterates until no `cal.create_instance` targets a
+        network symbol. Operand mapping is performed as follows:
+          - Parent actual operands (parameters and ports) map to the cloned
+            network entry block arguments (in declared order).
+          - Internal operations of the child network are cloned into the parent
+            at the call site (maintaining relative order) except other network
+            instances, which will be processed in subsequent iterations.
+
+        Additional capabilities:
+          - Detects and reports cycles in the network instantiation graph
+            (including self-recursive networks) before attempting flattening.
+          - Applies an iteration safeguard (soft limit) to abort with a
+            diagnostic if unexpected growth indicates a hidden cycle.
+          - (Optional) Prunes now-unreferenced network symbols after full
+            flattening so only reachable networks remain (top-level networks
+            that were instantiated but are no longer referenced are removed).
+
+        Constraints / Notes:
+          - Assumes all referenced network symbols are defined at module scope.
+          - Ports and parameters are treated uniformly as positional operands.
+          - After flattening, topology is preserved and verification of port
+            arity/type remains enforced by existing verifiers.
+
+        Result: Single-level network(s) containing only fifo ops, constants,
+        and actor `cal.create_instance` operations, plus optional dead network
+        pruning, enabling downstream lowers.
+    }];
+
+  let options = [
+    Option<"disablePruning", "disable-pruning", "bool", /*default=*/"false",
+       "Disable dead network pruning after flattening (retain all original network symbols even if unreferenced).">,
+    Option<"emitStats", "emit-stats", "bool", /*default=*/"false",
+       "Emit a remark summarizing flatten statistics (iterations, flattened instances, pruned networks).">
+  ];
+}
+
 #endif // CAL_TRANSFORM_PASSES

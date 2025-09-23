@@ -10,7 +10,8 @@ set(LIBS
         MLIROptLib
         MLIRCal
         MLIRFifo
-        MLIRFifoAtomicize
+        #MLIRFifoAtomicize
+        #FlattenNetworksPass
         )
 add_llvm_executable(cal-opt cal-opt.cpp)
 

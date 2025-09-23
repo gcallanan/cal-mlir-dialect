@@ -88,7 +88,7 @@ cal.actor @merge()
 }
 
 
-cal.network {
+cal.network @merge_net() {
     %0 = arith.constant 10 : i32
     %1 = arith.constant 10 : i32
     %one = arith.constant 1 : i32

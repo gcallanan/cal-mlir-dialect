@@ -24,7 +24,7 @@ cal.actor @inputs_and_output(%c1 : i32)
     
 }
 
-cal.network{
+cal.network @test_net(){
     %1 = arith.constant 10 : i32
     %in0, %out0 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>
     %in1, %out1 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>

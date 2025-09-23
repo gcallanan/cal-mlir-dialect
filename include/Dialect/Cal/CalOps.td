@@ -116,27 +116,46 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
 }
 
 
-def Cal_NetworkOp : Cal_Op<"network", [NoTerminator, IsolatedFromAbove]> {
-  let summary = "A network instantiating actors and the connections between them";
+def Cal_NetworkOp : Cal_Op<"network", [Symbol, NoTerminator, IsolatedFromAbove]> {
+  let summary = "Symbolic CAL network operation (hierarchical composition)";
   let description = [{
-    The `cal.network` operation defines a network that instantiates actors and
-    he connections between them. It serves as the top-level container for actor
-    instances and their interconnections within a single application.
+    The `cal.network` operation defines a (now symbolic) network that
+    instantiates actors (and in future: other networks) and the connections
+    between them. A network can expose parameters as well as typed FIFO input
+    and output ports, similar to a `cal.actor`, enabling hierarchical
+    composition.
 
-    This implementation is an initial step towards modeling actor-based networks
-    in MLIR. It has very many limitations:
-    - its not actually a symbol, so it cannot be called or referenced from other
-      locations. As such modular composition is not possible.
-    - it does not have any input or output ports, so it cannot be connected to
-      other networks or actors.
+    Syntax (new symbolic form):
+      cal.network @name(%p0: i32, %p1: f32)
+          ports_in(%a: !fifo.output_port<i32>)
+          ports_out(%b: !fifo.input_port<i32>) {
+        ... body ...
+      }
 
-      As such, this is not a complete implementation, it will need to be
-      updated and extended.
+    The region entry block arguments are, in order:
+      1. All standard (non-port) parameters
+      2. All `ports_in` FIFO output port arguments
+      3. All `ports_out` FIFO input port arguments
+
+    Backwards compatibility: the previous anonymous form `cal.network { ... }`
+    is being replaced by the symbolic form and should be migrated. (A legacy
+    parser path can be added if needed; current implementation requires a
+    symbol name.)
   }];
+
+  let arguments = (ins
+    SymbolNameAttr:$sym_name // Network symbol name
+  );
 
   let regions = (region AnyRegion:$body);
 
-  let assemblyFormat = "$body attr-dict";
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    int inDegree();
+    int outDegree();
+  }];
 }
 
 def Cal_CreateInstanceOp : Cal_Op<"create_instance", [DeclareOpInterfaceMethods<SymbolUserOpInterface>,HasParent<"NetworkOp">]> {

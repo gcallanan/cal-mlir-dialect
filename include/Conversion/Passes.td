@@ -166,11 +166,7 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
     increasing counters (no extra sentinel slot) and each push/pop uses the counter modulo
     capacity for the physical slot. This mode is intended for Single-Producer / Single-Consumer
     scenarios possibly executed on different threads orchestrated by the async dialect or host
-    threading. Atomics are not yet inserted at this lowering stage; correctness under true
-    parallel execution requires a subsequent pass (or future enhancement) to turn the loads /
-    stores of the index counters into acquire/release atomic operations. Until that follow-up
-    is implemented the SPSC mode should only be used in environments where the compiler or
-    runtime preserves program order between producer and consumer steps.
+    threading. Atomics are not yet inserted at this lowering stage;
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];

@@ -126,16 +126,14 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
 
   // Parse the input and output arguments.
   if (failed(parseAndCheckPorts<mlir::fifo::OutputPortType>(
-          parser, inVals, "ports_in",
-          "expected OutputPortType (fifo.output_port<...>) for ports_in "
-          "argument"))) {
+    parser, inVals, "ports_in",
+    "expected fifo.output_port<...> for ports_in argument"))) {
     return failure();
   }
 
   if (failed(parseAndCheckPorts<mlir::fifo::InputPortType>(
-          parser, outVals, "ports_out",
-          "expected InputPortType (fifo.input_port<...>) for ports_out "
-          "argument"))) {
+    parser, outVals, "ports_out",
+    "expected fifo.input_port<...> for ports_out argument"))) {
     return failure();
   }
 
@@ -232,6 +230,144 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
     }
   }
 
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Cal_NetworkOp (symbolic hierarchical network)
+//===----------------------------------------------------------------------===//
+
+ParseResult NetworkOp::parse(OpAsmParser &parser, OperationState &result) {
+  SmallVector<OpAsmParser::Argument> inVals, outVals, standardArgs;
+
+  auto location = parser.getCurrentLocation();
+
+  // Parse symbol name @id
+  StringAttr symNameAttr;
+  if (failed(parser.parseSymbolName(symNameAttr, "sym_name", result.attributes)))
+    return failure();
+
+  // Parse parameter list (may be empty but required parens for consistency)
+  if (failed(parser.parseArgumentList(standardArgs, OpAsmParser::Delimiter::Paren,
+                                      /*allowType=*/true, /*allowAttrs=*/false)))
+    return failure();
+
+  // Reuse helper for ports
+  if (failed(parseAndCheckPorts<mlir::fifo::OutputPortType>(
+          parser, inVals, "ports_in",
+          "expected fifo.output_port<...> for ports_in argument")))
+    return failure();
+
+  if (failed(parseAndCheckPorts<mlir::fifo::InputPortType>(
+          parser, outVals, "ports_out",
+          "expected fifo.input_port<...> for ports_out argument")))
+    return failure();
+
+  // Combine args in canonical order: params, ports_in, ports_out
+  SmallVector<OpAsmParser::Argument> entryArgs;
+  entryArgs.reserve(standardArgs.size() + inVals.size() + outVals.size());
+  entryArgs.append(standardArgs.begin(), standardArgs.end());
+  entryArgs.append(inVals.begin(), inVals.end());
+  entryArgs.append(outVals.begin(), outVals.end());
+
+  Region &bodyRegion = *result.addRegion();
+  if (parser.parseRegion(bodyRegion, entryArgs, /*enableNameShadowing=*/true))
+    return failure();
+
+  // (Future) Verification can enforce only allowed ops / no nested networks yet
+  // For now rely on general symbol / operand verification elsewhere.
+  (void)location;
+  return success();
+}
+
+void NetworkOp::print(OpAsmPrinter &printer) {
+  Operation *op = getOperation();
+  auto netName =
+      op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()).getValue();
+  printer << ' ';
+  printer.printSymbolName(netName);
+
+  // Separate parameters vs ports (similar logic to ActorOp)
+  SmallVector<Value> params;
+  for (Value arg : getBody().getArguments()) {
+    if (!mlir::isa<mlir::fifo::OutputPortType>(arg.getType()) &&
+        !mlir::isa<mlir::fifo::InputPortType>(arg.getType())) {
+      params.push_back(arg);
+    }
+  }
+
+  printer << '(';
+  if (!params.empty()) {
+    interleaveComma(params, printer, [&](Value v) {
+      printer.printOperand(v);
+      printer << ": ";
+      printer.printType(v.getType());
+    });
+  }
+  printer << ')';
+
+  printer.increaseIndent();
+  collectAndPrintArgumentsByType<mlir::fifo::OutputPortType>(
+      printer, getBody().getArguments(), "ports_in");
+  collectAndPrintArgumentsByType<mlir::fifo::InputPortType>(
+      printer, getBody().getArguments(), "ports_out");
+  printer.decreaseIndent();
+
+  printer.printNewline();
+  printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,
+                      /*printBlockTerminators=*/false);
+  printer.printNewline();
+}
+
+int NetworkOp::inDegree() {
+  int portsIn = 0;
+  for (Value arg : getBody().getArguments()) {
+    if (mlir::isa<mlir::fifo::OutputPortType>(arg.getType()))
+      portsIn++;
+  }
+  return portsIn;
+}
+
+int NetworkOp::outDegree() {
+  int portsOut = 0;
+  for (Value arg : getBody().getArguments()) {
+    if (mlir::isa<mlir::fifo::InputPortType>(arg.getType()))
+      portsOut++;
+  }
+  return portsOut;
+}
+
+LogicalResult NetworkOp::verify() {
+  // Rule 1: Body must have exactly one block (ensured by parser but double-check)
+  if (!getBody().hasOneBlock())
+    return emitOpError() << "expected network region to have exactly one block";
+
+  // Allowed top-level ops inside a network (structural / instantiation)
+  // We allow: fifo.create / print / print_tensor, arith.constant, cal.create_instance,
+  // other cal.network will appear only as symbol definitions (not nested definitions),
+  // but disallow cal.actor definitions inside a network region.
+  static llvm::DenseSet<llvm::StringRef> allowedDialectPrefixes = {
+      "arith", "fifo", "cal"};
+
+  for (Operation &op : getBody().front()) {
+    // Skip nested region terminators etc. (none expected) and allow create_instance.
+    if (llvm::isa<CreateInstanceOp>(&op))
+      continue;
+    if (llvm::isa<NetworkOp>(&op)) {
+      return emitOpError() << "nested cal.network definitions are not allowed; define networks at top module scope and instantiate hierarchically";
+    }
+    if (llvm::isa<ActorOp>(&op)) {
+      return emitOpError() << "actor definitions are not permitted inside a cal.network; move the actor to module scope";
+    }
+    // Accept operations from allowed dialects provided they are not symbol defs.
+    StringRef dialectNs = op.getDialect()->getNamespace();
+    if (!allowedDialectPrefixes.contains(dialectNs))
+      return emitOpError() << "operation from unsupported dialect '" << dialectNs
+                           << "' inside cal.network";
+  }
+
+  // Rule 2: No duplicate port types ordering issue (implicitly guaranteed by SSA order).
+  // Additional semantic checks can be added later (e.g., unconnected port analysis).
   return success();
 }
 
@@ -350,35 +486,55 @@ LogicalResult StateSetOp::verify() {
   return success();
 }
 
-LogicalResult
-CreateInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult CreateInstanceOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr targetRef = getActorRefAttr();
 
-  // 1. Verify that this operation references a valid cal.actor
-  FlatSymbolRefAttr actorRef = getActorRefAttr();
-  ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, actorRef);
-  if (!actor)
-    return emitOpError() << "'" << actorRef.getValue()
-                         << "' does not reference a valid cal.actor";
-
-  // 2. Verify that the number of operands matches the number of arguments in
-  // the cal.actor
-  auto actorArgs = actor.getBody().getArguments();
-  auto operands = getOperands();
-  if (operands.size() != actorArgs.size())
-    return emitOpError() << "expected " << actorArgs.size()
-                         << " operands, but got " << operands.size();
-
-  // 3. Verify that the types of the operands match the types of the arguments
-  // in the cal.actor.
-  for (size_t i = 0; i < operands.size(); i++) {
-    if (operands[i].getType() != actorArgs[i].getType()) {
-      return emitOpError() << "operand type mismatch: expected "
-                           << actorArgs[i].getType() << ", but got "
-                           << operands[i].getType();
+  // Try resolve as Actor first
+  if (auto actor =
+          symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, targetRef)) {
+    auto formalArgs = actor.getBody().getArguments();
+    auto actuals = getOperands();
+    // Fast fail on count mismatch with focused diagnostic.
+    if (actuals.size() != formalArgs.size()) {
+      return emitOpError()
+             << "operand count mismatch: expected " << formalArgs.size()
+             << " operands (actor params+ports), but got " << actuals.size();
     }
+    for (size_t i = 0; i < actuals.size(); ++i) {
+      if (actuals[i].getType() != formalArgs[i].getType()) {
+        return emitOpError()
+               << "operand type mismatch for operand " << i << ": expected "
+               << formalArgs[i].getType() << ", but got "
+               << actuals[i].getType();
+      }
+    }
+    return success();
   }
 
-  return success();
+  // Try resolve as Network next
+  if (auto network =
+          symbolTable.lookupNearestSymbolFrom<NetworkOp>(*this, targetRef)) {
+    auto formalArgs = network.getBody().getArguments();
+    auto actuals = getOperands();
+    if (actuals.size() != formalArgs.size()) {
+      return emitOpError()
+             << "operand count mismatch: expected " << formalArgs.size()
+             << " operands (network params+ports), but got " << actuals.size();
+    }
+    for (size_t i = 0; i < actuals.size(); ++i) {
+      if (actuals[i].getType() != formalArgs[i].getType()) {
+        return emitOpError()
+               << "operand type mismatch for operand " << i << ": expected "
+               << formalArgs[i].getType() << ", but got "
+               << actuals[i].getType();
+      }
+    }
+    return success();
+  }
+
+  return emitOpError() << "'" << targetRef.getValue()
+                       << "' does not reference a valid cal.actor or cal.network";
 }
 
 /// Prints a labeled group of operands along with their types in a structured
@@ -561,18 +717,18 @@ ParseResult CreateInstanceOp::parse(OpAsmParser &parser,
   SmallVector<OpAsmParser::UnresolvedOperand> portsIn;
   SmallVector<Type> portsInTypes;
   if (failed(parseOperandGroup(
-          parser, "ports_in", portsIn, portsInTypes,
-          [](Type t) { return mlir::isa<fifo::OutputPortType>(t); },
-          "expected fifo.output_port<...> for ports_in")))
+    parser, "ports_in", portsIn, portsInTypes,
+    [](Type t) { return mlir::isa<fifo::OutputPortType>(t); },
+    "expected fifo.output_port<...> for ports_in argument")))
     return failure();
 
   // 5. Parse ports_out
   SmallVector<OpAsmParser::UnresolvedOperand> portsOut;
   SmallVector<Type> portsOutTypes;
   if (failed(parseOperandGroup(
-          parser, "ports_out", portsOut, portsOutTypes,
-          [](Type t) { return mlir::isa<fifo::InputPortType>(t); },
-          "expected fifo.input_port<...> for ports_out")))
+    parser, "ports_out", portsOut, portsOutTypes,
+    [](Type t) { return mlir::isa<fifo::InputPortType>(t); },
+    "expected fifo.input_port<...> for ports_out argument")))
     return failure();
 
   // 6. Combine all operands and assign them to the result so that they can be

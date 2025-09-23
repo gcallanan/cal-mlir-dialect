@@ -110,7 +110,7 @@ cal.actor @accumulator()
 }
 
 // Network definition that connects the actors together
-cal.network{
+cal.network @tensor_net(){
     // Number of tensors to generate and process
     %num_tokens = arith.constant 5 : i32
 

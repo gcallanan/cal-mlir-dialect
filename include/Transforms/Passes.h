@@ -8,6 +8,7 @@
 #include "Transforms/HoistAllocs/HoistAllocs.h"
 #include "Transforms/CalPrepareGpuAsyncRegions/CalPrepareGpuAsyncRegions.h"
 #include "Transforms/FifoAtomicize/FifoAtomicize.h"
+#include "Transforms/FlattenNetworks/FlattenNetworks.h"
 #include "mlir/Pass/Pass.h"
 
 namespace mlir {
