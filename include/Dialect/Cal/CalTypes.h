@@ -10,6 +10,7 @@
 #define CAL_CALTYPES_H
 
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/BuiltinAttributes.h"
 
 #define GET_TYPEDEF_CLASSES
 #include "Dialect/Cal/CalOpsTypes.h.inc"

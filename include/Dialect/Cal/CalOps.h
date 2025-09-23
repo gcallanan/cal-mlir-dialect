@@ -18,6 +18,9 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 
+// Ensure custom CAL types (e.g., InstanceType) are visible to op declarations
+#include "Dialect/Cal/CalTypes.h"
+
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.h.inc"
 

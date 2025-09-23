@@ -12,6 +12,7 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Region.h"
 
@@ -20,6 +21,78 @@ using namespace mlir::cal;
 
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.cpp.inc"
+
+// Custom assembly for cal.connect (explicit handle form)
+mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand srcOperand, dstOperand;
+  Type srcTy, dstTy;
+  StringAttr srcPortAttr, dstPortAttr;
+
+  // %src : type
+  if (parser.parseOperand(srcOperand) || parser.parseColon() ||
+      parser.parseType(srcTy))
+    return failure();
+
+  // "srcPort"
+  if (parser.parseAttribute(srcPortAttr))
+    return failure();
+
+  // ->
+  if (parser.parseArrow())
+    return failure();
+
+  // %dst : type
+  if (parser.parseOperand(dstOperand) || parser.parseColon() ||
+      parser.parseType(dstTy))
+    return failure();
+
+  // "dstPort"
+  if (parser.parseAttribute(dstPortAttr))
+    return failure();
+
+  // Optional: capacity(<i64>)
+  IntegerAttr capacityAttr;
+  if (succeeded(parser.parseOptionalKeyword("capacity"))) {
+    if (parser.parseLParen() || parser.parseAttribute(capacityAttr) ||
+        parser.parseRParen())
+      return failure();
+    result.addAttribute("capacity", capacityAttr);
+  }
+
+  // Optional extra attributes
+  (void)parser.parseOptionalAttrDict(result.attributes);
+
+  // Resolve operands
+  if (parser.resolveOperand(srcOperand, srcTy, result.operands) ||
+      parser.resolveOperand(dstOperand, dstTy, result.operands))
+    return failure();
+
+  // Set required attributes
+  result.addAttribute("srcPort", srcPortAttr);
+  result.addAttribute("dstPort", dstPortAttr);
+
+  return success();
+}
+
+void ConnectOp::print(OpAsmPrinter &printer) {
+  printer << ' ';
+  printer.printOperand(getSrcHandle());
+  printer << " : ";
+  printer.printType(getSrcHandle().getType());
+  printer << ' ';
+  printer.printAttributeWithoutType(getSrcPortAttr());
+  printer << " -> ";
+  printer.printOperand(getDstHandle());
+  printer << " : ";
+  printer.printType(getDstHandle().getType());
+  printer << ' ';
+  printer.printAttributeWithoutType(getDstPortAttr());
+  if (auto cap = getCapacityAttr()) {
+    printer << " capacity(" << cap.getInt() << ")";
+  }
+  printer.printOptionalAttrDict(getOperation()->getAttrs(),
+                                {"srcPort", "dstPort", "capacity"});
+}
 
 /// Prints a labeled list of block arguments whose types match a given MLIR
 /// type.
@@ -233,6 +306,45 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
+void ActorOp::print(OpAsmPrinter &printer) {
+  Operation *op = getOperation();
+  auto actorName =
+      op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()).getValue();
+  printer << ' ';
+  printer.printSymbolName(actorName);
+
+  // Separate parameters vs ports.
+  SmallVector<Value> params;
+  for (Value arg : getBody().getArguments()) {
+    if (!mlir::isa<mlir::fifo::OutputPortType>(arg.getType()) &&
+        !mlir::isa<mlir::fifo::InputPortType>(arg.getType())) {
+      params.push_back(arg);
+    }
+  }
+
+  printer << '(';
+  if (!params.empty()) {
+    interleaveComma(params, printer, [&](Value v) {
+      printer.printOperand(v);
+      printer << ": ";
+      printer.printType(v.getType());
+    });
+  }
+  printer << ')';
+
+  printer.increaseIndent();
+  collectAndPrintArgumentsByType<mlir::fifo::OutputPortType>(
+      printer, getBody().getArguments(), "ports_in");
+  collectAndPrintArgumentsByType<mlir::fifo::InputPortType>(
+      printer, getBody().getArguments(), "ports_out");
+  printer.decreaseIndent();
+
+  printer.printNewline();
+  printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,
+                      /*printBlockTerminators=*/false);
+  printer.printNewline();
+}
+
 //===----------------------------------------------------------------------===//
 // Cal_NetworkOp (symbolic hierarchical network)
 //===----------------------------------------------------------------------===//
@@ -350,93 +462,13 @@ LogicalResult NetworkOp::verify() {
       "arith", "fifo", "cal"};
 
   for (Operation &op : getBody().front()) {
-    // Skip nested region terminators etc. (none expected) and allow create_instance.
-    if (llvm::isa<CreateInstanceOp>(&op))
-      continue;
-    if (llvm::isa<NetworkOp>(&op)) {
-      return emitOpError() << "nested cal.network definitions are not allowed; define networks at top module scope and instantiate hierarchically";
-    }
-    if (llvm::isa<ActorOp>(&op)) {
-      return emitOpError() << "actor definitions are not permitted inside a cal.network; move the actor to module scope";
-    }
-    // Accept operations from allowed dialects provided they are not symbol defs.
+    if (llvm::isa<NetworkOp>(op))
+      return emitOpError() << "nested cal.network definitions are not allowed; define networks at top module scope";
+    if (llvm::isa<ActorOp>(op))
+      return emitOpError() << "actor definitions are not permitted inside a cal.network";
     StringRef dialectNs = op.getDialect()->getNamespace();
     if (!allowedDialectPrefixes.contains(dialectNs))
-      return emitOpError() << "operation from unsupported dialect '" << dialectNs
-                           << "' inside cal.network";
-  }
-
-  // Rule 2: No duplicate port types ordering issue (implicitly guaranteed by SSA order).
-  // Additional semantic checks can be added later (e.g., unconnected port analysis).
-  return success();
-}
-
-void ActorOp::print(OpAsmPrinter &printer) {
-  Operation *op = getOperation();
-  auto actorName =
-      op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName())
-          .getValue();
-
-  printer << ' ';
-  printer.printSymbolName(actorName);
-
-  // Print all non-port arguments if they exist
-  SmallVector<Value> standardArgs;
-  for (Value arg : getBody().getArguments()) {
-    if (!mlir::isa<mlir::fifo::OutputPortType>(arg.getType()) &&
-        !mlir::isa<mlir::fifo::InputPortType>(arg.getType())) {
-      standardArgs.push_back(arg);
-    }
-  }
-
-  printer << "(";
-  if (standardArgs.size() > 0) {
-    interleaveComma(standardArgs, printer, [&](Value v) {
-      printer.printOperand(v);
-      printer << ": ";
-      printer.printType(v.getType());
-    });
-  }
-  printer << ")";
-
-  printer.increaseIndent();
-  collectAndPrintArgumentsByType<mlir::fifo::OutputPortType>(
-      printer, getBody().getArguments(), "ports_in");
-  collectAndPrintArgumentsByType<mlir::fifo::InputPortType>(
-      printer, getBody().getArguments(), "ports_out");
-  printer.decreaseIndent();
-
-  printer.printNewline();
-  printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,
-                      /*printBlockTerminators=*/false);
-  printer.printNewline();
-}
-
-LogicalResult CreateStateVarOp::verify() {
-  Type stateRefType = getStateVarRef().getType();
-  if (!mlir::isa<StateVarRefType>(stateRefType)) {
-    return emitOpError() << "expected stateVarRef to be of type "
-                            "StateVarRefType (!cal.state_ref<"
-                         << getStateType() << ">), but got " << stateRefType;
-  }
-
-  StateVarRefType stateRef = mlir::cast<StateVarRefType>(stateRefType);
-  if (stateRef.getStateType() != getStateType()) {
-    return emitOpError() << "expected stateVarRef state type to be "
-                         << getStateType() << ", but got "
-                         << stateRef.getStateType();
-  }
-
-  if (getOperation()->getParentOp()) {
-    if (mlir::isa<ExecutionBody>(getOperation()->getParentOp())) {
-      return emitOpError()
-             << "cannot create state variable within cal.execution_body";
-    } else if (mlir::isa<ActionOp>(getOperation()->getParentOp())) {
-      return emitOpError() << "cannot create state variable within cal.action";
-    } else if (mlir::isa<Predicate>(getOperation()->getParentOp())) {
-      return emitOpError()
-             << "cannot create state variable within cal.predicate";
-    }
+      return emitOpError() << "operation from unsupported dialect '" << dialectNs << "' inside cal.network";
   }
 
   return success();
@@ -483,6 +515,91 @@ LogicalResult StateSetOp::verify() {
     return emitOpError() << "cannot modify state variable within cal.predicate";
   }
 
+  return success();
+}
+
+LogicalResult CreateStateVarOp::verify() {
+  // The result must be a !cal.state_ref<T> and the type parameter must match.
+  Type resTy = getStateVarRef().getType();
+  if (!mlir::isa<StateVarRefType>(resTy))
+    return emitOpError() << "result must be !cal.state_ref<...>, but got "
+                         << resTy;
+
+  auto refTy = mlir::cast<StateVarRefType>(resTy);
+  Type declared = getStateType();
+  if (refTy.getStateType() != declared)
+    return emitOpError() << "state_ref element type (" << refTy.getStateType()
+                         << ") does not match declared <" << declared << ">";
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Verifiers for symbolic construction ops
+//===----------------------------------------------------------------------===//
+
+LogicalResult InstantiateArrayOp::verify() {
+  // Result type must be !cal.instance.array<actorRef, count>
+  Type resTy = getHandlesArray().getType();
+  auto arrTy = mlir::dyn_cast<InstanceArrayType>(resTy);
+  if (!arrTy)
+    return emitOpError() << "result must be !cal.instance.array<@Actor, N>, got " << resTy;
+
+  // Check actor symbol matches
+  if (arrTy.getActorRef() != getActorRefAttr())
+    return emitOpError() << "result actor '" << arrTy.getActorRef()
+                         << "' does not match attribute '" << getActorRefAttr() << "'";
+
+  // Check count matches
+  if (static_cast<uint64_t>(arrTy.getCount()) != getCount())
+    return emitOpError() << "result count " << arrTy.getCount()
+                         << " does not match attribute count " << getCount();
+
+  // Base name, if present, must be non-empty
+  if (auto bn = getBaseNameAttr(); bn && bn.getValue().empty())
+    return emitOpError() << "basename, if provided, must be non-empty";
+
+  return success();
+}
+
+LogicalResult InstanceAtOp::verify() {
+  // Array must be an instance array; result is an instance of the same actor.
+  auto arrayTy = mlir::dyn_cast<InstanceArrayType>(getArray().getType());
+  if (!arrayTy)
+    return emitOpError() << "array must be !cal.instance.array<@Actor, N>";
+
+  auto handleTy = mlir::dyn_cast<InstanceType>(getHandle().getType());
+  if (!handleTy)
+    return emitOpError() << "result must be !cal.instance<@Actor>";
+
+  if (arrayTy.getActorRef() != handleTy.getActorRef())
+    return emitOpError() << "actor mismatch between array and result: "
+                         << arrayTy.getActorRef() << " vs " << handleTy.getActorRef();
+
+  // If the index is a constant, ensure it is within bounds.
+  if (auto c = getIndex().getDefiningOp<arith::ConstantOp>()) {
+    Attribute val = c.getValueAttr();
+    if (auto intAttr = mlir::dyn_cast<IntegerAttr>(val)) {
+      // Accept both index-typed and integer attributes.
+      int64_t idx = intAttr.getInt();
+  if (idx < 0 || static_cast<uint64_t>(idx) >= static_cast<uint64_t>(arrayTy.getCount()))
+        return emitOpError() << "constant index " << idx << " out of bounds [0,"
+             << arrayTy.getCount() << ")";
+    }
+  }
+
+  return success();
+}
+
+LogicalResult ConnectOp::verify() {
+  // Port names must be non-empty.
+  if (getSrcPortAttr().getValue().empty() || getDstPortAttr().getValue().empty())
+    return emitOpError() << "port names must be non-empty";
+
+  // Optional capacity must be non-negative if present.
+  if (auto cap = getCapacityAttr()) {
+    if (cap.getInt() < 0)
+      return emitOpError() << "capacity, if provided, must be >= 0";
+  }
   return success();
 }
 
@@ -916,7 +1033,7 @@ bool ActorOp::isSimpleActor() {
     }
   }
 
-  int predicateCount = 0;
+  // (no predicate count needed here)
   for (Operation &op : savedActionOp.getBody().getOps()) {
     if (llvm::isa<cal::Predicate>(op)) {
       return false; // If any predicate is present in the action body, it is not a
@@ -938,3 +1055,7 @@ cal::ActorOp CreateInstanceOp::getActor() {
   }
   return actor;
 }
+
+// NOTE: verification for future array/connect ops will be added once those
+// ops are fully integrated via TableGen generation.
+

@@ -520,4 +520,125 @@ def CAL_StateSetOp : Cal_Op<"set", [MemoryEffects<[MemWrite]>]> {
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
+//===----------------------------------------------------------------------===//
+// High-level symbolic network construction ops (Step 1)
+// These ops are intentionally lightweight and are expected to be erased by an
+// elaboration pass that lowers them into fifo.create + cal.create_instance.
+//===----------------------------------------------------------------------===//
+
+// cal.instantiate
+// Creates a symbolic instance handle for an actor. Actual ports are not
+// connected here; connections are established separately via connect ops.
+// Syntax example:
+//   %h = cal.instantiate @MyActor ( %p0, %p1 : i32, f32 ) instance("optName")
+// or (no params / no name):
+//   %h = cal.instantiate @MyActor
+// The result is !cal.instance<@MyActor>.
+def Cal_InstantiateOp : Cal_Op<"instantiate", [HasParent<"NetworkOp">]> {
+  let summary = "Create a symbolic actor instance handle";
+  let description = [{
+    Produces a `!cal.instance<@Actor>` handle for use in subsequent structural
+    connection operations. This does not allocate FIFOs nor materialize a
+    `cal.create_instance` op; that is deferred to a later elaboration pass.
+  }];
+  let arguments = (ins
+    FlatSymbolRefAttr:$actorRef,                  // Target actor symbol
+    OptionalAttr<StrAttr>:$instanceName,          // Optional user name
+    Variadic<AnyType>:$params                     // Optional parameter operands
+  );
+  let results = (outs Cal_Instance:$handle);
+  let assemblyFormat = "$actorRef (`(` $params `:` type($params)^ `)`) ? (`instance` `(` $instanceName^ `)`)? attr-dict `:` type($handle)";
+}
+
+//===----------------------------------------------------------------------===//
+// Instance array based symbolic construction (replaces connect.indexed)
+//===----------------------------------------------------------------------===//
+
+// We support grouping multiple actor instances created from the same actor
+// symbol into an "instance array" so that users can index them directly in IR
+// without having to materialize/scf loop-carried handles manually. This keeps
+// replication patterns concise and amenable to later elaboration.
+//
+// The design introduces three new ops:
+//  * cal.instantiate_array  -> produces a !cal.instance.array<@Actor> handle
+//    with a statically known length (i64 attribute `count`).
+//  * cal.instance_at        -> extracts a single !cal.instance<@Actor> handle
+//    from the array given an index (either constant via arith.constant fed
+//    as SSA or potentially dynamic). For now any index operand of type index
+//    is accepted; verifier will ensure it is within bounds when the operand is
+//    a constant.
+//  * cal.connect            -> connects a source instance handle/port name to
+//    a destination instance handle/port name. The assembly form allows the
+//    sugar %arr[0] directly; the parser will lower this to an implicit
+//    cal.instance_at followed by the connect (implemented in C++). In TableGen
+//    we just define the base op on singular instance handles.
+//
+// NOTE: The previous cal.connect.indexed op is removed in favor of this more
+// general, symmetric mechanism with optional array indexing on both ends.
+
+// Forward declare the array type class name (defined in CalTypes.td in a later step).
+// If not yet defined, add a TODO for implementers.
+// Expected spelling: Cal_InstanceArray (mirrors Cal_Instance)
+
+def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", [HasParent<"NetworkOp">]> {
+  let summary = "Create an array of symbolic actor instance handles";
+  let description = [{
+    Allocates (symbolically) an array of N instances of @Actor. No FIFOs are
+    created and no cal.create_instance ops are emitted yet. Each element can
+    later be accessed using `cal.instance_at` or via the sugar `%arr[idx]` in
+    `cal.connect` assembly. Intended for compact replication patterns.
+  }];
+  let arguments = (ins
+    FlatSymbolRefAttr:$actorRef,          // Target actor symbol
+    I64Attr:$count,                       // Number of instances in the array
+    OptionalAttr<StrAttr>:$baseName,      // Optional base name for elements
+    Variadic<AnyType>:$params             // Optional parameter operands
+  );
+  let results = (outs AnyType:$handlesArray); // Will be !cal.instance_array<@Actor, count>
+  let assemblyFormat = "$actorRef `count` `(` $count `)` (`basename` `(` $baseName^ `)`)? (`(` $params `:` type($params)^ `)`) ? attr-dict `:` type($handlesArray)";
+  let hasVerifier = 1;
+}
+
+def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {
+  let summary = "Extract a single instance handle from an instance array";
+  let description = [{
+    Given an instance array value and an index operand, produce the specific
+    element instance handle. If the index is a constant, the verifier ensures
+    it is within [0, count). Dynamic indices are allowed but may inhibit some
+    elaboration-time optimizations.
+  }];
+  let arguments = (ins AnyType:$array, Index:$index); // array expected: !cal.instance_array<...>
+  let results = (outs Cal_Instance:$handle);
+  let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array) `,` type($index) `->` type($handle)";
+  let hasVerifier = 1;
+}
+
+def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">]> {
+  let summary = "Symbolic connection between two (possibly array-indexed) instances";
+  let description = [{
+    Declares a symbolic FIFO channel from a source actor instance handle to a
+    destination actor instance handle, both identified via handles (possibly
+    extracted from arrays) plus explicit port names. A later elaboration pass
+    materializes the FIFO via fifo.create and threads the concrete port SSA
+    values into cal.create_instance ops.
+
+    Assembly sugar (to be implemented in the custom parser/printer) will allow:
+       cal.connect %producers[0] "out" -> %consumers[3] "in0" capacity(8)
+    which the parser lowers into:
+       %p0 = cal.instance_at %producers[0]
+       %c3 = cal.instance_at %consumers[3]
+       cal.connect %p0 "out" -> %c3 "in0" capacity(8)
+    The explicit form (without sugar) matches the assemblyFormat below.
+  }];
+  let arguments = (ins
+    Cal_Instance:$srcHandle,
+    StrAttr:$srcPort,                // Source output port name
+    Cal_Instance:$dstHandle,
+    StrAttr:$dstPort,                // Destination input port name
+    OptionalAttr<I64Attr>:$capacity  // Optional FIFO capacity / depth
+  );
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
 #endif // CAL_OPS
