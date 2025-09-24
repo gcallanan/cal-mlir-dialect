@@ -613,7 +613,7 @@ def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {
   let hasVerifier = 1;
 }
 
-def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">]> {
+def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">, AttrSizedOperandSegments]> {
   let summary = "Symbolic connection between two (possibly array-indexed) instances";
   let description = [{
     Declares a symbolic FIFO channel from a source actor instance handle to a
@@ -631,10 +631,12 @@ def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">]> {
     The explicit form (without sugar) matches the assemblyFormat below.
   }];
   let arguments = (ins
-    Cal_Instance:$srcHandle,
-    StrAttr:$srcPort,                // Source output port name
-    Cal_Instance:$dstHandle,
-    StrAttr:$dstPort,                // Destination input port name
+    AnyType:$src,                  // Either !cal.instance or !cal.instance.array
+    Optional<Index>:$srcIndex,     // Present when src is array sugar
+    StrAttr:$srcPort,              // Source output port name
+    AnyType:$dst,                  // Either !cal.instance or !cal.instance.array
+    Optional<Index>:$dstIndex,     // Present when dst is array sugar
+    StrAttr:$dstPort,              // Destination input port name
     OptionalAttr<I64Attr>:$capacity  // Optional FIFO capacity / depth
   );
   let hasCustomAssemblyFormat = 1;

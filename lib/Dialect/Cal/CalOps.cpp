@@ -22,76 +22,157 @@ using namespace mlir::cal;
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.cpp.inc"
 
-// Custom assembly for cal.connect (explicit handle form)
+// Custom assembly for cal.connect supporting either handle or array+index per side.
 mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand srcOperand, dstOperand;
+  auto parseSide = [&](OpAsmParser::UnresolvedOperand &base,
+                       Type &ty,
+                       llvm::SmallVectorImpl<OpAsmParser::UnresolvedOperand> &maybeIndex) -> ParseResult {
+    if (parser.parseOperand(base))
+      return failure();
+    // Optional sugar: [%idx]
+    OpAsmParser::UnresolvedOperand idxOp;
+    if (succeeded(parser.parseOptionalLSquare())) {
+      if (parser.parseOperand(idxOp) || parser.parseRSquare())
+        return failure();
+      maybeIndex.push_back(idxOp);
+    }
+    if (parser.parseColon() || parser.parseType(ty))
+      return failure();
+    // If index was provided, require array type.
+    if (!maybeIndex.empty() && !mlir::isa<InstanceArrayType>(ty))
+      return parser.emitError(parser.getCurrentLocation(),
+                              "index form requires !cal.instance.array<...> type");
+    // If no index, require handle type.
+    if (maybeIndex.empty() && !mlir::isa<InstanceType>(ty))
+      return parser.emitError(parser.getCurrentLocation(),
+                              "handle form requires !cal.instance<...> type");
+    return success();
+  };
+
+  OpAsmParser::UnresolvedOperand srcBase, dstBase;
   Type srcTy, dstTy;
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand,1> srcIdx, dstIdx;
   StringAttr srcPortAttr, dstPortAttr;
 
-  // %src : type
-  if (parser.parseOperand(srcOperand) || parser.parseColon() ||
-      parser.parseType(srcTy))
+  if (failed(parseSide(srcBase, srcTy, srcIdx)))
     return failure();
-
-  // "srcPort"
   if (parser.parseAttribute(srcPortAttr))
     return failure();
-
-  // ->
   if (parser.parseArrow())
     return failure();
-
-  // %dst : type
-  if (parser.parseOperand(dstOperand) || parser.parseColon() ||
-      parser.parseType(dstTy))
+  if (failed(parseSide(dstBase, dstTy, dstIdx)))
     return failure();
-
-  // "dstPort"
   if (parser.parseAttribute(dstPortAttr))
     return failure();
 
   // Optional: capacity(<i64>)
   IntegerAttr capacityAttr;
   if (succeeded(parser.parseOptionalKeyword("capacity"))) {
-    if (parser.parseLParen() || parser.parseAttribute(capacityAttr) ||
-        parser.parseRParen())
+    if (parser.parseLParen() || parser.parseAttribute(capacityAttr) || parser.parseRParen())
       return failure();
     result.addAttribute("capacity", capacityAttr);
   }
 
-  // Optional extra attributes
   (void)parser.parseOptionalAttrDict(result.attributes);
 
-  // Resolve operands
-  if (parser.resolveOperand(srcOperand, srcTy, result.operands) ||
-      parser.resolveOperand(dstOperand, dstTy, result.operands))
+  // Resolve src and optional index
+  if (parser.resolveOperand(srcBase, srcTy, result.operands))
     return failure();
+  bool haveSrcIndex = false;
+  if (mlir::isa<InstanceArrayType>(srcTy)) {
+    if (srcIdx.empty())
+      return parser.emitError(parser.getCurrentLocation(), "missing index for source array operand");
+    haveSrcIndex = true;
+    if (parser.resolveOperand(srcIdx.front(), parser.getBuilder().getIndexType(), result.operands))
+      return failure();
+  }
 
-  // Set required attributes
+  // Resolve dst and optional index
+  if (parser.resolveOperand(dstBase, dstTy, result.operands))
+    return failure();
+  bool haveDstIndex = false;
+  if (mlir::isa<InstanceArrayType>(dstTy)) {
+    if (dstIdx.empty())
+      return parser.emitError(parser.getCurrentLocation(), "missing index for destination array operand");
+    haveDstIndex = true;
+    if (parser.resolveOperand(dstIdx.front(), parser.getBuilder().getIndexType(), result.operands))
+      return failure();
+  }
+
   result.addAttribute("srcPort", srcPortAttr);
   result.addAttribute("dstPort", dstPortAttr);
 
+  // Record operand segment sizes for optional indices: [src, srcIndex, dst, dstIndex]
+  auto sizes = llvm::SmallVector<int32_t, 4>{1, static_cast<int32_t>(haveSrcIndex ? 1 : 0),
+                                             1, static_cast<int32_t>(haveDstIndex ? 1 : 0)};
+  result.addAttribute("operand_segment_sizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(sizes));
   return success();
 }
 
 void ConnectOp::print(OpAsmPrinter &printer) {
+  auto printHandleWithOptionalIndex = [&](Value handle) {
+    if (auto at = handle.getDefiningOp<InstanceAtOp>()) {
+      // Print as %array[idx] : !cal.instance.array<...>
+      Value array = at.getArray();
+      Value index = at.getIndex();
+      printer.printOperand(array);
+      printer << '[';
+      // If it's an arith.constant index, try to print the integer literal; otherwise print SSA
+      if (Operation *def = index.getDefiningOp()) {
+        if (def->getName().getStringRef() == "arith.constant") {
+          if (auto attr = def->getAttrOfType<IntegerAttr>("value"))
+            printer << attr.getInt();
+          else
+            printer.printOperand(index);
+        } else {
+          printer.printOperand(index);
+        }
+      } else {
+        printer.printOperand(index);
+      }
+      printer << "] : ";
+      printer.printType(array.getType());
+    } else {
+      // Fallback: explicit handle form
+      printer.printOperand(handle);
+      printer << " : ";
+      printer.printType(handle.getType());
+    }
+  };
+
   printer << ' ';
-  printer.printOperand(getSrcHandle());
-  printer << " : ";
-  printer.printType(getSrcHandle().getType());
+  // Print src in sugar if array+index provided; otherwise handle
+  if (getSrcIndex() != nullptr) {
+    printer.printOperand(getSrc());
+    printer << '[';
+    printer.printOperand(getSrcIndex());
+    printer << "] : ";
+    printer.printType(getSrc().getType());
+  } else {
+    printHandleWithOptionalIndex(getSrc());
+  }
   printer << ' ';
   printer.printAttributeWithoutType(getSrcPortAttr());
   printer << " -> ";
-  printer.printOperand(getDstHandle());
-  printer << " : ";
-  printer.printType(getDstHandle().getType());
+  if (getDstIndex() != nullptr) {
+    printer.printOperand(getDst());
+    printer << '[';
+    printer.printOperand(getDstIndex());
+    printer << "] : ";
+    printer.printType(getDst().getType());
+  } else {
+    printHandleWithOptionalIndex(getDst());
+  }
   printer << ' ';
   printer.printAttributeWithoutType(getDstPortAttr());
   if (auto cap = getCapacityAttr()) {
     printer << " capacity(" << cap.getInt() << ")";
   }
   printer.printOptionalAttrDict(getOperation()->getAttrs(),
-                                {"srcPort", "dstPort", "capacity"});
+                                {"srcPort", "dstPort", "capacity",
+                                 "operand_segment_sizes", "operandSegmentSizes",
+                                 "operand_segment_sizes__", "operandSegmentSizes__"});
 }
 
 /// Prints a labeled list of block arguments whose types match a given MLIR
@@ -594,6 +675,28 @@ LogicalResult ConnectOp::verify() {
   // Port names must be non-empty.
   if (getSrcPortAttr().getValue().empty() || getDstPortAttr().getValue().empty())
     return emitOpError() << "port names must be non-empty";
+
+  // Each side is either a handle (!cal.instance) alone, or an array with index pair.
+  bool srcIsArray = mlir::isa<InstanceArrayType>(getSrc().getType());
+  bool dstIsArray = mlir::isa<InstanceArrayType>(getDst().getType());
+  if (srcIsArray) {
+    if (getSrcIndex() == nullptr)
+      return emitOpError() << "source is array but index is missing";
+  } else {
+    if (!mlir::isa<InstanceType>(getSrc().getType()))
+      return emitOpError() << "source must be !cal.instance or !cal.instance.array with index";
+    if (getSrcIndex() != nullptr)
+      return emitOpError() << "source index provided but source is not an array";
+  }
+  if (dstIsArray) {
+    if (getDstIndex() == nullptr)
+      return emitOpError() << "destination is array but index is missing";
+  } else {
+    if (!mlir::isa<InstanceType>(getDst().getType()))
+      return emitOpError() << "destination must be !cal.instance or !cal.instance.array with index";
+    if (getDstIndex() != nullptr)
+      return emitOpError() << "destination index provided but destination is not an array";
+  }
 
   // Optional capacity must be non-negative if present.
   if (auto cap = getCapacityAttr()) {
