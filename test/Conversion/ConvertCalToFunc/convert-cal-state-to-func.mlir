@@ -16,7 +16,7 @@ cal.actor @src(%max_tokens_to_send: i32)
 }
 
 // CHECK:  func.func @main()
-cal.network{
+cal.network @Top(){
     %0 = arith.constant 11 : i32
     %1 = arith.constant 12 : i32
     %2 = arith.constant 13 : i32

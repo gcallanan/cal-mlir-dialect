@@ -25,15 +25,15 @@
 
 // -----
 
-%c0 = arith.constant 0 : i32
-%c1 = arith.constant 1 : i32
+//%c0 = arith.constant 0 : i32
+//%c1 = arith.constant 1 : i32
 // expected-error @+1 {{'cal.set' op expected stateVarRef to be of type StateVarRefType (!cal.state_ref<'i32'>), but got 'i32'}}
 cal.set(%c0: i32, %c1: i32)
 
 // -----
 
 
-%ref3 = cal.create_state_var<i32> : !cal.state_ref<i32>
+//%ref3 = cal.create_state_var<i32> : !cal.state_ref<i32>
 %c1 = arith.constant 1 : i17
 // expected-error @+1 {{'cal.set' op expected stateVarRef state type to be 'i17', but got 'i32'}}
 cal.set(%ref3: !cal.state_ref<i32>, %c1: i17)

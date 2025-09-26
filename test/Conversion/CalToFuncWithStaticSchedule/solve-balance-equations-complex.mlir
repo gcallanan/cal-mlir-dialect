@@ -7168,7 +7168,7 @@ cal.actor @joinersPerRow_r_1 ()
 }
 
 // -- Top Network: Defines structure of actor application
-cal.network
+cal.network @Top()
 {
 
 	// -- Instantiate channels between actors

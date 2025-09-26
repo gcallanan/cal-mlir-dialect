@@ -13,11 +13,6 @@ struct CalGenericPipelineOptions
       *this, "disable-hoist-allocs",
       llvm::cl::desc("Disable hoisting of allocations to main function."),
       llvm::cl::init(false)};
-  PassOptions::Option<bool> mergeSimpleCalActors{
-      *this, "merge-simple-cal-actors",
-      llvm::cl::desc("Merge chains of single action actors with a single input "
-                     "and output port together."),
-      llvm::cl::init(false)};
 };
 
 struct CalToLLVMWithGPUTensorsPipelineOptions

@@ -15,7 +15,7 @@ cal.actor @src(%max_tokens_to_send: i32)
     }
 }
 
-cal.network{
+cal.network @Top(){
     %0 = arith.constant 11 : i32
 
     %in0, %out0 = fifo.create<i32>(3) : !fifo.input_port<i32>, !fifo.output_port<i32>

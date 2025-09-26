@@ -1,3 +1,4 @@
+// REQUIRES: merge-simple-cal-actors
 // RUN: cal-opt --merge-simple-cal-actors %s | FileCheck %s
 
 // CHECK:  cal.actor @merged_actor_cat_and_broadcast_2_f_0_5_cat_and_boundary_3_integrate_4()

@@ -60,6 +60,9 @@
 // All the CAL pipelines
 #include "Conversion/CalLoweringPipelines/CalLoweringPipelines.h"
 
+// Force-link deprecated no-op pass registration for legacy flag compatibility.
+namespace mlir { namespace cal { void forceRegisterLegacyMergeSimpleCalActorsPass(); }}
+
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mlir::cal::registerPasses();
@@ -67,6 +70,8 @@ int main(int argc, char **argv) {
   mlir::fifo::registerPasses();
   mlir::registerCalGenericTransformationsPasses();
   mlir::cal::registerCalPipelines();
+    // Ensure the TU with the legacy no-op pass is linked into this binary.
+    mlir::cal::forceRegisterLegacyMergeSimpleCalActorsPass();
 
   mlir::DialectRegistry registry;
   registry.insert<

@@ -15,12 +15,61 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Region.h"
+#include "mlir/IR/PatternMatch.h"
 
 using namespace mlir;
 using namespace mlir::cal;
 
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.cpp.inc"
+//===----------------------------------------------------------------------===//
+// ConnectOp canonicalization: lower array+index sides to instance_at handles.
+// This yields a handle-only connect in the IR (printer may still show sugar).
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct ConnectLowerArrayIndexToInstanceAt : ::mlir::OpRewritePattern<ConnectOp> {
+  using ::mlir::OpRewritePattern<ConnectOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(ConnectOp op,
+                                ::mlir::PatternRewriter &rewriter) const override {
+    bool changed = false;
+    Location loc = op.getLoc();
+
+    // Lower src side if it is an array with index.
+    if (isa<InstanceArrayType>(op.getSrc().getType()) && op.getSrcIndex()) {
+      auto arrTy = cast<InstanceArrayType>(op.getSrc().getType());
+      auto handleTy = InstanceType::get(op.getContext(), arrTy.getActorRef());
+      Value arr = op.getSrc();
+      Value idx = op.getSrcIndex();
+      rewriter.setInsertionPoint(op);
+      auto at = rewriter.create<InstanceAtOp>(loc, handleTy, arr, idx);
+      op.getSrcMutable().assign(at.getHandle());
+      op.getSrcIndexMutable().clear();
+      changed = true;
+    }
+
+    // Lower dst side if it is an array with index.
+    if (isa<InstanceArrayType>(op.getDst().getType()) && op.getDstIndex()) {
+      auto arrTy = cast<InstanceArrayType>(op.getDst().getType());
+      auto handleTy = InstanceType::get(op.getContext(), arrTy.getActorRef());
+      Value arr = op.getDst();
+      Value idx = op.getDstIndex();
+      rewriter.setInsertionPoint(op);
+      auto at = rewriter.create<InstanceAtOp>(loc, handleTy, arr, idx);
+      op.getDstMutable().assign(at.getHandle());
+      op.getDstIndexMutable().clear();
+      changed = true;
+    }
+
+    return success(changed);
+  }
+};
+} // namespace
+
+void ConnectOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                            ::mlir::MLIRContext *context) {
+  results.add<ConnectLowerArrayIndexToInstanceAt>(context);
+}
 
 // Custom assembly for cal.connect supporting either handle or array+index per side.
 mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -278,6 +327,20 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
                                       /*allowAttrs=*/false)))
     return failure();
 
+  // Optionally parse port name attributes before the port lists:
+  //   in_names(["in","in1"]) out_names(["out0","out1"]) ports_in(...) ports_out(...)
+  // These attributes are stored as ArrayAttr on the op.
+  ArrayAttr inNamesParsed;
+  ArrayAttr outNamesParsed;
+  if (succeeded(parser.parseOptionalKeyword("in_names"))) {
+    if (parser.parseAttribute(inNamesParsed)) return failure();
+    result.addAttribute("inPortNames", inNamesParsed);
+  }
+  if (succeeded(parser.parseOptionalKeyword("out_names"))) {
+    if (parser.parseAttribute(outNamesParsed)) return failure();
+    result.addAttribute("outPortNames", outNamesParsed);
+  }
+
   // Parse the input and output arguments.
   if (failed(parseAndCheckPorts<mlir::fifo::OutputPortType>(
     parser, inVals, "ports_in",
@@ -384,6 +447,27 @@ ParseResult ActorOp::parse(OpAsmParser &parser, OperationState &result) {
     }
   }
 
+  // Validate provided port-name arrays, if present.
+  auto checkNames = [&](ArrayAttr arr, unsigned expect, StringRef which) -> LogicalResult {
+    if (!arr) return success();
+    if (arr.size() != expect)
+      return parser.emitError(location) << which << " name count (" << arr.size()
+                                        << ") does not match " << which
+                                        << " port count (" << expect << ")";
+    llvm::SmallDenseSet<StringRef, 8> seen;
+    for (Attribute a : arr) {
+      auto s = dyn_cast<StringAttr>(a);
+      if (!s || s.getValue().empty())
+        return parser.emitError(location) << which << " names must be non-empty strings";
+      if (!seen.insert(s.getValue()).second)
+        return parser.emitError(location) << which << " names must be unique; duplicate '"
+                                          << s.getValue() << "'";
+    }
+    return success();
+  };
+  if (failed(checkNames(inNamesParsed, inVals.size(), "input"))) return failure();
+  if (failed(checkNames(outNamesParsed, outVals.size(), "output"))) return failure();
+
   return success();
 }
 
@@ -414,17 +498,31 @@ void ActorOp::print(OpAsmPrinter &printer) {
   printer << ')';
 
   printer.increaseIndent();
+  // If port names exist, print them before the port groups for readability.
+  if (auto inNames = op->getAttrOfType<ArrayAttr>("inPortNames")) {
+    printer.printNewline();
+    printer << "in_names " << inNames;
+  }
+  if (auto outNames = op->getAttrOfType<ArrayAttr>("outPortNames")) {
+    printer.printNewline();
+    printer << "out_names " << outNames;
+  }
   collectAndPrintArgumentsByType<mlir::fifo::OutputPortType>(
       printer, getBody().getArguments(), "ports_in");
   collectAndPrintArgumentsByType<mlir::fifo::InputPortType>(
       printer, getBody().getArguments(), "ports_out");
   printer.decreaseIndent();
-
   printer.printNewline();
   printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,
                       /*printBlockTerminators=*/false);
   printer.printNewline();
 }
+
+// Minimal verifier: detailed port-name validation is performed during parse.
+LogicalResult ActorOp::verify() { return success(); }
+
+// (Verifier moved into parser for immediate diagnostics when present.)
+
 
 //===----------------------------------------------------------------------===//
 // Cal_NetworkOp (symbolic hierarchical network)
@@ -673,15 +771,16 @@ LogicalResult InstanceAtOp::verify() {
 
 LogicalResult ConnectOp::verify() {
   // Port names must be non-empty.
-  if (getSrcPortAttr().getValue().empty() || getDstPortAttr().getValue().empty())
+  if (getSrcPortAttr().getValue().empty() || getDstPortAttr().getValue().empty()) {
     return emitOpError() << "port names must be non-empty";
+  }
 
   // Each side is either a handle (!cal.instance) alone, or an array with index pair.
   bool srcIsArray = mlir::isa<InstanceArrayType>(getSrc().getType());
   bool dstIsArray = mlir::isa<InstanceArrayType>(getDst().getType());
   if (srcIsArray) {
     if (getSrcIndex() == nullptr)
-      return emitOpError() << "source is array but index is missing";
+      return emitOpError() << "source is array but index is missing (use 'handle[index]' or pass --allow-dynamic-indices to defer)";
   } else {
     if (!mlir::isa<InstanceType>(getSrc().getType()))
       return emitOpError() << "source must be !cal.instance or !cal.instance.array with index";
@@ -690,7 +789,7 @@ LogicalResult ConnectOp::verify() {
   }
   if (dstIsArray) {
     if (getDstIndex() == nullptr)
-      return emitOpError() << "destination is array but index is missing";
+      return emitOpError() << "destination is array but index is missing (use 'handle[index]' or pass --allow-dynamic-indices to defer)";
   } else {
     if (!mlir::isa<InstanceType>(getDst().getType()))
       return emitOpError() << "destination must be !cal.instance or !cal.instance.array with index";
@@ -994,6 +1093,7 @@ void ActionOp::print(OpAsmPrinter &printer) {
   if (getActionNameAttr()) {
     printer << " ";
     printer.printString(getActionNameAttr().getValue());
+
   }
 
   if (getPriorityAttr()) {

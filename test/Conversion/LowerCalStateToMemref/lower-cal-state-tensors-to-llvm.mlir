@@ -73,6 +73,6 @@ cal.actor @simple()
 
 
 
-cal.network{
+cal.network @Top(){
     cal.create_instance @simple "actor1" ()
 }

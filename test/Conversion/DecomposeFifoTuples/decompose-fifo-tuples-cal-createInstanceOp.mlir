@@ -7,7 +7,7 @@ module {
   // CHECK: cal.actor @inputs_and_output(%arg0: i32, %arg1: memref<?xi32>, %arg2: memref<2xi32>, %arg3: i32, %arg4: memref<?xi32>, %arg5: memref<2xi32>, %arg6: i32, %arg7: memref<?xi32>, %arg8: memref<2xi32>, %arg9: i32)
 
   
-  cal.network {
+  cal.network @Top(){
     %c10_i32 = arith.constant 10 : i32
     %alloc = memref.alloc() : memref<4xi32>
     %alloc_0 = memref.alloc() : memref<2xi32>

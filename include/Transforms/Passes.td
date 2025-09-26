@@ -274,7 +274,11 @@ def FifoMemrefAtomicizePass : Pass<"fifo-memref-atomicize"> {
     Option<"disablePruning", "disable-pruning", "bool", /*default=*/"false",
        "Disable dead network pruning after flattening (retain all original network symbols even if unreferenced).">,
     Option<"emitStats", "emit-stats", "bool", /*default=*/"false",
-       "Emit a remark summarizing flatten statistics (iterations, flattened instances, pruned networks).">
+     "Emit a remark summarizing flatten statistics (iterations, flattened instances, pruned networks).">,
+   Option<"allowPartialConnectivity", "allow-partial-connectivity", "bool", /*default=*/"false",
+     "Allow elaboration to proceed even if some instances are not fully connected. Fully-wired instances are materialized; partially wired instances and their symbolic ops are left intact for incremental builds.">,
+   Option<"allowDynamicIndices", "allow-dynamic-indices", "bool", /*default=*/"false",
+     "Permit dynamic indices in cal.instance_at or cal.connect array sugar. Such connections are skipped during elaboration with a remark (to be handled by later passes). When disabled (default), dynamic indices cause a failure.">
   ];
 }
 

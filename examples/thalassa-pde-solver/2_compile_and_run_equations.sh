@@ -7,9 +7,8 @@ GPU=false
 HYPERCUBE_SIZE=1000000
 DISABLE_ALLOCS=""
 ENABLE_ASYNC_GPU_STREAMS=""
-MERGE_SIMPLE_CAL_ACTORS=""
 ITERATIONS=250
-while getopts O:h:i:gdsm flag
+while getopts O:h:i:gds flag
 do
     case "${flag}" in
         O) O=${OPTARG};; # Optimization level
@@ -17,7 +16,6 @@ do
         g) GPU=true;;
         d) DISABLE_ALLOCS="disable-hoist-allocs";;
         s) ENABLE_ASYNC_GPU_STREAMS="enable-asynch-gpu-behavior";;
-        m) MERGE_SIMPLE_CAL_ACTORS="merge-simple-cal-actors";;
         i) ITERATIONS=${OPTARG};; # Number of time iterations
     esac
 done
@@ -30,12 +28,12 @@ echo "Step 2: Compile the generated MLIR code to LLVM IR and then to an executab
 echo "   Optimization level: ${O}"
 
 if [ "$GPU" = false ]; then
-    env PATH=$PATH:../../build/bin/ cal-opt --lower-cal-to-llvm="$MERGE_SIMPLE_CAL_ACTORS" advection_diffusion.mlir | env PATH=$PATH:../../build/bin/ cal-translate --mlir-to-llvmir > main.ll
+    env PATH=$PATH:../../build/bin/ cal-opt --lower-cal-to-llvm advection_diffusion.mlir | env PATH=$PATH:../../build/bin/ cal-translate --mlir-to-llvmir > main.ll
     opt -O$O main.ll -o main.opt.ll
     llc -relocation-model=pic main.opt.ll -filetype=obj -o main.o
     clang main.o -o main_executable_from_mlir -lm
 else
-    CMD="cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors=\"cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=256,1,1 $DISABLE_ALLOCS $ENABLE_ASYNC_GPU_STREAMS $MERGE_SIMPLE_CAL_ACTORS\""
+    CMD="cal-opt advection_diffusion.mlir --lower-cal-to-llvm-with-gpu-tensors=\"cubin-chip=sm_75 opt-level=$O parallel-loop-tile-sizes=256,1,1 $DISABLE_ALLOCS $ENABLE_ASYNC_GPU_STREAMS\""
     # echo "    Running command: $CMD"
     eval $CMD | cal-translate --mlir-to-llvmir > main.ll
     opt -O$O main.ll -o main.opt.ll

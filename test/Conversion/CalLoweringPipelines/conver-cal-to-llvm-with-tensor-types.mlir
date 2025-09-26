@@ -112,7 +112,7 @@ cal.actor @accumulator()
     }
 }
 
-cal.network{
+cal.network @Top(){
     %num_tokens = arith.constant 5 : i32
     %in0, %out0 = fifo.create<tensor<2x2xi32>>(3) : !fifo.input_port<tensor<2x2xi32>>, !fifo.output_port<tensor<2x2xi32>>
     

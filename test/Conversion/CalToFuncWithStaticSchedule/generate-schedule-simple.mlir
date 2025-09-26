@@ -81,7 +81,7 @@ cal.actor @sink ()
 }
 
 // -- Top Network: Defines structure of actor application
-cal.network
+cal.network @Top()
 {
 
 	// -- Instantiate channels between actors

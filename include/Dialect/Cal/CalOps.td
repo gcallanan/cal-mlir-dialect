@@ -94,7 +94,9 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   }];
 
   let arguments = (ins
-    SymbolNameAttr:$sym_name // Actor Name: Required by the Symbol interface
+    SymbolNameAttr:$sym_name, // Actor Name: Required by the Symbol interface
+    OptionalAttr<ArrayAttr>:$inPortNames,  // Optional symbolic names for ports_in (size must equal inDegree)
+    OptionalAttr<ArrayAttr>:$outPortNames  // Optional symbolic names for ports_out (size must equal outDegree)
   );
 
   let regions = (region AnyRegion:$body);
@@ -113,6 +115,7 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
     // and no predicates and a single input and output port.
     bool isSimpleActor();
   }];
+  let hasVerifier = 1;
 }
 
 
@@ -641,6 +644,7 @@ def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">, AttrSizedOperandS
   );
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 #endif // CAL_OPS

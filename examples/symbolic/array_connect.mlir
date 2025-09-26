@@ -61,22 +61,25 @@ cal.network @sym_net() {
   %cap = arith.constant 3 : i32
 
   // Material channels for the eventual elaboration target
-  %in0, %out0 = fifo.create<i32>(4) : !fifo.input_port<i32>, !fifo.output_port<i32>
-  %in1, %out1 = fifo.create<i32>(4) : !fifo.input_port<i32>, !fifo.output_port<i32>
+  //%in0, %out0 = fifo.create<i32>(4) : !fifo.input_port<i32>, !fifo.output_port<i32>
+  //%in1, %out1 = fifo.create<i32>(4) : !fifo.input_port<i32>, !fifo.output_port<i32>
 
   // High-level symbolic handles (not yet elaborated)
   %srcs = cal.instantiate_array @src count(2) ( %cap : i32 ) : !cal.instance.array<@src, 2>
+  %sinks = cal.instantiate_array @sink count(2) ( %cap : i32 ) : !cal.instance.array<@sink, 2>
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %s0 = cal.instance_at %srcs[%c0] : !cal.instance.array<@src, 2>, index -> !cal.instance<@src>
   %s1 = cal.instance_at %srcs[%c1] : !cal.instance.array<@src, 2>, index -> !cal.instance<@src>
+  %sinks0 = cal.instance_at %sinks[%c0] : !cal.instance.array<@sink, 2>, index -> !cal.instance<@sink>
+  %sinks1 = cal.instance_at %sinks[%c1] : !cal.instance.array<@sink, 2>, index -> !cal.instance<@sink>
 
-  %sink = cal.instantiate @sink : !cal.instance<@sink>
+ // %sink = cal.instantiate @sink : !cal.instance<@sink>
   %wire = cal.instantiate @wire : !cal.instance<@wire>
 
   // Symbolic connections; an elaboration pass will convert these into
   // fifo.create + cal.create_instance with the concrete SSA ports connected.
   cal.connect %s0 : !cal.instance<@src> "out" -> %wire : !cal.instance<@wire> "in"
-  cal.connect %wire : !cal.instance<@wire> "out" -> %sink : !cal.instance<@sink> "in"
-  cal.connect %s1 : !cal.instance<@src> "out" -> %sink : !cal.instance<@sink> "in"
+  cal.connect %wire : !cal.instance<@wire> "out" -> %sinks0 : !cal.instance<@sink> "in"
+  cal.connect %s1 : !cal.instance<@src> "out" -> %sinks1 : !cal.instance<@sink> "in"
 }

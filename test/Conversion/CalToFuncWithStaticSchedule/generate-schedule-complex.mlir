@@ -2390,7 +2390,7 @@ cal.actor @iGenerator_0 ()
 }
 
 // -- Top Network: Defines structure of actor application
-cal.network
+cal.network @Top()
 {
 
 	// -- Instantiate channels between actors

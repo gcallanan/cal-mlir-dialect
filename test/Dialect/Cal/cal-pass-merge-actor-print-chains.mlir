@@ -1,3 +1,4 @@
+// REQUIRES: merge-simple-cal-actors
 // RUN: cal-opt --merge-simple-cal-actors=print-chains-for-testing %s | FileCheck %s
 
 // CHECK: Network chains:

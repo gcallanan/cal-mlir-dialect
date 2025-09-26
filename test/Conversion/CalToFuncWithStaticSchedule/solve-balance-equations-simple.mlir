@@ -64,7 +64,7 @@ module {
     
   }
   
-  cal.network {
+  cal.network @Top(){
     %inputPort, %outputPort = fifo.create<i32> (1) : !fifo.input_port<i32>, !fifo.output_port<i32>
     %inputPort_0, %outputPort_1 = fifo.create<i32> (1) : !fifo.input_port<i32>, !fifo.output_port<i32>
     cal.create_instance @source "source" ()
