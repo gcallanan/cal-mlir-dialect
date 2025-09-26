@@ -1,5 +1,5 @@
 //RUN: cal-opt --lower-cal-to-llvm %s | \
-//RUN: mlir-runner --entry-point-result=void | \
+//RUN: mlir-runner --entry-point-result=void Top | \
 //RUN: FileCheck %s
 
 // CHECK: Accumulated Tensor

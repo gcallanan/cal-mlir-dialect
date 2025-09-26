@@ -41,7 +41,7 @@ cal.actor @src(%temp: i32)
 
 
 
-cal.network {
+cal.network @Top() {
     %0 = arith.constant 10 : i32
     %1 = arith.constant 10 : i32
 

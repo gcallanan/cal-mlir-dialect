@@ -572,11 +572,19 @@ public:
         auto name = StringAttr::get(net.getContext(), net.getSymName());
         if (!referenced.contains(name)) {
           bool hasActorInstance = false;
+          bool hasSymbolicOps = false;
           net.walk([&](CreateInstanceOp ci) {
             if (symbolTable.lookupNearestSymbolFrom<ActorOp>(ci, ci.getActorRefAttr()))
               hasActorInstance = true;
           });
-          if (!hasActorInstance)
+          // When dynamic indices are allowed, preserve networks with unresolved symbolic operations
+          if (allowDynamicIndices) {
+            net.walk([&](Operation *op) {
+              if (isa<InstantiateOp, InstantiateArrayOp, ConnectOp, InstanceAtOp>(op))
+                hasSymbolicOps = true;
+            });
+          }
+          if (!hasActorInstance && !hasSymbolicOps)
             toErase.push_back(net);
         }
       });

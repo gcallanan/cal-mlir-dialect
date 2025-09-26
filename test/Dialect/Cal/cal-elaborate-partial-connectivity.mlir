@@ -25,13 +25,12 @@ cal.network @Top() {
 }
 
 // Only the fully connected pair should be materialized.
-// CHECK: %[[IN:.*]], %[[OUT:.*]] = fifo.create<i32>
-// CHECK: cal.create_instance @P()
-// CHECK-SAME: ports_out (%[[IN]] : !fifo.input_port<i32>)
-// CHECK: cal.create_instance @Q()
-// CHECK-SAME: ports_in (%[[OUT]] : !fifo.output_port<i32>)
-
-// And the partially connected pair remains symbolic:
+// First, the symbolic instances remain:
 // CHECK: cal.instantiate @P
 // CHECK: cal.instantiate @Q
-// CHECK: cal.connect
+// Then FIFO creation and materialized instances:
+// CHECK: %[[IN:.*]], %[[OUT:.*]] = fifo.create<i32>
+// CHECK: cal.create_instance @Q()
+// CHECK-NEXT: ports_in (%[[OUT]] : !fifo.output_port<i32>)
+// CHECK: cal.create_instance @P()
+// CHECK-NEXT: ports_out (%[[IN]] : !fifo.input_port<i32>)

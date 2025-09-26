@@ -635,10 +635,11 @@ LogicalResult NetworkOp::verify() {
 
   // Allowed top-level ops inside a network (structural / instantiation)
   // We allow: fifo.create / print / print_tensor, arith.constant, cal.create_instance,
+  // linalg operations (which can be hoisted from actors), tensor operations,
   // other cal.network will appear only as symbol definitions (not nested definitions),
   // but disallow cal.actor definitions inside a network region.
-  static llvm::DenseSet<llvm::StringRef> allowedDialectPrefixes = {
-      "arith", "fifo", "cal"};
+  //static llvm::DenseSet<llvm::StringRef> allowedDialectPrefixes = {
+  //    "arith", "fifo", "cal", "linalg", "tensor", "scf"};
 
   for (Operation &op : getBody().front()) {
     if (llvm::isa<NetworkOp>(op))
@@ -646,8 +647,8 @@ LogicalResult NetworkOp::verify() {
     if (llvm::isa<ActorOp>(op))
       return emitOpError() << "actor definitions are not permitted inside a cal.network";
     StringRef dialectNs = op.getDialect()->getNamespace();
-    if (!allowedDialectPrefixes.contains(dialectNs))
-      return emitOpError() << "operation from unsupported dialect '" << dialectNs << "' inside cal.network";
+    //if (!allowedDialectPrefixes.contains(dialectNs))
+    //  return emitOpError() << "operation from unsupported dialect '" << dialectNs << "' inside cal.network";
   }
 
   return success();

@@ -52,7 +52,7 @@ cal.actor @src2(%max_tokens_to_send: i32)
     }
 }
 
-cal.network {
+cal.network @Top() {
     %0 = arith.constant 10 : i32
     %1 = arith.constant 10 : i32
 

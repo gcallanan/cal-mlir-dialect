@@ -55,3 +55,5 @@ add_subdirectory(test)
 add_subdirectory(cal-opt)
 add_subdirectory(cal-plugin)
 add_subdirectory(cal-translate)
+add_subdirectory(cal-lsp-server)
+
