@@ -1,0 +1,7 @@
+Here we implement different CAL implementations of benchmarks in the Savina actor benchmark suite. See [https://doi.org/10.1145/2687357.2687368](https://doi.org/10.1145/2687357.2687368) for the full description. This is a benchmark suite designed to compare different actor frameworks. We have copied some of the CAL savina examples from [this github repo](https://github.com/gcallanan/savina-apps-in-cal) and implemented others ourselves:
+
+| Benchmark Name               | Description |
+| -----------------------------| ----------- |
+| `big`                    | Implements the Savina 4.2 "Big Actor" benchmark in CAL. Demonstrates large-scale message passing between many actors, and provides scripts to compile and benchmark both C++ and MLIR backends. See [big/README.md](big/README.md) for details. | 
+| `bounded-buffer`          | Implements the Savina 5.2 "Bounded Buffer" benchmark in CAL. Demonstrates concurrent producer-consumer communication using bounded FIFOs, with scripts to compile and benchmark both C++ and MLIR backends. See [bounded-buffer/README.md](bounded-buffer/README.md) for details. |
+| `trapezoid`          | Implements the Savina 6.12 "Bounded Buffer" benchmark in CAL. Demonstrates a single co-ordinator actor sending components of working out the area of a trapezoid to a number of worker actors. See [trapezoid/README.md](bounded-buffer/README.md) for details. |
