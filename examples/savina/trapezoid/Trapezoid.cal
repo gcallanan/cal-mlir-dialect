@@ -1,0 +1,212 @@
+namespace trapezoid:
+    import System.math.cos;
+    import System.math.sin;
+    import System.math.exp;
+    import System.math.sqrt;
+
+    int N = 50000000; // num pieces (in total, each worker gets N/W pieces)
+    int W = 30; // num workers
+    float L = 1; // left end-point
+    float R = 5; // right end-point
+    
+    // Function that we are calculating the area of.
+    function fx(float x) --> float:
+        x/(x+1)*x*x*x-1//*sqrt(2.0)///**sqrt(1+exp(sqrt(2*x)))*/*sin(x*x*x-1)
+    end
+
+
+    // @author: Gareth Callanan
+    //
+    // Entity that creates the network of workers and coordinator actor to 
+    // implement the trapezoid benchmark.
+    //
+    // The W worker actors all connect to a different port on the Coordinator actor.
+    //
+    // The W actors and N trapezoids as well as the left (L) and right (bounds)
+    // of the integral are defined in config.cal
+    //
+    // Ports:
+    //     Area - The output from the coordinator actor. Outputs a single token
+    //            indicating the total calculated area.
+    network TrapezoidNetwork() ==>:
+    entities
+        workers = [Worker(dummy=0): for i in 0..W-1];
+        coordinator = Coordinator();
+    structure
+        foreach uint i in 0..W-1 do
+            coordinator.Out[i] --> workers[i].In {bufferSize = 4; };
+            workers[i].Out --> coordinator.In[i] {bufferSize = 4; };
+        end
+    end
+
+    // @author: Gareth Callanan
+    //    
+    // Coordinator that distributes the work of calculating the area under f(x)
+    // to the W worker actors. It then collects the results and sums them together
+    // to report the total area.
+    //
+    // Ports:
+    //     In - An array of W reports, one connected to each W actor, to receive the portion of
+    //          area calculated by the specific actor.
+    //     Out - An array of W reports, one connected to each W actor, to transmit data for 
+    //           calculating the area.
+    //     Area - A port that outputs a single token indicating the total calculated area.
+    actor Coordinator () float In[W] ==> float Out[W]:
+        int state := 0;
+
+        // Action that distributes the integral calculation to the W worker actors.
+        // 
+        // Each worker receives for tokens from the coordinator with information required to perform
+        // this calculation:
+        //     out[w_index][0]: lbound - The left bound of x for the specific worker.
+        //     out[w_index][1]: rbound - The right bound of x for the specific worker. 
+        //     out[w_index][2]: pieceSize - The width of a single trapezoid
+        //     out[w_index][3]: piecesToCompute - The number of trapezoids the worker must compute
+        //                                        (This is normall equal except for the final worker
+        //                                         which normally has to calculate a few more as N/W
+        //                                         is not always a round number).
+        initialise: action ==> Out[0..W-1]:[out] repeat 4
+        guard state = 0
+        var
+            float pieceSize = (R-L)/N,
+            float rangePerWorker,
+            int currentWorkerPieces,
+            int piecesPerWorkerRemainder = N mod W,
+            int piecesPerWorker = (N - piecesPerWorkerRemainder) / W,
+            uint index := 0,
+            List(type: List(type: float, size = 4), size = W) out
+        do
+            
+            //println("Init pieces: " + piecesPerWorker + " rem: " + piecesPerWorkerRemainder);
+            foreach uint i in 0..W-1 do
+                out[i][0] := L + i * piecesPerWorker * pieceSize;
+                if i != W - 1 then
+                    currentWorkerPieces := piecesPerWorker;
+                else
+                    currentWorkerPieces := piecesPerWorker + piecesPerWorkerRemainder;
+                end
+                out[i][1] := out[i][0] + currentWorkerPieces * pieceSize;
+                out[i][2] := pieceSize;
+                out[i][3] := currentWorkerPieces;
+                index := index + 1;
+            end
+            state := 1;
+        end
+
+        // Action that receives one token from each worker, sums it up and then outputs the sum as 
+        // the total area.
+        collect: action In[0..W-1]:[areas] ==>
+        guard state = 1 
+        var
+            float totalArea := 0
+        do
+            foreach uint i in 0..W-1 do
+                totalArea := totalArea + areas[i];
+            end
+            println("Area: " + totalArea);
+            state := 2;
+        end
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Worker that calculates the area under f(x) for a certain interval.
+    //
+    // Parameters:
+    //     dummy - Just insert 0 here. The tycho compiler was buggy at the time of writing
+    //             and could not evaluate [Worker(dummy=0): for i in 0..W-1] in the network
+    //             without this dummy variable.
+    // Ports:
+    //     In - Tokens from the coordinator are received here.
+    //     Out - Tokens to the coordinator transmited out here.
+    actor Worker (int dummy) float In ==> float Out:
+
+        // Action that approximates the area of f(x) between two bounds received from the
+        // coordinator actor.
+        //
+        // Input tokens:
+        //     lbound - The left bound of x.
+        //     rbound - The right bound of x. 
+        //     pieceSize - The width of a single trapezoid
+        //     piecesToCompute - The number of trapezoids
+        //
+        // Output tokens:
+        //     area - the calculated area of f(x) between the bounds.
+        approximate: action In:[lbound, rbound, pieceSize, piecesToCompute] ==> Out:[area]
+        var
+            float lx := lbound,
+            float rx,
+            float ly,
+            float ry,
+            float area := 0,
+            int n := piecesToCompute,
+            int index := 0
+        do
+            //println ("Worker received lbound: " + lbound + ", rbound: " + rbound + ", pieceSize: " + pieceSize + ", piecesToCompute: " + piecesToCompute);
+            while index<n do
+                lx := lbound + index * pieceSize;
+                rx := lx + pieceSize;
+                ly := fx(lx);
+                ry := fx(rx);
+                area := area + 0.5 * (ly + ry) * pieceSize;
+                //println(index + "/" + n + " " + lx + " to " + rx + ". " + ly + " and " + ry + ". area:" + 0.5 * (ly + ry) * pieceSize + " . Accu:" + area);
+                index:= index+1;
+            end
+            //println("worker area:" + area);
+            // println("Left:" + lbound + ", Right: " + rbound + ", stepSize: " + pieceSize + " piecesPerWorker: " + piecesToCompute + " n " + n  + ", area: " + area);
+        end
+    end
+end
+
+// Expected Output:
+// Tx0: 1
+// Tx0: 2
+// Rx0: 2
+// Tx0: 3
+// Rx0: 1
+// Tx0: 4
+// Rx0: 4
+// Rx0: 3
+
+// namespace simple:
+//     actor ProduceConsume() int In ==> int Out:
+//         action In:[t1, t2, t3, t4] ==> Out:[out] repeat 4 
+//         var List(type: int, size = 4) out
+//         do
+//             out[0] := t1;
+//             out[1] := t2;
+//             out[2] := t3;
+//             out[3] := t4;
+
+//         end
+//     end
+
+//     actor Source(int payload_size, int actor_index) ==> int Out:
+//         int counter := 0;
+//         transmit: action ==> Out:[t]
+//         guard counter < payload_size
+//         var t := counter + 100*actor_index
+//         do
+//             t :=  t+1;
+//             println("Tx" + actor_index + ": " + t);
+//             counter := counter + 1;
+//         end
+//     end
+
+//     actor Sink(int actor_index) int In ==>:
+//         action In:[t] ==>
+//         do
+//             println("Rx" + actor_index + ": " + t);
+//         end
+//     end
+
+//     network Top() ==> :
+//     entities
+//             source = Source(payload_size = 4, actor_index = 0);
+//             DUT  = ProduceConsume() {};
+//             sink = Sink(actor_index = 0);
+//     structure
+//             source.Out --> DUT.In { bufferSize = 2; };
+//             DUT.Out --> sink.In { bufferSize = 2; } ;
+//     end
+// end
