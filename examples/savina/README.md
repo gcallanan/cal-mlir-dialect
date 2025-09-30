@@ -2,6 +2,10 @@ Here we implement different CAL implementations of benchmarks in the Savina acto
 
 | Benchmark Name               | Description |
 | -----------------------------| ----------- |
-| `big`                    | Implements the Savina 4.2 "Big Actor" benchmark in CAL. Demonstrates large-scale message passing between many actors, and provides scripts to compile and benchmark both C++ and MLIR backends. See [big/README.md](big/README.md) for details. | 
+| `pingpong`               | Implements the Savina 4.1 "Ping Pong" benchmark in CAL. Demonstrates two actors sending messages back and forth, measuring message latency and throughput. |
+| `threadring`             | Implements the Savina 4.2 "Thread Ring" benchmark in CAL. Demonstrates passing an integer token around a ring of N connected actors, highlighting actor scheduling and message passing. |
+| `counting-actor`         | Implements the Savina 4.3 "Counting Actor" benchmark in CAL. A Producer actor sends N increment messages in series to a Counter actor, which increments a local counter and returns the final value. |
+| `fork-join`              | Implements the Savina 4.4 "Fork Join (Throughput)" benchmark in CAL. This benchmark creates K worker actors and sends each a total of N messages in round-robin fashion from a single sender. Each worker processes minimal work per message and terminates after N messages, measuring overall messaging throughput. Configurable for different K and N values. |
+| `big`                    | Implements the Savina 4.8 "Big Actor" benchmark in CAL. Demonstrates large-scale message passing between many actors, and provides scripts to compile and benchmark both C++ and MLIR backends. See [big/README.md](big/README.md) for details. | 
 | `bounded-buffer`          | Implements the Savina 5.2 "Bounded Buffer" benchmark in CAL. Demonstrates concurrent producer-consumer communication using bounded FIFOs, with scripts to compile and benchmark both C++ and MLIR backends. See [bounded-buffer/README.md](bounded-buffer/README.md) for details. |
-| `trapezoid`          | Implements the Savina 6.12 "Bounded Buffer" benchmark in CAL. Demonstrates a single co-ordinator actor sending components of working out the area of a trapezoid to a number of worker actors. See [trapezoid/README.md](trapezoid/README.md) for details. |
+| `trapezoid`          | Implements the Savina 6.12 "Bounded Buffer" benchmark in CAL. Demonstrates a single co-ordinator actor sending components of working out the area of a trapezoid to a number of worker actors. |

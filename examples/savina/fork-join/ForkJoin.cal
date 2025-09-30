@@ -1,0 +1,74 @@
+namespace forkjoin:
+    K = 10;
+    M = 100000000;
+
+
+    // @author: Gareth Callanan
+    //
+    // Entity that creates the network of workers and coordinator actor to 
+    // implement the trapezoid benchmark.
+    //
+    // The W worker actors all connect to a different port on the Coordinator actor.
+    //
+    // The W actors and N trapezoids as well as the left (L) and right (bounds)
+    // of the integral are defined in config.cal
+    //
+    // Ports:
+    //     Area - The output from the coordinator actor. Outputs a single token
+    //            indicating the total calculated area.
+    network ForkJoinNetwork() ==>:
+    entities
+        workers = [Worker(dummy=0): for i in 0..K-1];
+        coordinator = Coordinator();
+    structure
+        foreach uint i in 0..K-1 do
+            coordinator.Out[i] --> workers[i].In {bufferSize = 10; };
+        end
+    end
+
+    // @author: Gareth Callanan
+    //    
+    // Coordinator that distributes the work of calculating the area under f(x)
+    // to the W worker actors. It then collects the results and sums them together
+    // to report the total area.
+    //
+    // Ports:
+    //     In - An array of W reports, one connected to each W actor, to receive the portion of
+    //          area calculated by the specific actor.
+    //     Out - An array of W reports, one connected to each W actor, to transmit data for 
+    //           calculating the area.
+    //     Area - A port that outputs a single token indicating the total calculated area.
+    actor Coordinator () ==> float Out[K] :
+        int state := 0;
+        int numSent := 0;
+
+        foreach uint i in 0..K-1 generate
+            transmit: action ==> Out[i]:[numSent]
+            guard 
+                state = i,
+                numSent < M
+            do
+                numSent := numSent + 1;
+                state := (state + 1) mod K;
+            end
+            
+        end    
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Worker that calculates the area under f(x) for a certain interval.
+    //
+    // Parameters:
+    //     dummy - Just insert 0 here. The tycho compiler was buggy at the time of writing
+    //             and could not evaluate [Worker(dummy=0): for i in 0..W-1] in the network
+    //             without this dummy variable.
+    // Ports:
+    //     In - Tokens from the coordinator are received here.
+    //     Out - Tokens to the coordinator transmited out here.
+    actor Worker (int dummy) float In ==> :
+
+        consume: action In:[token] ==> end
+        
+    end
+end

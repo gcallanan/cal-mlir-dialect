@@ -4,10 +4,14 @@ set -e
 # arguments and enabled flag, separated by a special delimiter
 declare -A benchmarks
 # Format: [name]="args|enabled"
-benchmarks["bounded-buffer"]="-P 3 -C 3 -N 100000 |false"
+benchmarks["thread-ring"]="-O 3 |false" # Could be statically scheduled
+benchmarks["ping-pong"]="-O 3 |false"
+benchmarks["counting-actor"]="-O 3 |false" # Works well because of the large mailbox
 benchmarks["big"]="-N 6 -P 1000000 |false"
-benchmarks["trapezoid"]="-O 3 |false"
-benchmarks["thread-ring"]="-O 3 |false"
+benchmarks["bounded-buffer"]="-P 3 -C 3 -N 100000 |false"
+benchmarks["trapezoid"]="-O 3 |false" # Could be statically scheduled
+benchmarks["fork-join"]="-O 3 |false" #could be statically scheduled, large buffer sizes mask round robin scheduling
+# No Chameneos benchmark as it does not make sense 
 
 iterations=3
 sleep_time=0

@@ -1,0 +1,66 @@
+namespace pingpong:
+    uint PING_COUNT = 30000000; // Number of pings to perform before terminating
+
+    // @author: Gareth Callanan
+    //
+    // PingActor sends a message to the Pong actor and waits for a response.
+    // It decrements the count each time before sending.
+    // When the count reaches zero, the benchmark terminates.
+    //
+    // Ports:
+    //     In - Receives responses from the Pong actor
+    //     Out - Sends messages to the Pong actor
+    actor PingActor () uint In ==> uint Out:
+        // Initial state
+        uint count := PING_COUNT;
+        uint initialized := 0;
+        
+        // Initial action to start the ping-pong exchange
+        init: action ==> Out:[count]
+        guard initialized = 0
+        do
+            println("Starting Ping-Pong with " + count + " iterations");
+            initialized := 1;
+            count := count - 1;
+        end
+        
+        // Receive a response from Pong and send the next message if count > 0
+        pingpong: action In:[value] ==> Out:[count]
+        guard count > 0
+        do
+            count := count - 1;
+        end
+        
+        // Final action when count reaches 0
+        finish: action In:[value] ==>
+        guard count = 0
+        do
+            println("Ping-Pong complete!");
+        end
+    end
+
+    // @author: Gareth Callanan
+    //    
+    // PongActor receives messages from the Ping actor and sends them back.
+    //
+    // Ports:
+    //     In - Receives messages from the Ping actor
+    //     Out - Sends responses back to the Ping actor
+    actor PongActor () uint In ==> uint Out:
+        // Simply bounce back any message received
+        pong: action In:[value] ==> Out:[value]
+        do
+            // Just pass the value back without modification
+        end
+    end
+
+    network PingPongNetwork() ==>:
+    entities
+        ping = PingActor();
+        pong = PongActor();
+    structure
+        ping.Out --> pong.In { bufferSize = 1; };
+        pong.Out --> ping.In { bufferSize = 1; };
+    end
+
+end
