@@ -1,0 +1,5 @@
+benchmark,args,iterations,c_mean (ms),c_stddev (ms),cpp_mean (ms),cpp_stddev (ms),mlir_mean (ms),mlir_stddev (ms),mlir_static_mean (ms),mlir_static_stddev (ms)
+big,-N 3 -P 1000000 ,3,3.00,0,48.00,0,6.00,0,0,0
+thread-ring,-O 3 ,3,1802.66,16.67,16611.33,65.52,4037.66,4.49,0,0
+trapezoid,-O 3 ,3,1591.66,15.06,1534.33,1.69,945.33,7.03,0,0
+bounded-buffer,-P 3 -C 3 -N 100000 ,3,3510.33,203.44,3504.66,1.69,3395.66,2.35,0,0
