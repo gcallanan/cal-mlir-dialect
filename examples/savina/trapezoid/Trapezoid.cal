@@ -5,7 +5,7 @@ namespace trapezoid:
     import System.math.sqrt;
 
     int W = 30; // num workers
-    int N = W * 10000000; // num trapezoids
+    int N = W * 30000000; // num trapezoids
     float L = 1.0; // left end-point
     float R = 5.0; // right end-point
     
@@ -53,6 +53,7 @@ namespace trapezoid:
     //     Area - A port that outputs a single token indicating the total calculated area.
     actor Coordinator () float In[W] ==> float Out[W]:
         int state := 0;
+        int init := 1;
 
         // Action that distributes the integral calculation to the W worker actors.
         // 
@@ -66,7 +67,9 @@ namespace trapezoid:
         //                                         which normally has to calculate a few more as N/W
         //                                         is not always a round number).
         initialise: action ==> Out[0..W-1]:[out] repeat 4
-        guard state = 0
+        guard 
+            state = 0,
+            init = 1
         var
             float pieceSize = (R-L)/(N+0.0),
             float rangePerWorker,
@@ -93,6 +96,7 @@ namespace trapezoid:
                 //println("Coordinator sending to worker " + i + " lbound: " + out[i][0] + ", rbound: " + out[i][1] + ", pieceSize: " + out[i][2] + ", piecesToCompute: " + out[i][3]);
             end
             state := 1;
+            init := 0;
         end
 
         // Action that receives one token from each worker, sums it up and then outputs the sum as 
@@ -106,7 +110,7 @@ namespace trapezoid:
                 totalArea := totalArea + areas[i];
             end
             println("Area: " + totalArea);
-            state := 2;
+            state := 0;
         end
     end
 

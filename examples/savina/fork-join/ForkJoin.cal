@@ -50,6 +50,11 @@ namespace forkjoin:
             do
                 numSent := numSent + 1;
                 state := (state + 1) mod K;
+
+                //println("Coordinator sent token to worker " + i);
+                if numSent = M then
+                    println("Coordinator sent last token");
+                end
             end
             
         end    
@@ -67,8 +72,18 @@ namespace forkjoin:
     //     In - Tokens from the coordinator are received here.
     //     Out - Tokens to the coordinator transmited out here.
     actor Worker (int dummy) float In ==> :
+        uint received := 0;
+        uint sum := 0;
 
-        consume: action In:[token] ==> end
+        consume: action In:[token] ==> 
+        do
+            received := received + 1;
+            sum := sum + token;
+            //println("Worker received token " + received);
+            if received = M/K then
+                println("Worker received last token " + received + " sum: " + sum);
+            end
+        end
         
     end
 end

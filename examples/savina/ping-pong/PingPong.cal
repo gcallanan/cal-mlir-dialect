@@ -1,5 +1,5 @@
 namespace pingpong:
-    uint PING_COUNT = 30000000; // Number of pings to perform before terminating
+    uint PING_COUNT = 300000000; // Number of pings to perform before terminating
 
     // @author: Gareth Callanan
     //
@@ -12,31 +12,32 @@ namespace pingpong:
     //     Out - Sends messages to the Pong actor
     actor PingActor () uint In ==> uint Out:
         // Initial state
-        uint count := PING_COUNT;
-        uint initialized := 0;
+        int count := PING_COUNT;
+        int toPing := 1;
+        int sum := 0;
         
-        // Initial action to start the ping-pong exchange
-        init: action ==> Out:[count]
-        guard initialized = 0
+        ping: action ==> Out:[count]
+        guard
+            count > 0,
+            toPing = 1
         do
-            println("Starting Ping-Pong with " + count + " iterations");
-            initialized := 1;
-            count := count - 1;
+            count := count - 1; 
+            toPing := 0;
+            //println("Ping: " + count);
+            if count = 0 then
+                println("PingPong Done, sum: " + sum);
+            end
         end
-        
-        // Receive a response from Pong and send the next message if count > 0
-        pingpong: action In:[value] ==> Out:[count]
-        guard count > 0
+
+        pong: action In:[value] ==>
+        guard
+            toPing = 0
         do
-            count := count - 1;
+            toPing := 1;
+            sum := sum + value;
+            //println("Pong: " + value + ", sum: " + sum);
         end
-        
-        // Final action when count reaches 0
-        finish: action In:[value] ==>
-        guard count = 0
-        do
-            println("Ping-Pong complete!");
-        end
+
     end
 
     // @author: Gareth Callanan

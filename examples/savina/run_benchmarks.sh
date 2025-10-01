@@ -4,17 +4,16 @@ set -e
 # arguments and enabled flag, separated by a special delimiter
 declare -A benchmarks
 # Format: [name]="args|enabled"
-benchmarks["thread-ring"]="-O 3 |false" # Could be statically scheduled
-benchmarks["ping-pong"]="-O 3 |false"
+benchmarks["ping-pong"]="-O 3 |true"
+benchmarks["thread-ring"]="-O 2 |true"
 benchmarks["counting-actor"]="-O 3 |false" # Works well because of the large mailbox
+benchmarks["fork-join"]="-O 3 |true" # large buffer sizes mask round robin scheduling
 benchmarks["big"]="-N 6 -P 1000000 |false"
 benchmarks["bounded-buffer"]="-P 3 -C 3 -N 100000 |false"
-benchmarks["trapezoid"]="-O 3 |false" # Could be statically scheduled
-benchmarks["fork-join"]="-O 3 |false" #could be statically scheduled, large buffer sizes mask round robin scheduling
-# No Chameneos benchmark as it does not make sense 
+benchmarks["trapezoid"]="-O 3 |true"
 
-iterations=3
-sleep_time=0
+iterations=6
+sleep_time=1
 
 echo "benchmark,args,iterations,c_mean (ms),c_stddev (ms),cpp_mean (ms),cpp_stddev (ms),mlir_mean (ms),mlir_stddev (ms),mlir_static_mean (ms),mlir_static_stddev (ms)" > results.csv
 
@@ -49,24 +48,27 @@ for name in "${!benchmarks[@]}"; do
 
     for ((i=1; i<=iterations; i++)); do
         # Time C binary
+        echo "Running c binary"
         start=$(date +%s%6N)
-        ./main_executable_from_c > /dev/null
+        ./main_executable_from_c
         end=$(date +%s%6N)
         # Convert microseconds to milliseconds
         c_times+=($(( (end - start) / 1000 )))
         sleep $sleep_time
 
         # Time C++ binary
+        echo "Running cpp binary"
         start=$(date +%s%6N)
-        ./main_executable_from_cpp > /dev/null
+        ./main_executable_from_cpp
         end=$(date +%s%6N)
         # Convert microseconds to milliseconds
         cpp_times+=($(( (end - start) / 1000 )))
         sleep $sleep_time
 
         # Time MLIR binary
+        echo "Running mlir binary"
         start=$(date +%s%6N)
-        ./main_executable_from_mlir > /dev/null
+        ./main_executable_from_mlir
         end=$(date +%s%6N)
         # Convert microseconds to milliseconds
         mlir_times+=($(( (end - start) / 1000 )))
@@ -74,8 +76,11 @@ for name in "${!benchmarks[@]}"; do
 
         if [ "$enabled" = true ]; then
             # Time MLIR static binary
+            set +e
+            echo "Running mlir static schedule binary"
             start=$(date +%s%6N)
-            ./main_executable_from_mlir_static > /dev/null
+            ./main_executable_from_mlir_static
+            set -e
             end=$(date +%s%6N)
             # Convert microseconds to milliseconds
             mlir_times_static+=($(( (end - start) / 1000 )))

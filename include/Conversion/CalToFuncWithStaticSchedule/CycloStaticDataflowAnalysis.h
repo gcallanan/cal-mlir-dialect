@@ -52,7 +52,7 @@ struct PredicateInequalityInfo {
   int64_t constant;
 };
 
-enum class StateVarUpdateKind { Increment, ConstantAssignment };
+enum class StateVarUpdateKind { Increment, ConstantAssignment, IncrementAndModK };
 
 // This stores information about how a state variable is updated by an action.
 // For example, if the action increments the state variable %5 by 1
@@ -63,6 +63,7 @@ struct StateVarUpdatePattern {
   mlir::Value stateVar;
   StateVarUpdateKind kind;
   int64_t value;
+  int64_t modK; // Only used if kind is IncrementAndModK
 };
 
 struct SchedulingVariableInfoForAction {
@@ -238,6 +239,7 @@ public:
   private:
     cal::ActorOp actorOp;
 
+    bool predicateRegionsEqual(cal::Predicate firstPredicate, cal::Predicate secondPredicate);
     std::optional<ScheduleGraph> constructScheduleGraphFromActionInfo(
         const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap,
@@ -250,6 +252,7 @@ public:
     getStateUpdatePatternOrNull(mlir::Value stateVar, cal::ActionOp actionOp);
     std::optional<int64_t> getIncrementAmount(Value setValue,
                                               Value targetStateVar);
+    std::optional<std::pair<int64_t, int64_t>> detectModKPattern(Operation* defOp, Value stateRef);
     int findInitialAssignment(mlir::Value stateVar);
     std::optional<cal::ActionOp> getActionForStateValue(
         int stateValue,

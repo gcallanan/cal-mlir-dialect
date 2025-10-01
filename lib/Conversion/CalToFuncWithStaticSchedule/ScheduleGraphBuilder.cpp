@@ -9,8 +9,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::ScheduleGraphBuilder(
     cal::ActorOp actorOp)
     : actorOp(actorOp) {}
 
-ScheduleGraph
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
+ScheduleGraph CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
   // We need to find a state variable that is guarded by the equality
   // in a predicate and properly incremented in the corresponding action.
   // If this state variable is used in this way across every action in the
@@ -29,13 +28,49 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
       if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
         if (auto stateIncrementPattern = getStateUpdatePatternOrNull(
                 predicateInfo->stateVar, actionOp)) {
-          actionToValues[predicateInfo->stateVar].insert(actionOp);
+          actionToValues[predicateInfo->stateVar].insert(predicateOp);
         }
       }
     }
   }
 
-  // STEP 1.2: Prune the candidate scheduling variables to only those that are
+  // STEP 1.2: Remove the conditions where all predicates are the same across
+  // the the different actions. This is not a valid scheduling variable.
+  for (auto it = actionToValues.begin(); it != actionToValues.end();) {
+    bool allPredicatesSame = true;
+
+    // If there's only one action using this state var, it can't be compared
+    if (it->second.size() <= 1) {
+      ++it;
+      continue;
+    }
+
+    // Get the first predicate to compare others against
+    auto iter = it->second.begin();
+    Operation *firstPredicate = *iter;
+
+    // Compare first predicate against all others
+    ++iter;
+    while (iter != it->second.end() && allPredicatesSame) {
+      Operation *otherPredicate = *iter;
+
+      // Compare regions (bodies) of the predicates
+      if (!predicateRegionsEqual(cast<cal::Predicate>(firstPredicate),
+                                 cast<cal::Predicate>(otherPredicate))) {
+        allPredicatesSame = false;
+      }
+      ++iter;
+    }
+
+    // If all predicates are the same, remove this entry
+    if (allPredicatesSame) {
+      it = actionToValues.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  // STEP 1.3: Prune the candidate scheduling variables to only those that are
   // candidates in every action of the actor.
   Value commonStateVar;
   size_t numCommonStateVar = 0;
@@ -48,6 +83,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
 
   // If we have more than one common state variable, we cannot proceed, so its
   // a dynamic actor
+
   if (numCommonStateVar != 1) {
     ScheduleGraph graph;
     graph.actor = actorOp;
@@ -231,22 +267,33 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getStateUpdatePatternOrNull(
     }
   });
 
+  if (numSets != 1 || !setOp) {
+    return std::nullopt;
+  }
+
+  // Case 1: Direct constant assignment
   if (auto assignedValue = evaluateConstantValue(setOp.getStateValue())) {
     return StateVarUpdatePattern{
         stateVar, StateVarUpdateKind::ConstantAssignment, *assignedValue};
   }
 
+  // Case 2: Check for modulo pattern (x = (x + increment % K) )
+  Operation *defOp = setOp.getStateValue().getDefiningOp();
+  if (auto modPattern = detectModKPattern(defOp, setOp.getStateRef())) {
+    int64_t increment = modPattern->first;
+    int64_t modK = modPattern->second;
+    return StateVarUpdatePattern{stateVar, StateVarUpdateKind::IncrementAndModK,
+                                 increment, modK};
+  }
+
+  // Case 3: Simple increment pattern
   if (auto increment =
           getIncrementAmount(setOp.getStateValue(), setOp.getStateRef())) {
     return StateVarUpdatePattern{stateVar, StateVarUpdateKind::Increment,
                                  *increment};
   }
 
-  if (numSets != 1) {
-    return std::nullopt;
-  }
-
-  return std::nullopt; // Placeholder for future implementation
+  return std::nullopt; // Could not determine update pattern
 }
 
 std::optional<int64_t>
@@ -387,6 +434,9 @@ std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
       nextStateValue = updatePattern->value;
     } else if (updatePattern->kind == StateVarUpdateKind::Increment) {
       nextStateValue = currentStateValue + updatePattern->value;
+    } else if (updatePattern->kind == StateVarUpdateKind::IncrementAndModK) {
+      nextStateValue =
+          (currentStateValue + updatePattern->value) % updatePattern->modK;
     }
 
     // Step 3.3: Add a ScheduleNode for the current state value.
@@ -467,6 +517,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getActionForStateValue(
   } else if (numMatches > 1) {
     return std::nullopt;
   }
+  return std::nullopt;
 }
 
 bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
@@ -510,9 +561,18 @@ bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::hasPositiveInfinity(
     const SchedulingVariableInfoForAction &info) {
 
   // Check if the pattern is always incrementing the state variable
-  // by a positive value, which is necessary to  lead to positive infinity.
-  if (!(info.updatePattern &&
-        info.updatePattern->kind == StateVarUpdateKind::Increment &&
+  // by a positive value, which is necessary to lead to positive infinity.
+  if (!info.updatePattern) {
+    return false;
+  }
+
+  // IncrementAndModK cannot lead to positive infinity because it wraps around
+  if (info.updatePattern->kind == StateVarUpdateKind::IncrementAndModK) {
+    return false;
+  }
+
+  // Only consider incrementing operations without bounds
+  if (!(info.updatePattern->kind == StateVarUpdateKind::Increment &&
         info.updatePattern->value > 0)) {
     return false;
   }
@@ -561,6 +621,98 @@ bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::hasPositiveInfinity(
     return true;
 
   return false;
+}
+
+std::optional<std::pair<int64_t, int64_t>>
+CycloStaticDataflowAnalysis::ScheduleGraphBuilder::detectModKPattern(
+    Operation *defOp, Value stateRef) {
+  // First try to find the remainder operation, regardless of any extension
+  // operations that might wrap it
+
+  // Start with the top-level operation and traverse through possible extension
+  // operations
+  Operation *curOp = defOp;
+  while (curOp) {
+    // If we found a remainder op, we're in business
+    if (auto remOp = dyn_cast<arith::RemUIOp>(curOp)) {
+      // For modulo operations, we want to interpret the modulus as an unsigned
+      // value Get the constant value directly if possible
+      int64_t modK = 0;
+      if (auto constantOp = remOp.getRhs().getDefiningOp<arith::ConstantOp>()) {
+        if (auto intAttr = dyn_cast<IntegerAttr>(constantOp.getValue())) {
+          // For modulo, always use unsigned interpretation
+          modK = intAttr.getValue().getZExtValue();
+        }
+      } else {
+        auto modKOpt = evaluateConstantValue(remOp.getRhs());
+        if (!modKOpt) {
+          return std::nullopt;
+        }
+        modK = *modKOpt;
+      }
+
+      // Now work backwards from remOp.getLhs() to find the add operation
+      // We need to traverse through possible truncation operations
+      Value lhsVal = remOp.getLhs();
+      Operation *lhsOp = lhsVal.getDefiningOp();
+
+      // Skip through any truncation operations
+      while (lhsOp && isa<arith::TruncIOp>(lhsOp)) {
+        lhsVal = cast<arith::TruncIOp>(lhsOp).getIn();
+        lhsOp = lhsVal.getDefiningOp();
+      }
+
+      // Now check if we have an add operation
+      if (auto addOp = dyn_cast_or_null<arith::AddIOp>(lhsOp)) {
+        auto increment = getIncrementAmount(addOp.getResult(), stateRef);
+        if (!increment) {
+          return std::nullopt;
+        }
+        return std::pair<int64_t, int64_t>(*increment, modK);
+      }
+
+      return std::nullopt;
+    }
+
+    // If current op is an extension op, continue traversing
+    if (auto extOp = dyn_cast<arith::ExtUIOp>(curOp)) {
+      curOp = extOp.getIn().getDefiningOp();
+    } else if (auto extOp = dyn_cast<arith::ExtSIOp>(curOp)) {
+      curOp = extOp.getIn().getDefiningOp();
+    } else {
+      // Not an extension or remainder op, stop traversal
+      break;
+    }
+  }
+
+  return std::nullopt;
+}
+
+bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::predicateRegionsEqual(
+    cal::Predicate firstPredicate, cal::Predicate secondPredicate) {
+  // Get predicate inequality information for both predicates
+  auto firstPredicateInfo = candidatePredicateOrNull(firstPredicate);
+  auto secondPredicateInfo = candidatePredicateOrNull(secondPredicate);
+
+  // If either predicate doesn't have valid inequality info, they can't be
+  // compared
+  if (!firstPredicateInfo || !secondPredicateInfo)
+    return false;
+
+  // Check if they reference the same state variable
+  if (firstPredicateInfo->stateVar != secondPredicateInfo->stateVar)
+    return false;
+
+  // Check if they have the same predicate type
+  if (firstPredicateInfo->predicate != secondPredicateInfo->predicate)
+    return false;
+
+  // Check if they compare against the same constant value
+  if (firstPredicateInfo->constant != secondPredicateInfo->constant)
+    return false;
+
+  // If all checks pass, the predicates are functionally equivalent
+  return true;
 }
 
 } // namespace mlir
