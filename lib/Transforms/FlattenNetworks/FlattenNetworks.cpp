@@ -147,26 +147,48 @@ public:
       return std::string();
     };
 
-    auto parsePortIndex = [&](StringRef name, unsigned max, bool isDst /*true=in, false=out*/)
+    auto parsePortIndex = [&](StringRef name, unsigned max, bool isDst /*true=in, false=out*/, ArrayAttr declaredNames)
                               -> FailureOr<unsigned> {
-      // Expected forms:
-      //  - "in" or "out" (only if that group has exactly one port)
-      //  - "in<idx>" / "out<idx>" with 0-based index.
-  StringRef prefix = isDst ? StringRef("in") : StringRef("out");
-  if (!name.starts_with(prefix))
-        return failure();
-      StringRef tail = name.drop_front(prefix.size());
-  if (tail.empty()) {
-        if (max == 1)
-          return 0u;
-        return failure();
+      // Accepted forms:
+      //  - Ordinals: "in<idx>" / "out<idx>" with 0-based index.
+      //  - Group alias: "in" / "out" when there is exactly one port in that group AND no declared names.
+      //  - Declared names: any string present in the actor's inPortNames/outPortNames ArrayAttr.
+      StringRef prefix = isDst ? StringRef("in") : StringRef("out");
+
+      // 1) Ordinal or alias forms starting with the group prefix.
+      if (name.starts_with(prefix)) {
+        StringRef tail = name.drop_front(prefix.size());
+        if (tail.empty()) {
+          // Only accept generic alias ("in"/"out") for single-port groups when there are no declared names.
+          if (max == 1 && (!declaredNames || declaredNames.empty()))
+            return 0u; // single-port alias permitted (no declared names to conflict)
+          // Otherwise, treat as ambiguous/disallowed; fall through.
+        } else {
+          unsigned idx = 0;
+          if (!tail.getAsInteger(10, idx) && idx < max)
+            return idx;
+        }
+        // Fall through to declared-name matching for non-matching ordinal/alias.
       }
-      unsigned idx = 0;
-      if (tail.getAsInteger(10, idx))
-        return failure();
-      if (idx >= max)
-        return failure();
-      return idx;
+
+      // 2) Declared symbolic names.
+      if (declaredNames) {
+        unsigned i = 0;
+        for (Attribute a : declaredNames) {
+          if (auto s = dyn_cast<StringAttr>(a)) {
+            if (s.getValue() == name)
+              return i;
+          }
+          ++i;
+        }
+      }
+
+      // 3) As a final convenience, accept the group alias for single-port groups even
+      // if it wasn't written with the prefix — but only when there are no declared names.
+      if (max == 1 && (!declaredNames || declaredNames.empty()) && (name == (isDst ? "in" : "out")))
+        return 0u;
+
+      return failure();
     };
 
     auto elaborateNetwork = [&](NetworkOp net) -> LogicalResult {
@@ -322,21 +344,56 @@ public:
         ActorOp dstActor = dstPlan->actor;
         unsigned outCount = static_cast<unsigned>(srcActor.outDegree());
         unsigned inCount = static_cast<unsigned>(dstActor.inDegree());
-        FailureOr<unsigned> srcOutIdx = parsePortIndex(conn.getSrcPortAttr().getValue(), outCount, /*isDst=*/false);
-        FailureOr<unsigned> dstInIdx  = parsePortIndex(conn.getDstPortAttr().getValue(),  inCount,  /*isDst=*/true);
+        // Retrieve declared port names if present on the actors.
+        ArrayAttr srcDeclared = srcActor->getAttrOfType<ArrayAttr>("outPortNames");
+        ArrayAttr dstDeclared = dstActor->getAttrOfType<ArrayAttr>("inPortNames");
+        FailureOr<unsigned> srcOutIdx = parsePortIndex(conn.getSrcPortAttr().getValue(), outCount, /*isDst=*/false, srcDeclared);
+        FailureOr<unsigned> dstInIdx  = parsePortIndex(conn.getDstPortAttr().getValue(),  inCount,  /*isDst=*/true,  dstDeclared);
         if (failed(srcOutIdx)) {
-          SmallVector<StringRef> choices; choices.reserve(outCount);
+          SmallVector<StringRef> choices; choices.reserve(outCount + (srcDeclared ? srcDeclared.size() : 0));
           for (unsigned i = 0; i < outCount; ++i)
             choices.push_back(StringRef((Twine("out") + Twine(i)).str()));
+          if (srcDeclared)
+            for (Attribute a : srcDeclared)
+              if (auto s = dyn_cast<StringAttr>(a)) choices.push_back(s.getValue());
           std::string hint = suggestClosest(conn.getSrcPortAttr().getValue(), choices);
-          return conn.emitOpError("cannot resolve source port '") << conn.getSrcPortAttr().getValue() << "' (expected one of 'out' or 'out<idx>')" << hint;
+          auto err = conn.emitOpError("cannot resolve source port '") << conn.getSrcPortAttr().getValue() << "'";
+          bool hasDeclared = srcDeclared && !srcDeclared.empty();
+          if (hasDeclared)
+            err << " (expected 'out<idx>' or one of declared names: ";
+          else
+            err << " (expected 'out'/'out<idx>'";
+          if (hasDeclared) {
+            bool first = true;
+            for (Attribute a : srcDeclared) if (auto s = dyn_cast<StringAttr>(a)) {
+              if (!first) err << ", "; first = false; err << "'" << s.getValue() << "'";
+            }
+          }
+          err << ")" << hint;
+          return err;
         }
         if (failed(dstInIdx)) {
-          SmallVector<StringRef> choices; choices.reserve(inCount);
+          SmallVector<StringRef> choices; choices.reserve(inCount + (dstDeclared ? dstDeclared.size() : 0));
           for (unsigned i = 0; i < inCount; ++i)
             choices.push_back(StringRef((Twine("in") + Twine(i)).str()));
+          if (dstDeclared)
+            for (Attribute a : dstDeclared)
+              if (auto s = dyn_cast<StringAttr>(a)) choices.push_back(s.getValue());
           std::string hint = suggestClosest(conn.getDstPortAttr().getValue(), choices);
-          return conn.emitOpError("cannot resolve destination port '") << conn.getDstPortAttr().getValue() << "' (expected one of 'in' or 'in<idx>')" << hint;
+          auto err = conn.emitOpError("cannot resolve destination port '") << conn.getDstPortAttr().getValue() << "'";
+          bool hasDeclared = dstDeclared && !dstDeclared.empty();
+          if (hasDeclared)
+            err << " (expected 'in<idx>' or one of declared names: ";
+          else
+            err << " (expected 'in'/'in<idx>'";
+          if (hasDeclared) {
+            bool first = true;
+            for (Attribute a : dstDeclared) if (auto s = dyn_cast<StringAttr>(a)) {
+              if (!first) err << ", "; first = false; err << "'" << s.getValue() << "'";
+            }
+          }
+          err << ")" << hint;
+          return err;
         }
 
         // Retrieve element type for channel based on actor formal arg types.

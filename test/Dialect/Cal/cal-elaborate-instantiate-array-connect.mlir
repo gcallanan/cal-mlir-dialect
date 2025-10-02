@@ -2,6 +2,7 @@
 
 // Two simple actors: a producer with one output, a consumer with one input.
 cal.actor @Prod()
+  out_names ["out"]
   ports_out(%o: !fifo.input_port<i32>) {
   cal.execution_body {
     %one = arith.constant 1 : i32
@@ -19,7 +20,8 @@ cal.actor @Prod()
 }
 
 cal.actor @Cons()
-    ports_in(%i: !fifo.output_port<i32>) {
+  in_names ["i"]
+  ports_in(%i: !fifo.output_port<i32>) {
   cal.execution_body {
     %n = fifo.size(%i: !fifo.output_port<i32>) : index
     %z = arith.constant 0 : index
@@ -43,8 +45,8 @@ cal.network @N() {
   %i0 = arith.constant 0 : index
   %i1 = arith.constant 1 : index
 
-  cal.connect %prods[%i0] : !cal.instance.array<@Prod, 2> "out" -> %cons[%i0] : !cal.instance.array<@Cons, 2> "in"
-  cal.connect %prods[%i1] : !cal.instance.array<@Prod, 2> "out" -> %cons[%i1] : !cal.instance.array<@Cons, 2> "in"
+  cal.connect %prods[%i0] : !cal.instance.array<@Prod, 2> "out" -> %cons[%i0] : !cal.instance.array<@Cons, 2> "i"
+  cal.connect %prods[%i1] : !cal.instance.array<@Prod, 2> "out" -> %cons[%i1] : !cal.instance.array<@Cons, 2> "i"
 }
 
 // CHECK-LABEL: cal.network @N()
