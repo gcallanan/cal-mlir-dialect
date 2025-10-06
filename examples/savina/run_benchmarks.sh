@@ -11,6 +11,7 @@ benchmarks["fork-join"]="-O 3 |true" # large buffer sizes mask round robin sched
 benchmarks["big"]="-N 6 -P 1000000 |false"
 benchmarks["bounded-buffer"]="-P 3 -C 3 -N 100000 |false"
 benchmarks["trapezoid"]="-O 3 |true"
+benchmarks["precise-pi"]="-O 3 |true"
 
 iterations=6
 sleep_time=1

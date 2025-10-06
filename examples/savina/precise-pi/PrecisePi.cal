@@ -1,0 +1,124 @@
+namespace precisepi:
+    K = 10;         // Number of worker actors
+    M = K*10000000; // Total number of terms in the series to compute PI
+
+    // @author: Gareth Callanan
+    //
+    // Implementation of the Precise Pi Computation benchmark from the Savina benchmark suite.
+    // This benchmark computes the value of PI to a configured precision using the formula:
+    //
+    // π = ∑(n=0 to ∞) (4/(8n+1) - 2/(8n+4) - 1/(8n+5) - 1/(8n+6)) * (1/16)^n
+    //
+    // The benchmark demonstrates a master-worker pattern where:
+    // - The coordinator (master) incrementally discovers work and allocates it to workers
+    // - Each worker computes a single term in the series and returns the result
+    // - Workers only have at most one pending message in their mailbox (no batch processing)
+    // - The coordinator is the central bottleneck as it must process all responses
+    //   and distribute new terms to compute
+    //
+    // The precision can be configured by adjusting K (number of workers) and
+    // M (number of terms to compute)
+    //
+    // Network Structure:
+    //   The network connects K worker actors to a single coordinator in a star topology.
+    //   Each worker receives computation tasks and returns results to the coordinator.
+    network PrecisePiNetwork() ==>:
+    entities
+        workers = [Worker(dummy=0): for i in 0..K-1];
+        coordinator = Coordinator();
+    structure
+        foreach uint i in 0..K-1 do
+            coordinator.Out[i] --> workers[i].In {bufferSize = 2; };
+            workers[i].Out --> coordinator.In[i] {bufferSize = 2; };
+        end
+    end
+
+    // @author: Gareth Callanan
+    //    
+    // Coordinator (master) actor that distributes computation tasks to workers and
+    // collects results to calculate the value of Pi.
+    //
+    // The coordinator:
+    // 1. Sends computation tasks to workers for calculating terms in the Pi series
+    // 2. Receives and aggregates results from workers
+    // 3. Tracks overall progress and outputs the final calculated Pi value
+    //
+    // This actor forms the central bottleneck in the benchmark, as it must process
+    // all worker responses and allocate new work.
+    //
+    // Ports:
+    //     In - An array of K input ports to receive computation results from workers
+    //     Out - An array of K output ports to send computation tasks to workers
+    actor Coordinator () double In[K] ==> double Out[K] :
+        double actual_pi = 3.14159265358979323846;
+        int state := 0;
+        int n := 0;
+        double power := 1.0;
+        double pi := 0.0;
+
+        foreach uint i in 0..K-1 generate
+            transmit: action ==> Out[i]:[n-1, local_power]
+            guard 
+                state = i,
+                n < M
+            var 
+                double local_power := power
+            do
+                n := n + 1;
+                state := state + 1;
+                power := power * 16.0;
+                if n = M then
+                    println("Coordinator sent last token");
+                end
+            end     
+        end    
+
+        sum_results: action In[0..K-1]:[pi_portions] ==>
+        guard
+            state = K
+        var
+            double error:= 0.0
+        do
+            foreach uint i in 0..K-1 do
+                pi := pi + pi_portions[i];
+            end
+
+            if(n = M) then
+                error := pi - actual_pi;
+                println("Coordinator received last result");
+                println("Calculated Pi: " + pi);
+                println("Error: " + error);
+            end
+            state := 0;
+        end
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Worker actor that computes individual terms in the Pi calculation formula.
+    //
+    // Each worker:
+    // 1. Receives a computation task containing the term index (n) and power value
+    // 2. Computes a single term of the Pi series formula
+    // 3. Returns the calculated partial result to the coordinator
+    //
+    // Workers maintain no state between computations and only process one message
+    // at a time, making them pure compute units with no batching capability.
+    //
+    // Parameters:
+    //     dummy - Just insert 0 here. Required by the compiler implementation.
+    // Ports:
+    //     In - Receives computation tasks from the coordinator
+    //     Out - Sends computation results back to the coordinator
+    actor Worker (int dummy) double In ==> double Out:
+        consume: action In:[n, power] ==> Out:[value]
+        var 
+            double value := 0.0
+        do
+            // Compute one term of the Pi series formula: (4/(8n+1) - 2/(8n+4) - 1/(8n+5) - 1/(8n+6))*(1/16)^n
+            value := (4.0 / (8.0*n+1.0) - 2.0 / (8.0*n+4.0) - 1.0 / (8.0*n+5.0) - 1.0 / (8.0*n+6.0))*(1.0/power);
+            //println("Worker received token " + n + " value: " + value + " power: " + power);
+        end
+        
+    end
+end
