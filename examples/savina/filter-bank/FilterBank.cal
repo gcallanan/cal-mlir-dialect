@@ -1,0 +1,192 @@
+namespace filterbank:
+    M = 10; // Number of branches
+    numSimulations = 2000; // N = number of tokens to send. N = numSimulations * sawtoothMax
+    sawtoothMax = 1000;
+    sinkPrintRate = numSimulations * sawtoothMax * M;
+    numTaps = 20;
+
+
+    // @author: Gareth Callanan
+    //
+    // Implementation of the Savina Filter Bank benchmark (6.7).
+    // This benchmark demonstrates the join pattern in actor systems, where messages
+    // from multiple data streams are combined into a single message stream.
+    //
+    // The benchmark consists of:
+    // - A source actor that generates a sawtooth wave
+    // - A branching actor that splits the input signal into M parallel branches
+    // - M parallel filter branches that apply FIR filters with different coefficients
+    // - An integrator that receives outputs from all branches
+    // - A combiner that joins the signals back together
+    // - A sink that receives the final output
+    //
+    // This implementation demonstrates how actors can efficiently handle:
+    // 1. Split-join patterns with multiple data streams
+    // 2. Multi-rate signal processing with parallel branches
+    // 3. Message passing between stages in a complex pipeline
+    //
+    // Performance is determined by message delivery rates and actor scheduling.
+    network FilterBankNetwork() ==>:
+    entities
+        source = SourceActor();
+        sink = Sink();
+        branching = BranchingActor();
+        integrator = Integrator();
+        combiner = Combiner();
+        parallelBranches = [SingleBranch(index=i): for uint i in 0..M-1];
+    structure
+        source.Out --> branching.In {bufferSize = 1; };
+        foreach uint i in 0..M - 1 do
+            branching.Out[i] --> parallelBranches[i].In {bufferSize = 1; };
+            parallelBranches[i].Out --> integrator.In[i] {bufferSize = 1; };
+        end
+        integrator.Out --> combiner.In {bufferSize = M; };
+        combiner.Out --> sink.In {bufferSize = 1; };
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Source actor that generates a sawtooth wave pattern as input to the filter bank.
+    // Generates numSimulations * sawtoothMax total tokens.
+    //
+    // Ports:
+    //     Out - Output port for sending sawtooth wave values
+    actor SourceActor() ==> float Out:
+
+        int simulationsRun := 0;
+        int token := 0;
+
+        sendToken: action ==> Out:[tokenFloat]
+        guard simulationsRun < numSimulations
+        var float tokenFloat = token
+        do
+            //println("Sending token: " + token);
+            token := token + 1;
+            if token = sawtoothMax then
+                token := 0;
+                simulationsRun := simulationsRun + 1;
+            end
+        end
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Sink actor that receives the final processed signal after it has gone through
+    // all filter bank stages. Prints a message after receiving sinkPrintRate tokens.
+    //
+    // Ports:
+    //     In - Input port for receiving the final processed signal
+    actor Sink() float In ==>:
+        int count := 0;
+
+        receive: action In:[token] ==>
+        do
+            if(count = sinkPrintRate - 1) then
+                println("Sink received token: " + token);
+                count := 0;
+            else
+                count := count + 1;
+            end
+        end
+    end
+
+    // @author: Gareth Callanan
+    //
+    // The BranchingActor implements the split pattern by taking a single input value
+    // and distributing it to M parallel output branches.
+    //
+    // Ports:
+    //     In - Input port for receiving the source signal
+    //     Out - Array of M output ports, one for each branch
+    actor BranchingActor() float In ==> float Out[M]:
+        split: action In:[token] ==> Out[0..M-1]:[tokens]
+        var 
+            List(type: float, size=M) tokens
+        do
+            foreach uint i in 0..M-1 do
+                tokens[i] := token;
+            end
+        end
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Integrator actor that receives outputs from all filter branches and passes them
+    // individually to the combiner. This actor serves as the first stage of the join pattern.
+    //
+    // Ports:
+    //     In - Array of M input ports for receiving outputs from each filter branch
+    //     Out - Output port for passing individual values to the combiner
+    actor Integrator() float In[M] ==> float Out:
+        integrate: action In[0..M-1]:[tokens] ==> Out:[tokens] repeat M
+        end
+    end
+
+
+    // @author: Gareth Callanan
+    //
+    // SingleBranch actor implements one branch of the filter bank, applying an FIR filter
+    // with numTaps coefficients to the input signal. Each branch uses different coefficients
+    // based on its index to produce different filtering characteristics.
+    //
+    // This actor is a bit of a hack and not a true FIR filter implementation, but it
+    // suffices to demonstrate the filter bank structure and message passing.
+    //
+    // TODO: Fix this actor, pass in actual filter coefficients and implement proper FIR filtering
+    //
+    // Parameters:
+    //     index - Branch index that determines the filter coefficients
+    // Ports:
+    //     In - Input port for receiving signal values to filter
+    //     Out - Output port for sending filtered signal values
+    actor SingleBranch(int index) float In ==> float Out:
+        List(type: float, size=numTaps) values;
+
+        applyFilter: action In:[token] ==> Out:[output]
+        var float output := 0.0
+        do 
+            // Shift values down the line
+            foreach uint i in 0..numTaps - 2 do
+                values[i + 1] := values[i];
+            end
+            // Insert new value
+            values[0] := token;
+
+            foreach uint i in 0..numTaps - 1 do
+                output := output + values[i] * (index + 1) * (i + 1);
+            end
+        end
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Combiner actor that implements the join pattern by collecting outputs from
+    // all M filter branches and combining them into a single output value.
+    // It accumulates M tokens before producing an output, demonstrating
+    // the blocking semantics of the join pattern.
+    //
+    // Ports:
+    //     In - Input port for receiving values from the integrator
+    //     Out - Output port for sending combined results
+    actor Combiner() float In ==> float Out:
+        int numAccumulated := 0;
+        float accumulatedValue := 0.0;
+
+        // Accumulate values until we have M values (one from each branch)
+        combine: action In:[token] ==>
+        guard numAccumulated < M
+        do
+            numAccumulated := numAccumulated + 1;
+            accumulatedValue := accumulatedValue + token;
+        end
+
+        // When M values have been accumulated, emit the result and reset
+        emit: action ==> Out:[accumulatedValueCopy]
+        guard numAccumulated = M
+        var accumulatedValueCopy = accumulatedValue
+        do
+            numAccumulated := 0;
+            accumulatedValue := 0.0;
+        end
+    end
+end

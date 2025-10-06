@@ -10,6 +10,7 @@ benchmarks["counting-actor"]="-O 3 |false" # Works well because of the large mai
 benchmarks["fork-join"]="-O 3 |true" # large buffer sizes mask round robin scheduling
 benchmarks["big"]="-N 6 -P 1000000 |false"
 benchmarks["bounded-buffer"]="-P 3 -C 3 -N 100000 |false"
+benchmarks["filter-bank"]="-O 3 |true"
 benchmarks["trapezoid"]="-O 3 |true"
 benchmarks["precise-pi"]="-O 3 |true"
 
