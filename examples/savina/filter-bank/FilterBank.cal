@@ -2,8 +2,8 @@ namespace filterbank:
     M = 10; // Number of branches
     numSimulations = 2000; // N = number of tokens to send. N = numSimulations * sawtoothMax
     sawtoothMax = 1000;
-    sinkPrintRate = numSimulations * sawtoothMax * M;
-    numTaps = 20;
+    sinkPrintRate = numSimulations * sawtoothMax;
+    numTaps = 5;
 
 
     // @author: Gareth Callanan
@@ -39,6 +39,7 @@ namespace filterbank:
         foreach uint i in 0..M - 1 do
             branching.Out[i] --> parallelBranches[i].In {bufferSize = 1; };
             parallelBranches[i].Out --> integrator.In[i] {bufferSize = 1; };
+            // branching.Out[i] --> integrator.In[i] {bufferSize = 1; }; // For testing the join pattern alone
         end
         integrator.Out --> combiner.In {bufferSize = M; };
         combiner.Out --> sink.In {bufferSize = 1; };
