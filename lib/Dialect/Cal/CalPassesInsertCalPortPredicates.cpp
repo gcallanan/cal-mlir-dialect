@@ -6,6 +6,7 @@
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/AnalysisManager.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -53,14 +54,66 @@ struct RateAnalysis {
       actorOp->walk([&](mlir::cal::ActionOp actionOp) {
         ActionInfo info;
 
+        // Helper to compute the multiplicative factor contributed by any
+        // surrounding statically-bounded scf.for loops. If bounds are not
+        // compile-time constants, we conservatively return 1.
+        auto getStaticLoopMultiplier = [&](Operation *innerOp) -> int64_t {
+          int64_t multiplier = 1;
+          Operation *parent = innerOp->getParentOp();
+          while (parent && parent != actionOp.getOperation()) {
+            if (auto forOp = llvm::dyn_cast<mlir::scf::ForOp>(parent)) {
+              auto getConstIndex = [](Value v) -> std::optional<int64_t> {
+                if (auto cst = v.getDefiningOp<mlir::arith::ConstantOp>()) {
+                  if (cst.getType().isIndex()) {
+                    if (auto ia = llvm::dyn_cast<IntegerAttr>(cst.getValue()))
+                      return ia.getInt();
+                  }
+                }
+                return std::nullopt;
+              };
+
+              auto lb = getConstIndex(forOp.getLowerBound());
+              auto ub = getConstIndex(forOp.getUpperBound());
+              auto step = getConstIndex(forOp.getStep());
+              if (lb && ub && step && *step > 0) {
+                int64_t span = *ub - *lb;
+                if (span <= 0) {
+                  // No iterations
+                  // multiplier *= 0; but zero would zero-out rates and could
+                  // disable predicates entirely. Use 0 to be exact here.
+                  // However, actions with zero-trip loops will be dead anyway.
+                  // Keep multiplier unchanged (1) to avoid surprising zeros.
+                } else {
+                  int64_t iters = (span + (*step - 1)) / *step; // ceilDiv
+                  // Avoid overflow of int by clamping to INT_MAX if necessary.
+                  if (iters > 0) {
+                    // Best-effort overflow-safe multiply.
+                    if (multiplier > 0 && iters > (std::numeric_limits<int64_t>::max() / multiplier))
+                      multiplier = std::numeric_limits<int64_t>::max();
+                    else
+                      multiplier *= iters;
+                  }
+                }
+              }
+            }
+            parent = parent->getParentOp();
+          }
+          return multiplier;
+        };
+
         actionOp->walk([&](Operation *opsInAction) {
           if (llvm::isa<fifo::Pop>(opsInAction) ||
               llvm::isa<fifo::Push>(opsInAction)) {
+            int64_t loopMult = getStaticLoopMultiplier(opsInAction);
+            if (loopMult < 1)
+              loopMult = 1; // Fallback safety
             if (fifo::Pop popOp = llvm::dyn_cast<fifo::Pop>(opsInAction)) {
-              info.consumptionRates[popOp.getOutputPort()] += 1;
+              // Multiply by the number of static loop iterations surrounding
+              // this pop to reflect per-fire consumption accurately.
+              info.consumptionRates[popOp.getOutputPort()] += static_cast<int>(loopMult);
 
             } else if (auto pushOp = llvm::dyn_cast<fifo::Push>(opsInAction)) {
-              info.productionRates[pushOp.getInputPort()] += 1;
+              info.productionRates[pushOp.getInputPort()] += static_cast<int>(loopMult);
             }
           }
         });
