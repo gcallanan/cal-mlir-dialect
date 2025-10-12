@@ -5,6 +5,7 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/AnalysisManager.h"
@@ -55,7 +56,7 @@ struct RateAnalysis {
         ActionInfo info;
 
         // Helper to compute the multiplicative factor contributed by any
-        // surrounding statically-bounded scf.for loops. If bounds are not
+        // surrounding statically-bounded scf.for or affine.for loops. If bounds are not
         // compile-time constants, we conservatively return 1.
         auto getStaticLoopMultiplier = [&](Operation *innerOp) -> int64_t {
           int64_t multiplier = 1;
@@ -95,6 +96,31 @@ struct RateAnalysis {
                   }
                 }
               }
+            } else if (auto affineForOp = llvm::dyn_cast<mlir::affine::AffineForOp>(parent)) {
+              // Handle affine.for loops with constant bounds
+              if (affineForOp.hasConstantBounds()) {
+                int64_t lb = affineForOp.getConstantLowerBound();
+                int64_t ub = affineForOp.getConstantUpperBound();
+                int64_t step = affineForOp.getStep().getSExtValue();
+                
+                if (step > 0) {
+                  int64_t span = ub - lb;
+                  if (span <= 0) {
+                    // No iterations - keep multiplier unchanged (1) to avoid surprising zeros
+                  } else {
+                    int64_t iters = (span + (step - 1)) / step; // ceilDiv
+                    // Avoid overflow of int by clamping to INT_MAX if necessary.
+                    if (iters > 0) {
+                      // Best-effort overflow-safe multiply.
+                      if (multiplier > 0 && iters > (std::numeric_limits<int64_t>::max() / multiplier))
+                        multiplier = std::numeric_limits<int64_t>::max();
+                      else
+                        multiplier *= iters;
+                    }
+                  }
+                }
+              }
+              // If bounds are not constant, we conservatively keep multiplier as-is
             }
             parent = parent->getParentOp();
           }
