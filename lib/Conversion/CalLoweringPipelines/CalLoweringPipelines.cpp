@@ -154,12 +154,13 @@ void registerLowerCalToLLVMPipeline() {
  * statically schedules the execution order.
  */
 void registerLowerCalToLLVMWithStaticSchedulePipeline() {
-  mlir::PassPipelineRegistration<CalGenericPipelineOptions>(
+  mlir::PassPipelineRegistration<CalStaticSchedulingPipelineOptions>(
       "lower-cal-to-llvm-with-static-schedule",
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect. Assumes the "
       "actors are SDF and CSDF actors and statically schedules the execution "
       "order.",
-      [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
+      [](mlir::OpPassManager &pm,
+         const CalStaticSchedulingPipelineOptions &options) {
         // 1. FIFO/CAL-specific lowering
         if (options.mergeSimpleCalActors)
           pm.addPass(mlir::cal::createMergeSimpleCalActors());
@@ -183,17 +184,21 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::createLiftControlFlowToSCFPass());
 
         // 3. Standard MLIR to LLVM lowering
-        mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
-        bufferizeOptions.bufferizeFunctionBoundaries = true;
-        pm.addPass(
-            mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
-        if (!options.disableHoistAllocs)
-          pm.addPass(mlir::createHoistAllocsPass());
-        pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
-        pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::createConvertLinalgToLoopsPass());
-        pm.addPass(mlir::createCanonicalizerPass());
+
+        if (!options.bypassTensorConversions) { // We add bypass option to
+                                                // reduce compilation time
+          mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
+          bufferizeOptions.bufferizeFunctionBoundaries = true;
+          pm.addPass(mlir::bufferization::createOneShotBufferizePass(
+              bufferizeOptions));
+          if (!options.disableHoistAllocs)
+            pm.addPass(mlir::createHoistAllocsPass());
+          pm.addPass(mlir::createCanonicalizerPass());
+          pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+          pm.addPass(mlir::createCanonicalizerPass());
+          pm.addPass(mlir::createConvertLinalgToLoopsPass());
+          pm.addPass(mlir::createCanonicalizerPass());
+        }
 
         // Convert SCF to CF (always needed).
         pm.addPass(mlir::createConvertSCFToCFPass());
