@@ -28,7 +28,7 @@ rm -fr myproject
 echo "1. Generating MLIR from .cal files"
 echo 
 
-streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --set bypass-AM-generation=on --source-path RadixSort.cal --target-path myproject radixsort.RadixSortNetwork
+streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --source-path RadixSort.cal --target-path myproject radixsort.RadixSortNetwork
 
 echo "2. Generating a binary from the mlir file"
 

@@ -28,7 +28,7 @@ rm -fr myproject
 echo "1. Generating MLIR from .cal files"
 echo 
 
-streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --set bypass-AM-generation=on --source-path PingPong.cal --target-path myproject pingpong.PingPongNetwork
+streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --source-path PingPong.cal --target-path myproject pingpong.PingPongNetwork
 
 echo "2. Generating a binary from the mlir file"
 

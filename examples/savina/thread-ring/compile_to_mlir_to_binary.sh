@@ -28,7 +28,7 @@ rm -fr myproject
 echo "1. Generating MLIR from .cal files"
 echo 
 
-streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --set bypass-AM-generation=on --source-path ThreadRing.cal --target-path myproject threadRing.ThreadRing
+streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --source-path ThreadRing.cal --target-path myproject threadRing.ThreadRing
 
 echo "2. Generating a binary from the mlir file"
 
