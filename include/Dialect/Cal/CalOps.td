@@ -147,7 +147,9 @@ def Cal_NetworkOp : Cal_Op<"network", [Symbol, NoTerminator, IsolatedFromAbove]>
   }];
 
   let arguments = (ins
-    SymbolNameAttr:$sym_name // Network symbol name
+    SymbolNameAttr:$sym_name,                 // Network symbol name
+    OptionalAttr<ArrayAttr>:$inPortNames,     // Optional symbolic names for ports_in (size must equal inDegree)
+    OptionalAttr<ArrayAttr>:$outPortNames     // Optional symbolic names for ports_out (size must equal outDegree)
   );
 
   let regions = (region AnyRegion:$body);

@@ -543,6 +543,20 @@ ParseResult NetworkOp::parse(OpAsmParser &parser, OperationState &result) {
                                       /*allowType=*/true, /*allowAttrs=*/false)))
     return failure();
 
+  // Optionally parse port name attributes before the port lists:
+  //   in_names(["in","in1"]) out_names(["out0","out1"]) ports_in(...) ports_out(...)
+  // These attributes are stored as ArrayAttr on the op.
+  ArrayAttr inNamesParsed;
+  ArrayAttr outNamesParsed;
+  if (succeeded(parser.parseOptionalKeyword("in_names"))) {
+    if (parser.parseAttribute(inNamesParsed)) return failure();
+    result.addAttribute("inPortNames", inNamesParsed);
+  }
+  if (succeeded(parser.parseOptionalKeyword("out_names"))) {
+    if (parser.parseAttribute(outNamesParsed)) return failure();
+    result.addAttribute("outPortNames", outNamesParsed);
+  }
+
   // Reuse helper for ports
   if (failed(parseAndCheckPorts<mlir::fifo::OutputPortType>(
           parser, inVals, "ports_in",
@@ -564,6 +578,28 @@ ParseResult NetworkOp::parse(OpAsmParser &parser, OperationState &result) {
   Region &bodyRegion = *result.addRegion();
   if (parser.parseRegion(bodyRegion, entryArgs, /*enableNameShadowing=*/true))
     return failure();
+
+  // Validate provided port-name arrays, if present, against parsed port counts.
+  // Use the location captured earlier at function entry for consistent diagnostics.
+  auto checkNames = [&](ArrayAttr arr, unsigned expect, StringRef which) -> LogicalResult {
+    if (!arr) return success();
+    if (arr.size() != expect)
+      return parser.emitError(location) << which << " name count (" << arr.size()
+                                        << ") does not match " << which
+                                        << " port count (" << expect << ")";
+    llvm::SmallDenseSet<StringRef, 8> seen;
+    for (Attribute a : arr) {
+      auto s = dyn_cast<StringAttr>(a);
+      if (!s || s.getValue().empty())
+        return parser.emitError(location) << which << " names must be non-empty strings";
+      if (!seen.insert(s.getValue()).second)
+        return parser.emitError(location) << which << " names must be unique; duplicate '"
+                                          << s.getValue() << "'";
+    }
+    return success();
+  };
+  if (failed(checkNames(inNamesParsed, inVals.size(), "input"))) return failure();
+  if (failed(checkNames(outNamesParsed, outVals.size(), "output"))) return failure();
 
   // (Future) Verification can enforce only allowed ops / no nested networks yet
   // For now rely on general symbol / operand verification elsewhere.
@@ -598,6 +634,15 @@ void NetworkOp::print(OpAsmPrinter &printer) {
   printer << ')';
 
   printer.increaseIndent();
+  // If port names exist, print them before the port groups for readability.
+  if (auto inNames = op->getAttrOfType<ArrayAttr>("inPortNames")) {
+    printer.printNewline();
+    printer << "in_names " << inNames;
+  }
+  if (auto outNames = op->getAttrOfType<ArrayAttr>("outPortNames")) {
+    printer.printNewline();
+    printer << "out_names " << outNames;
+  }
   collectAndPrintArgumentsByType<mlir::fifo::OutputPortType>(
       printer, getBody().getArguments(), "ports_in");
   collectAndPrintArgumentsByType<mlir::fifo::InputPortType>(
@@ -646,7 +691,7 @@ LogicalResult NetworkOp::verify() {
       return emitOpError() << "nested cal.network definitions are not allowed; define networks at top module scope";
     if (llvm::isa<ActorOp>(op))
       return emitOpError() << "actor definitions are not permitted inside a cal.network";
-    StringRef dialectNs = op.getDialect()->getNamespace();
+    // StringRef dialectNs = op.getDialect()->getNamespace();
     //if (!allowedDialectPrefixes.contains(dialectNs))
     //  return emitOpError() << "operation from unsupported dialect '" << dialectNs << "' inside cal.network";
   }
