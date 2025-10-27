@@ -269,10 +269,29 @@ class HoistCalStateOutOfActorPass
     : public impl::HoistCalStateOutOfActorBase<HoistCalStateOutOfActorPass> {
 public:
   void runOnOperation() final {
-    RewritePatternSet patterns(&getContext());
-    populateHoistCalStateOutOfActorPatterns(patterns);
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
-      signalPassFailure();
+    // Apply in two deterministic phases to avoid ordering races between
+    // create_instance rewriting and actor argument rewriting.
+
+    // Phase 1: For each cal.create_instance, clone init ops from the target
+    // actor above the instance and extend its operand list accordingly.
+    {
+      RewritePatternSet phase1(&getContext());
+      phase1.add<AddStateAboveCreateInstance>(&getContext());
+      if (failed(applyPatternsGreedily(getOperation(), std::move(phase1)))) {
+        signalPassFailure();
+        return;
+      }
+    }
+
+    // Phase 2: For each cal.actor, replace init ops with new block arguments
+    // in the actor entry block and remove the original ops.
+    {
+      RewritePatternSet phase2(&getContext());
+      phase2.add<MoveInitOperationsToArguments>(&getContext());
+      if (failed(applyPatternsGreedily(getOperation(), std::move(phase2)))) {
+        signalPassFailure();
+        return;
+      }
     }
   }
 };

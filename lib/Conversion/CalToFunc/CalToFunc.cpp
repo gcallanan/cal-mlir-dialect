@@ -1,3 +1,5 @@
+#include "mlir/Pass/Pass.h"
+#include "Conversion/Passes.h"
 //===- CalPasses.cpp - Cal passes -----------------*- C++ -*-===//
 //
 // This file is licensed under the Apache License v2.0 with LLVM Exceptions.
@@ -5,24 +7,17 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-#include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
-#include "Dialect/Cal/CalPasses.h"
-#include "Dialect/Cal/CalTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
-#include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "Conversion/CalToFunc/CalToFunc.h"
-#include "Conversion/Passes.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTCALTOFUNC
@@ -96,92 +91,113 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
   LogicalResult matchAndRewrite(cal::NetworkOp op,
                                 PatternRewriter &rewriter) const override {
 
-    // Walk through the network body and check for any cal.create_instance ops.
-    // If any are found, return failure. We need them to be transformed into
-    // func.func calls first.
-    for (Operation &innerOp : op.getBody().front()) {
-      if (mlir::isa<cal::CreateInstanceOp>(innerOp)) {
-        return failure();
-      }
+    mlir::Location loc = op.getLoc();
+    Region &netRegion = op.getBody();
+    if (netRegion.empty()) {
+      // If network has no body, create an empty main.
+      auto functionType = rewriter.getFunctionType({}, {});
+      auto function = rewriter.create<func::FuncOp>(loc, "main", functionType);
+      Block *entryBlock = function.addEntryBlock();
+      rewriter.setInsertionPointToStart(entryBlock);
+      rewriter.create<func::ReturnOp>(function.getLoc());
+      rewriter.replaceOp(op, function);
+      return success();
     }
 
-    mlir::Location loc = op.getLoc();
-    auto functionType = rewriter.getFunctionType({}, {});
+    Block &networkBody = netRegion.front();
+
+    // Create the main function that mirrors the network region's arguments.
+    // This guarantees any references to network block arguments remain valid
+    // after conversion by remapping them to function arguments.
+    SmallVector<Type, 8> argTypes(networkBody.getArgumentTypes().begin(),
+                                  networkBody.getArgumentTypes().end());
+    auto functionType = rewriter.getFunctionType(argTypes, {});
     auto function = rewriter.create<func::FuncOp>(loc, "main", functionType);
     Block *entryBlock = function.addEntryBlock();
     rewriter.setInsertionPointToStart(entryBlock);
 
     // Ensure the network op has a body with at least one block.
     // If not, create an empty main function.
-    if (op.getBody().empty()) {
-      rewriter.create<func::ReturnOp>(function.getLoc());
-      rewriter.replaceOp(op, function);
-      return success();
-    }
+    // (Handled above.)
 
-    Block &networkBody = op.getBody().front();
-    // 1. Here we put all instructions that need to be executed once before the
-    // while loop starts.
+    // Prepare a mapping from network region block arguments and cloned values
+    // to function arguments and their clones.
+    IRMapping netToFuncMap;
+    netToFuncMap.map(networkBody.getArguments(), function.getArguments());
 
-    auto beginIt = networkBody.begin();
-    auto endIt = networkBody.end();
-
-    for (auto it = beginIt; it != endIt;) {
-      Operation &opToMove = *it; // reference to the operation
-      ++it; // increment iterator before moving the operation
-
-      if (auto callOp = llvm::dyn_cast<func::CallOp>(opToMove)) {
+    // 1) Clone one-time ops (everything except the create_instance-derived
+    // calls) into the entry block, recording result mappings so that later
+    // clones in the loop body can reference them correctly.
+    for (Operation &innerOp : llvm::make_early_inc_range(networkBody)) {
+      if (auto callOp = dyn_cast<func::CallOp>(&innerOp)) {
         if (callOp->hasAttr("from_create_instance")) {
-          continue; // Skip operations that are from CreateInstance
+          // Defer calls created from create_instance to the while body.
+          continue;
         }
       }
-
-      // llvm::outs() << "Moving operation: " << opToMove << "\n";
-      opToMove.moveBefore(entryBlock, entryBlock->end());
+      Operation *cloned = rewriter.clone(innerOp, netToFuncMap);
+      // Map results for downstream clones (e.g., loop body) to resolve uses.
+      for (auto [origRes, newRes] : llvm::zip(innerOp.getResults(), cloned->getResults()))
+        netToFuncMap.map(origRes, newRes);
     }
 
-    // 2. Here we create a while loop that will execute all actors in a round
-    // robin fashion until none of them performs any action.
+  // 2. Here we create a while loop that will execute all actors in a round
+  // robin fashion until none of them performs any action.
     auto trueVal = rewriter.create<mlir::arith::ConstantOp>(
         loc, rewriter.getBoolAttr(true));
 
-    // 2.1 Create the while loop (do not fill in its body/condition blocks yet).
-    // This loop executes all actors in a round robin fahsion until none of them
-    // performs any action.
-    auto whileOp = rewriter.create<mlir::scf::WhileOp>(loc, TypeRange{},
-                                                       ValueRange{trueVal});
+  // 2.1 Create the while loop with a single loop-carried i1 argument that
+  // tracks whether progress was made in the previous iteration. The while
+  // returns an i1 as well (unused), to satisfy the type invariants.
+  SmallVector<Type, 1> carriedTypesVec{rewriter.getI1Type()};
+  TypeRange carriedTypes(carriedTypesVec);
+  auto whileOp = rewriter.create<mlir::scf::WhileOp>(loc, carriedTypes,
+                                                     ValueRange{trueVal});
 
-    // 2.2 Create the condition check block, basically just check that a
-    // condition representing progress was made in the previous iteration. If no
-    // progress was made, the loop terminates.
-    rewriter.createBlock(&whileOp.getBefore());
-    Block &condBlock = whileOp.getBefore().front();
-    condBlock.addArgument(rewriter.getI1Type(), loc);
-    rewriter.setInsertionPointToStart(&condBlock);
-    Value argToCheck = condBlock.getArgument(0);
-    rewriter.create<mlir::scf::ConditionOp>(loc, argToCheck, ValueRange{});
+  // 2.2 Create the condition check block. It must accept the loop-carried
+  // arguments and return the next iteration's carried values via
+  // scf.condition.
+  SmallVector<Location, 1> argLocs{loc};
+  Block *condBlock =
+    rewriter.createBlock(&whileOp.getBefore(), {}, carriedTypes, argLocs);
+  rewriter.setInsertionPointToStart(condBlock);
+  Value argToCheck = condBlock->getArgument(0);
+  // Propagate the carried value to the condition (continue while true) and
+  // forward the same carried values to the body region.
+  rewriter.create<mlir::scf::ConditionOp>(loc, argToCheck, ValueRange{argToCheck});
 
-    // 2.3 Now we can create the body of the while loop, which will contain the
-    // logic to execute all actors. This block will be executed repeatedly
-    // until no actor performs any action.
-
-    rewriter.createBlock(&whileOp.getAfter());
-    Block &bodyBlock = whileOp.getAfter().front();
+  // 2.3 Now we can create the body of the while loop, which will contain the
+  // logic to execute all actors. This block will be executed repeatedly
+  // until no actor performs any action.
+  Block *bodyBlockPtr =
+    rewriter.createBlock(&whileOp.getAfter(), {}, carriedTypes, argLocs);
+  Block &bodyBlock = *bodyBlockPtr;
     rewriter.setInsertionPointToStart(&bodyBlock);
 
     auto constFalse = rewriter.create<mlir::arith::ConstantOp>(
         loc, rewriter.getBoolAttr(false));
     Value actionPerformedFlag = constFalse.getResult();
-    while (!networkBody.empty()) {
-      Operation &opToMove = networkBody.front();
-      opToMove.moveBefore(&bodyBlock, bodyBlock.end());
-      Value result = opToMove.getResult(0);
-      auto newActionPerformedFlag =
-          rewriter.create<mlir::arith::OrIOp>(loc, result, actionPerformedFlag);
-      actionPerformedFlag = newActionPerformedFlag.getResult();
+    // Clone the deferred calls into the loop body and OR their i1 results.
+    for (Operation &innerOp : networkBody) {
+      auto call = dyn_cast<func::CallOp>(&innerOp);
+      if (!call)
+        continue;
+      if (!call->hasAttr("from_create_instance"))
+        continue;
+      Operation *clonedCall = rewriter.clone(*call, netToFuncMap);
+      if (auto clonedCallOp = dyn_cast<func::CallOp>(clonedCall)) {
+        if (clonedCallOp.getNumResults() == 1 &&
+            clonedCallOp.getResult(0).getType().isInteger(1)) {
+          Value result = clonedCallOp.getResult(0);
+          auto newActionPerformedFlag = rewriter.create<mlir::arith::OrIOp>(
+              loc, result, actionPerformedFlag);
+          actionPerformedFlag = newActionPerformedFlag.getResult();
+        }
+      }
     }
 
-    rewriter.create<scf::YieldOp>(loc, ValueRange{actionPerformedFlag});
+  // Yield the progress flag as the next iteration's loop-carried value.
+  rewriter.create<scf::YieldOp>(loc, ValueRange{actionPerformedFlag});
 
     // 3. Finally, we add the return operation to the main function.
     rewriter.setInsertionPointToEnd(entryBlock);
@@ -260,23 +276,33 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &opToClone = *it; // reference to the operation
 
-      // Most operations can be cloned directly
+      // Clone non-execution-body ops directly into the function and record
+      // result mappings so later clones can reference them.
       if (!mlir::isa<cal::ExecutionBody>(opToClone)) {
-        rewriter.clone(opToClone, originalToClonedOperandsMap);
-      } else {
-        hasExecutionBody = true;
-        // The last operation in the body can be an ExecutionBody it contains
-        // a region with the actual execution logic. We need to clone all the
-        // instructions in this region into the function body. We do not
-        auto execBodyOp = mlir::cast<cal::ExecutionBody>(opToClone);
-        auto beginExecBodyIt = execBodyOp.getBody().op_begin();
-        auto endExecBodyIt = execBodyOp.getBody().op_end();
-        for (auto itExecBody = beginExecBodyIt; itExecBody != endExecBodyIt;
-             ++itExecBody) {
-          Operation &opToCloneInExecBody =
-              *itExecBody; // reference to the operation
-          rewriter.clone(opToCloneInExecBody, originalToClonedOperandsMap);
+        Operation *cloned = rewriter.clone(opToClone, originalToClonedOperandsMap);
+        for (auto [origRes, newRes] : llvm::zip(opToClone.getResults(), cloned->getResults()))
+          originalToClonedOperandsMap.map(origRes, newRes);
+        continue;
+      }
+
+      hasExecutionBody = true;
+      // Inline the execution body region into the function entry block.
+      auto execBodyOp = mlir::cast<cal::ExecutionBody>(opToClone);
+      auto beginExecBodyIt = execBodyOp.getBody().op_begin();
+      auto endExecBodyIt = execBodyOp.getBody().op_end();
+      for (auto itExecBody = beginExecBodyIt; itExecBody != endExecBodyIt;
+           ++itExecBody) {
+        Operation &innerOp = *itExecBody;
+        // Convert cal.action_done directly to func.return to avoid relying on
+        // a separate pattern ordering during greedy application.
+        if (auto done = dyn_cast<cal::ActionDoneOp>(&innerOp)) {
+          Value ret = originalToClonedOperandsMap.lookupOrDefault(done.getHasExecuted());
+          rewriter.create<func::ReturnOp>(done.getLoc(), ret);
+          continue;
         }
+        Operation *clonedInner = rewriter.clone(innerOp, originalToClonedOperandsMap);
+        for (auto [origRes, newRes] : llvm::zip(innerOp.getResults(), clonedInner->getResults()))
+          originalToClonedOperandsMap.map(origRes, newRes);
       }
     }
 
@@ -393,11 +419,10 @@ class ConvertCalToFuncPass
     : public impl::ConvertCalToFuncBase<ConvertCalToFuncPass> {
 public:
   void runOnOperation() final {
-
-    // 1. Check if the module contains any `cal.action` operations.
-    // If it does, we cannot convert the module to func, as `cal.action` is
-    // not supported here. Emit an error and signal pass failure.
     Operation *module = getOperation();
+
+    // 1) Early validation: no legacy cal.action allowed.
+    bool hasUnsupportedActions = false;
     module->walk([&](cal::ActorOp actor) {
       for (Block &block : actor.getBody()) {
         for (Operation &op : block) {
@@ -405,30 +430,182 @@ public:
             actor.emitError("cal.actor contains cal.action - cannot convert to "
                             "func dialect. Only actors with cal.execution_body "
                             "are valid in this pass");
-            signalPassFailure();
-            return WalkResult::interrupt(); // Stop walking
+            hasUnsupportedActions = true;
+            return WalkResult::interrupt();
           }
         }
       }
       return WalkResult::advance();
     });
-
-    // 2. If the module does not contain any `cal.action` operations, we can
-    // proceed with the conversion to func operations
-    RewritePatternSet patterns(&getContext());
-    patterns.add<ConvertCalActorToFunc>(&getContext());
-    patterns.add<ConvertCalTerminatorToFuncTerminator>(&getContext());
-    patterns.add<ConvertCalCreateInstanceToFuncCall>(&getContext());
-    // We set the benefit to 0 for the ConvertCalNetworkToMainFunc pattern
-    // to ensure it is applied last, after all other patterns.
-    // This is because it relies on the fact that all actors have been converted
-    // to functions. I am not actually sure if this works properly, changing the
-    // benefit did not change the behaviour. So we just watch this space for
-    // future errors.
-    patterns.add<ConvertCalNetworkToMainFunc>(&getContext(), /*benefit=*/0);
-
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    if (hasUnsupportedActions) {
       signalPassFailure();
+      return;
+    }
+
+    // Helper lambda to lower a single actor op to a func.func.
+    auto lowerActor = [&](cal::ActorOp op) -> LogicalResult {
+      mlir::Location loc = op.getLoc();
+      mlir::Region &actorBody = op.getBody();
+
+      // Signature: same args as actor body, return i1.
+      auto i1ReturnType = IntegerType::get(&getContext(), 1);
+      auto argumentTypes = actorBody.getArgumentTypes();
+      auto functionType = FunctionType::get(&getContext(), argumentTypes,
+                                            TypeRange{i1ReturnType});
+
+      IRRewriter rewriter(&getContext());
+      rewriter.setInsertionPoint(op);
+      auto function = rewriter.create<func::FuncOp>(loc, op.getSymName(), functionType);
+      Block *entryBlock = function.addEntryBlock();
+      rewriter.setInsertionPointToStart(entryBlock);
+
+      // Map block args and clone operations. Inline execution_body content.
+      IRMapping map;
+      map.map(actorBody.getArguments(), function.getBody().getArguments());
+
+      bool hasExecutionBody = false;
+      for (Operation &topLevelOp : actorBody.front()) {
+        if (!isa<cal::ExecutionBody>(topLevelOp)) {
+          Operation *cloned = rewriter.clone(topLevelOp, map);
+          for (auto [orig, neu] : llvm::zip(topLevelOp.getResults(), cloned->getResults()))
+            map.map(orig, neu);
+          continue;
+        }
+
+        hasExecutionBody = true;
+        auto exec = cast<cal::ExecutionBody>(topLevelOp);
+        for (Operation &inner : exec.getBody().front()) {
+          if (auto done = dyn_cast<cal::ActionDoneOp>(&inner)) {
+            Value ret = map.lookup(done.getHasExecuted());
+            rewriter.create<func::ReturnOp>(done.getLoc(), ret);
+            continue;
+          }
+          Operation *clonedInner = rewriter.clone(inner, map);
+          for (auto [orig, neu] : llvm::zip(inner.getResults(), clonedInner->getResults()))
+            map.map(orig, neu);
+        }
+      }
+
+      if (!hasExecutionBody) {
+        auto falseVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+        rewriter.create<func::ReturnOp>(loc, falseVal.getResult());
+      }
+
+      rewriter.replaceOp(op, function);
+      return success();
+    };
+
+    // 2) Lower all actors to functions.
+    {
+      SmallVector<cal::ActorOp, 8> actors;
+      module->walk([&](cal::ActorOp actor) { actors.push_back(actor); });
+      for (cal::ActorOp actor : actors) {
+        if (failed(lowerActor(actor))) {
+          signalPassFailure();
+          return;
+        }
+      }
+    }
+
+    // 3) Lower all create_instance ops to func.call ops.
+    {
+      IRRewriter rewriter(&getContext());
+      SmallVector<cal::CreateInstanceOp, 8> instances;
+      module->walk([&](cal::CreateInstanceOp inst) { instances.push_back(inst); });
+      for (cal::CreateInstanceOp inst : instances) {
+        rewriter.setInsertionPoint(inst);
+        auto i1Ty = rewriter.getI1Type();
+        SmallVector<Type, 1> resultTypes{i1Ty};
+        auto call = rewriter.create<func::CallOp>(inst.getLoc(), inst.getActorRef(),
+                                                  resultTypes, inst.getOperands());
+        call->setAttr("from_create_instance", rewriter.getUnitAttr());
+        rewriter.eraseOp(inst);
+      }
+    }
+
+    // 4) Lower each network to a main-like func with a cooperative loop.
+    {
+      IRRewriter rewriter(&getContext());
+      SmallVector<cal::NetworkOp, 4> networks;
+      module->walk([&](cal::NetworkOp net) { networks.push_back(net); });
+      for (cal::NetworkOp net : networks) {
+        Location loc = net.getLoc();
+        Region &netRegion = net.getBody();
+        if (netRegion.empty()) {
+          rewriter.setInsertionPoint(net);
+          auto fnTy = rewriter.getFunctionType({}, {});
+          auto fn = rewriter.create<func::FuncOp>(loc, "main", fnTy);
+          Block *entry = fn.addEntryBlock();
+          rewriter.setInsertionPointToStart(entry);
+          rewriter.create<func::ReturnOp>(loc);
+          rewriter.replaceOp(net, fn);
+          continue;
+        }
+
+        Block &networkBody = netRegion.front();
+        SmallVector<Type, 8> argTypes(networkBody.getArgumentTypes().begin(),
+                                      networkBody.getArgumentTypes().end());
+        rewriter.setInsertionPoint(net);
+        auto fnTy = rewriter.getFunctionType(argTypes, {});
+        auto fn = rewriter.create<func::FuncOp>(loc, "main", fnTy);
+        Block *entry = fn.addEntryBlock();
+        rewriter.setInsertionPointToStart(entry);
+
+        IRMapping map;
+        map.map(networkBody.getArguments(), fn.getArguments());
+
+        // Clone one-time ops into entry, skip calls from create_instance.
+        for (Operation &inner : llvm::make_early_inc_range(networkBody)) {
+          if (auto call = dyn_cast<func::CallOp>(&inner)) {
+            if (call->hasAttr("from_create_instance"))
+              continue;
+          }
+          Operation *cloned = rewriter.clone(inner, map);
+          for (auto [orig, neu] : llvm::zip(inner.getResults(), cloned->getResults()))
+            map.map(orig, neu);
+        }
+
+        // Build while loop skeleton with i1 carried flag.
+        auto trueVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
+        SmallVector<Type, 1> carriedTypes{rewriter.getI1Type()};
+        auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{carriedTypes},
+                                                     ValueRange{trueVal});
+
+        // Condition block: continue while carried flag true.
+        Block *cond = rewriter.createBlock(&whileOp.getBefore(), {}, carriedTypes, SmallVector<Location, 1>{loc});
+        rewriter.setInsertionPointToStart(cond);
+        Value condArg = cond->getArgument(0);
+        rewriter.create<scf::ConditionOp>(loc, condArg, ValueRange{condArg});
+
+        // Body block: call actor functions and OR their results.
+        Block *body = rewriter.createBlock(&whileOp.getAfter(), {}, carriedTypes, SmallVector<Location, 1>{loc});
+        rewriter.setInsertionPointToStart(body);
+        auto falseVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+        Value progress = falseVal.getResult();
+        for (Operation &inner : networkBody) {
+          auto call = dyn_cast<func::CallOp>(&inner);
+          if (!call)
+            continue;
+          if (!call->hasAttr("from_create_instance"))
+            continue;
+          Operation *clonedCall = rewriter.clone(*call, map);
+          if (auto clonedCallOp = dyn_cast<func::CallOp>(clonedCall)) {
+            if (clonedCallOp.getNumResults() == 1 &&
+                clonedCallOp.getResult(0).getType().isInteger(1)) {
+              Value r = clonedCallOp.getResult(0);
+              auto newProg = rewriter.create<arith::OrIOp>(loc, r, progress);
+              progress = newProg.getResult();
+            }
+          }
+        }
+        rewriter.create<scf::YieldOp>(loc, ValueRange{progress});
+
+        // Return from main.
+        rewriter.setInsertionPointToEnd(entry);
+        rewriter.create<func::ReturnOp>(loc);
+
+        rewriter.replaceOp(net, fn);
+      }
     }
   }
 };
