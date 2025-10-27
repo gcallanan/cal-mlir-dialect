@@ -112,6 +112,12 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::createConvertLinalgToLoopsPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
+        // Lower any remaining Affine operations to SCF before control-flow
+        // conversion. We keep another LowerAffine pass later (after
+        // memref::ExpandStridedMetadata) to clean up Affine ops that may be
+        // introduced by that expansion.
+        pm.addPass(mlir::createLowerAffinePass());
+
         // 2. Standard MLIR to LLVM lowering:
         //    The following passes lower various MLIR dialects to LLVM.
         //    (The ordering and combination of these passes follow similar

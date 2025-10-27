@@ -650,6 +650,25 @@ public:
         n.erase();
     }
 
+    // 6. Optional aggressive pruning: keep only the designated top network.
+    // If the 'top' option is provided (non-empty), erase all cal.network
+    // symbols whose name does not match. This is stronger than the default
+    // dead network pruning above and is intended for users who want to
+    // retain exactly one (top) network definition in the module after
+    // flattening.
+    if (!top.empty()) {
+      SmallVector<NetworkOp> eraseOthers;
+      module.walk([&](NetworkOp net) {
+        if (net.getSymName() != top)
+          eraseOthers.push_back(net);
+      });
+      // Update stats if enabled.
+      if (emitStats)
+        statPrunedNetworks += eraseOthers.size();
+      for (auto n : eraseOthers)
+        n.erase();
+    }
+
     if (emitStats) {
       module.emitRemark() << "flatten-cal-networks stats: iterations=" << statIterations
                           << ", flattened_instances=" << statFlattenedInstances
