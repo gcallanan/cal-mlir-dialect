@@ -1,0 +1,34 @@
+namespace test_fsm:
+
+
+
+    actor TestFSM() ==> :
+    
+        a0 : action ==>
+        do
+            println("In state s0");
+        end     
+
+        a1 : action ==>
+        do
+            println("In state s1");
+        end
+
+        a2 : action ==>
+        do
+            println("In state s2");
+        end
+
+        schedule fsm s0:
+            s0  (a0) --> s1;
+            s1  (a1) --> s2;
+            s2  (a2) --> s3;
+        end
+    end
+
+    network TestFSMNetwork() ==> :
+    entities
+            s = TestFSM();
+    
+    end
+end

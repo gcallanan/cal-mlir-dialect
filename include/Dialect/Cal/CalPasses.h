@@ -20,6 +20,7 @@ namespace cal {
 std::unique_ptr<mlir::Pass> convertCalActionsToExecutionBodies();
 std::unique_ptr<mlir::Pass> hoistCalStateOutOfActor();
 std::unique_ptr<mlir::Pass> insertCalPortPredicates();
+std::unique_ptr<mlir::Pass> lowerCalFsmToExecutionBody();
 
 void populateHoistCalStateOutOfActorPatterns(RewritePatternSet &patterns);
 

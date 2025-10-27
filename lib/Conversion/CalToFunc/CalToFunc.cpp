@@ -106,13 +106,13 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
 
     Block &networkBody = netRegion.front();
 
-    // Create the main function that mirrors the network region's arguments.
-    // This guarantees any references to network block arguments remain valid
-    // after conversion by remapping them to function arguments.
-    SmallVector<Type, 8> argTypes(networkBody.getArgumentTypes().begin(),
-                                  networkBody.getArgumentTypes().end());
-    auto functionType = rewriter.getFunctionType(argTypes, {});
-    auto function = rewriter.create<func::FuncOp>(loc, "main", functionType);
+  // Create the main function that mirrors the network region's arguments,
+  // and returns i32 (0) to satisfy drivers expecting a conventional exit code.
+  SmallVector<Type, 8> argTypes(networkBody.getArgumentTypes().begin(),
+                  networkBody.getArgumentTypes().end());
+  auto i32Ty = rewriter.getI32Type();
+  auto functionType = rewriter.getFunctionType(argTypes, {i32Ty});
+  auto function = rewriter.create<func::FuncOp>(loc, "main", functionType);
     Block *entryBlock = function.addEntryBlock();
     rewriter.setInsertionPointToStart(entryBlock);
 
@@ -199,9 +199,10 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
   // Yield the progress flag as the next iteration's loop-carried value.
   rewriter.create<scf::YieldOp>(loc, ValueRange{actionPerformedFlag});
 
-    // 3. Finally, we add the return operation to the main function.
-    rewriter.setInsertionPointToEnd(entryBlock);
-    rewriter.create<func::ReturnOp>(function.getLoc());
+  // 3. Finally, we add the return operation to the main function (return 0).
+  rewriter.setInsertionPointToEnd(entryBlock);
+  auto c0 = rewriter.create<mlir::arith::ConstantIntOp>(loc, 0, 32);
+  rewriter.create<func::ReturnOp>(function.getLoc(), ValueRange{c0.getResult()});
 
     rewriter.replaceOp(op, function);
 
@@ -533,11 +534,13 @@ public:
         Region &netRegion = net.getBody();
         if (netRegion.empty()) {
           rewriter.setInsertionPoint(net);
-          auto fnTy = rewriter.getFunctionType({}, {});
+          auto i32Ty = rewriter.getI32Type();
+          auto fnTy = rewriter.getFunctionType({}, {i32Ty});
           auto fn = rewriter.create<func::FuncOp>(loc, "main", fnTy);
           Block *entry = fn.addEntryBlock();
           rewriter.setInsertionPointToStart(entry);
-          rewriter.create<func::ReturnOp>(loc);
+          auto c0 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+          rewriter.create<func::ReturnOp>(loc, ValueRange{c0.getResult()});
           rewriter.replaceOp(net, fn);
           continue;
         }
@@ -546,7 +549,8 @@ public:
         SmallVector<Type, 8> argTypes(networkBody.getArgumentTypes().begin(),
                                       networkBody.getArgumentTypes().end());
         rewriter.setInsertionPoint(net);
-        auto fnTy = rewriter.getFunctionType(argTypes, {});
+  auto i32Ty2 = rewriter.getI32Type();
+  auto fnTy = rewriter.getFunctionType(argTypes, {i32Ty2});
         auto fn = rewriter.create<func::FuncOp>(loc, "main", fnTy);
         Block *entry = fn.addEntryBlock();
         rewriter.setInsertionPointToStart(entry);
@@ -600,9 +604,10 @@ public:
         }
         rewriter.create<scf::YieldOp>(loc, ValueRange{progress});
 
-        // Return from main.
-        rewriter.setInsertionPointToEnd(entry);
-        rewriter.create<func::ReturnOp>(loc);
+  // Return from main (0).
+  rewriter.setInsertionPointToEnd(entry);
+  auto c0b = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  rewriter.create<func::ReturnOp>(loc, ValueRange{c0b.getResult()});
 
         rewriter.replaceOp(net, fn);
       }

@@ -6,6 +6,7 @@ add_mlir_dialect_library(MLIRCal
         CalPassesHoistCalStateOutOfActor.cpp
         CalPassesInsertCalPortPredicates.cpp
         CalPassesConvertActionsToExecutionBodies.cpp
+        CalPassesLowerFsmToExecutionBody.cpp
         BufferizableOpInterfaceImpl.cpp
 
         ADDITIONAL_HEADER_DIRS

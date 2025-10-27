@@ -173,6 +173,29 @@ def ConvertCalActionsToExecutionBodies: Pass<"convert-cal-actions-to-execution-b
   ];
 }
 
+def LowerCalFsmToExecutionBody: Pass<"lower-cal-fsm-to-execution-body"> {
+  let summary = "Lower cal.fsm schedules to a single cal.execution_body inside each cal.actor";
+  let description = [{
+    This pass lowers the explicit scheduling expressed via `cal.fsm` (states and
+    `cal.transition`s) into an executable `cal.execution_body` region. For the
+    current state, it selects among transitions by the referenced action's
+    priority (ties broken by transition order), checks the action's predicates,
+    executes at most one action, updates the state, and yields an `i1` that
+    signals whether any action fired. After lowering, the actor contains no
+    `cal.action` or `cal.fsm`.
+
+    Note: Action guards remain in the actions via `cal.predicate`. Transition
+    edges do not carry their own guards.
+  }];
+  let constructor = "mlir::cal::lowerCalFsmToExecutionBody()";
+  let dependentDialects = [
+    "cal::CalDialect",
+    "fifo::FifoDialect",
+    "arith::ArithDialect",
+    "scf::SCFDialect"
+  ];
+}
+
 // Removed: MergeSimpleCalActors pass (replaced by static scheduling approach)
 
 #endif // CAL_PASS

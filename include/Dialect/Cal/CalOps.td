@@ -649,4 +649,81 @@ def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">, AttrSizedOperandS
   let hasCanonicalizer = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Finite State Machine (FSM) scheduling ops
+// These ops allow expressing CAL-style schedule FSMs that select which
+// cal.action may fire based on the current actor state. Guards remain inside
+// actions via cal.predicate; priorities use the existing action priority.
+//===----------------------------------------------------------------------===//
+
+// cal.fsm
+// Container of symbolic states. Exactly one contained cal.state must be initial.
+def Cal_FsmOp : Cal_Op<"fsm", [HasParent<"ActorOp">, NoTerminator, SymbolTable]> {
+  let summary = "Finite State Machine defining action scheduling for an actor";
+  let description = [{
+    The `cal.fsm` operation declares a finite state machine that schedules which
+    `cal.action` may fire depending on the current symbolic state. Each state
+    lists outgoing `cal.transition` edges to target states and labels them with
+    an action name. A transition is enabled iff its referenced action is enabled
+    (via that action's own `cal.predicate`s and data availability). Among enabled
+    transitions, selection uses the referenced action's priority; ties are
+    resolved by textual order of transitions.
+
+    Exactly one contained `cal.state` must be marked as the initial state.
+  }];
+
+  let regions = (region AnyRegion:$body);
+
+  // Keep assembly simple for the draft; `initial` appears in the state's attr-dict.
+  let assemblyFormat = "$body attr-dict ";
+
+  let hasVerifier = 1;
+}
+
+// cal.state
+// Symbolic state inside an FSM. May be marked as `initial`.
+def Cal_StateOp : Cal_Op<"state", [Symbol, HasParent<"FsmOp">, NoTerminator]> {
+  let summary = "Symbolic state within a cal.fsm";
+  let description = [{
+    The `cal.state` operation declares a single symbolic state within a
+    `cal.fsm`. Its region contains zero or more `cal.transition` operations.
+    Exactly one state within an FSM must be designated as the initial state.
+  }];
+
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    OptionalAttr<UnitAttr>:$initial
+  );
+
+  let regions = (region AnyRegion:$body);
+
+  // Draft assembly: state name then region; `initial` will appear in attr-dict if set.
+  let assemblyFormat = "$sym_name $body attr-dict ";
+
+  let hasVerifier = 1;
+}
+
+// cal.transition
+// Transition from the enclosing state to `target`, labeled by `actionName`.
+def Cal_TransitionOp : Cal_Op<"transition", [HasParent<"StateOp">]> {
+  let summary = "Transition labeled by an action from a state to a target state";
+  let description = [{
+    The `cal.transition` operation defines a directed edge from the enclosing
+    `cal.state` to a target state. The edge is labeled by `actionName`, which
+    must name a `cal.action` defined in the same `cal.actor`. A transition is
+    enabled exactly when that action is enabled. If fired, the action executes
+    once and the FSM moves to the target state.
+  }];
+
+  let arguments = (ins
+    StrAttr:$actionName,
+    FlatSymbolRefAttr:$target
+  );
+
+  // Nice, parser-friendly assembly without custom C++.
+  let assemblyFormat = "`action` `(` $actionName `)` `->` $target attr-dict ";
+
+  let hasVerifier = 1;
+}
+
 #endif // CAL_OPS

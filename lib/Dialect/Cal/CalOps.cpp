@@ -23,6 +23,69 @@ using namespace mlir::cal;
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.cpp.inc"
 //===----------------------------------------------------------------------===//
+// FSM op verifiers
+//===----------------------------------------------------------------------===//
+
+LogicalResult FsmOp::verify() {
+  // Region must have exactly one block.
+  if (!getBody().hasOneBlock())
+    return emitOpError() << "expected fsm region to have exactly one block";
+
+  // Body must contain only cal.state ops; count initials.
+  int initialCount = 0;
+  for (Operation &op : getBody().front()) {
+    if (!llvm::isa<StateOp>(op))
+      return emitOpError() << "fsm body may only contain cal.state ops";
+    auto st = llvm::cast<StateOp>(&op);
+    if (st.getInitial().has_value())
+      initialCount++;
+  }
+  if (initialCount != 1)
+    return emitOpError() << "expected exactly one initial state, found " << initialCount;
+  return success();
+}
+
+LogicalResult StateOp::verify() {
+  // State body may contain only cal.transition ops.
+  for (Operation &op : getBody().front()) {
+    if (!llvm::isa<TransitionOp>(op))
+      return emitOpError() << "state body may only contain cal.transition ops";
+  }
+  return success();
+}
+
+LogicalResult TransitionOp::verify() {
+  // Validate that target refers to a sibling cal.state within the same cal.fsm.
+  SymbolTableCollection symbolTable;
+  auto targetRef = getTargetAttr();
+  if (!symbolTable.lookupNearestSymbolFrom<StateOp>(*this, targetRef))
+    return emitOpError() << "target state '" << targetRef.getValue()
+                         << "' not found in enclosing cal.fsm";
+
+  // Validate that actionName names a cal.action in the same cal.actor.
+  auto actor = getOperation()->getParentOfType<ActorOp>();
+  if (!actor)
+    return emitOpError() << "cal.transition must be nested under cal.fsm within a cal.actor";
+
+  StringRef wanted = getActionName();
+  bool found = false;
+  for (Operation &op : actor.getBody().front()) {
+    if (auto action = llvm::dyn_cast<ActionOp>(&op)) {
+      if (auto nameAttr = action.getActionNameAttr()) {
+        if (nameAttr.getValue() == wanted) {
+          found = true;
+          break;
+        }
+      }
+    }
+  }
+  if (!found)
+    return emitOpError() << "action '" << wanted
+                         << "' not found in enclosing cal.actor (actions must be named to be referenced)";
+
+  return success();
+}
+//===----------------------------------------------------------------------===//
 // ConnectOp canonicalization: lower array+index sides to instance_at handles.
 // This yields a handle-only connect in the IR (printer may still show sugar).
 //===----------------------------------------------------------------------===//

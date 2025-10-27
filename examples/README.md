@@ -11,6 +11,7 @@ The examples in this directory cover both plain MLIR and the use of higher-level
 | Subdirectory             | Description                                                                 |
 |--------------------------|-----------------------------------------------------------------------------|
 | `merge`                  | A minimal example demonstrating how to implement and run a CAL+FIFO-based MLIR program entirely by hand. Shows how to define actors, FIFOs, and a simple merge network directly in MLIR. |
+| `fsm`                    | Minimal finite-state-machine scheduling example using `cal.fsm` with a single state looping on a named action. Demonstrates lowering to `cal.execution_body` and end-to-end execution via LLVM. |
 | `streamblocks-toolchain` | A tutorial showing how to use the **Streamblocks frontend** to compile a `.cal` source file into MLIR, and how to lower and run it. Demonstrates end-to-end usage of the toolchain with a `PassThrough` network example. |
 | `qr-decomposition-in-CAL` | A benchmark-focused tutorial showing how to compile a complex CAL implementation of QR decomposition (using a CORDIC-based systolic array) into MLIR using the **Streamblocks frontend**, and how to lower and run the result. Demonstrates end-to-end compilation flow. |
 | `big-CAL`                    | Implements the Savina "Big Actor" benchmark in CAL. Demonstrates large-scale message passing between many actors, and provides scripts to compile and benchmark both C++ and MLIR backends. See [big/README.md](big/README.md) for details. |
@@ -21,6 +22,14 @@ The examples in this directory cover both plain MLIR and the use of higher-level
 ## Usage
 
 Each example directory includes its own README or scripts for compiling and running the examples. Please refer to those for specific instructions.
+
+Quick run for `fsm/minimal_fsm.mlir`:
+
+```sh
+cal-opt --lower-cal-fsm-to-execution-body --lower-cal-to-llvm examples/fsm/minimal_fsm.mlir \
+  | cal-translate --mlir-to-llvmir \
+  | lli
+```
 
 ## Requirements
 

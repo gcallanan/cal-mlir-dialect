@@ -84,7 +84,14 @@ void registerLowerCalToLLVMPipeline() {
       [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
   // 1. FIFO/CAL-specific lowering
 
+        // First lower any cal.fsm schedules into a unified cal.execution_body.
+        // Keep the standalone pass available separately; this just integrates
+        // it into the default pipeline so users don't need to spell it out.
+        pm.addPass(mlir::cal::lowerCalFsmToExecutionBody());
+
         pm.addPass(mlir::cal::insertCalPortPredicates());
+        // Convert any remaining cal.action-based actors (non-FSM actors)
+        // into execution bodies.
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
@@ -233,7 +240,11 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
     OpPassManager &pm, const CalToLLVMWithGPUTensorsPipelineOptions &options) {
   // 1. FIFO/CAL-specific lowering
 
+  // Integrate FSM lowering here as well so GPU path behaves the same.
+  pm.addPass(mlir::cal::lowerCalFsmToExecutionBody());
+
   pm.addPass(mlir::cal::insertCalPortPredicates());
+  // Convert any remaining cal.action-based actors (non-FSM actors).
   pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
   pm.addPass(mlir::cal::hoistCalStateOutOfActor());
