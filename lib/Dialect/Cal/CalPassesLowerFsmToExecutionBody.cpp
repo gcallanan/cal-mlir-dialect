@@ -141,9 +141,11 @@ public:
 
           // Collect transitions and sort by action priority (desc), breaking ties by textual order.
           SmallVector<cal::TransitionOp> transitions;
-          for (Operation &opTr : states[sIdx].getBody().front()) {
-            if (auto tr = dyn_cast<cal::TransitionOp>(&opTr))
-              transitions.push_back(tr);
+          if (!states[sIdx].getBody().empty()) {
+            for (Operation &opTr : states[sIdx].getBody().front()) {
+              if (auto tr = dyn_cast<cal::TransitionOp>(&opTr))
+                transitions.push_back(tr);
+            }
           }
           // Stable sort keeps textual order within equal priorities.
           std::stable_sort(transitions.begin(), transitions.end(), [&](cal::TransitionOp a, cal::TransitionOp b) {

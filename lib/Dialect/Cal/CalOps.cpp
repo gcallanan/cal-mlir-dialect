@@ -46,6 +46,9 @@ LogicalResult FsmOp::verify() {
 }
 
 LogicalResult StateOp::verify() {
+  // Allow an empty state body to represent a terminal/dead state.
+  if (getBody().empty())
+    return success();
   // State body may contain only cal.transition ops.
   for (Operation &op : getBody().front()) {
     if (!llvm::isa<TransitionOp>(op))
