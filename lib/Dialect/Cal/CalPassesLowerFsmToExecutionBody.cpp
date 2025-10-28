@@ -4,12 +4,15 @@
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Cal/CalPasses.h"
 #include "Dialect/Fifo/FifoDialect.h"
+#include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+// FIFO ops used for availability checks (size/space)
+#include "Dialect/Fifo/FifoOps.h"
 
 namespace mlir {
 namespace cal {
@@ -204,6 +207,52 @@ public:
             }
             if (!predValue)
               predValue = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true)).getResult();
+
+            // Augment predicates with FIFO availability checks derived from action port rates.
+            // For each output_port popped K times -> require fifo.size(port) >= K
+            // For each input_port pushed K times -> require fifo.space(port) >= K
+            {
+              Value availPred = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
+              // getPortRates is declared on cal.action; it returns a map of port -> count
+              // Convention: pushes contribute +K on input_port, pops contribute -K on output_port.
+              llvm::MapVector<mlir::Value, int> portRates = action.getPortRates();
+              if (!portRates.empty()) {
+                auto idxTy = rewriter.getIndexType();
+                for (auto &pr : portRates) {
+                  mlir::Value portVal = pr.first;
+                  int count = pr.second;
+                  if (count == 0)
+                    continue; // nothing to check
+
+                  mlir::Value k;
+                  mlir::Value sufficient;
+                  if (count > 0) {
+                    // Pushes: require fifo.space(port) >= count on input ports
+                    if (this->requirePushSpace) {
+                      if (!mlir::isa<mlir::fifo::InputPortType>(portVal.getType()))
+                        continue; // defensive: only check space for input ports
+                      k = rewriter.create<arith::ConstantIndexOp>(loc, static_cast<int64_t>(count));
+                      auto spaceVal = rewriter.create<mlir::fifo::SpaceOp>(loc, idxTy, portVal);
+                      sufficient = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, spaceVal.getResult(), k);
+                    } else {
+                      // Skip push-space checks if disabled
+                      continue;
+                    }
+                  } else { // count < 0
+                    // Pops: require fifo.size(port) >= -count on output ports
+                    if (!mlir::isa<mlir::fifo::OutputPortType>(portVal.getType()))
+                      continue; // defensive
+                    int need = -count;
+                    k = rewriter.create<arith::ConstantIndexOp>(loc, static_cast<int64_t>(need));
+                    auto sizeVal = rewriter.create<mlir::fifo::SizeOp>(loc, idxTy, portVal);
+                    sufficient = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, sizeVal.getResult(), k);
+                  }
+                  availPred = rewriter.create<arith::AndIOp>(loc, availPred, sufficient);
+                }
+                // Combine with user predicate(s)
+                predValue = rewriter.create<arith::AndIOp>(loc, predValue, availPred);
+              }
+            }
 
             // Guard with !taken && predicate
             auto notTaken = rewriter.create<arith::XOrIOp>(loc, taken, rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true)));

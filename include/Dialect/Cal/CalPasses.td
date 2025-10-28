@@ -188,6 +188,11 @@ def LowerCalFsmToExecutionBody: Pass<"lower-cal-fsm-to-execution-body"> {
     edges do not carry their own guards.
   }];
   let constructor = "mlir::cal::lowerCalFsmToExecutionBody()";
+  let options = [
+    Option<"requirePushSpace", "require-push-space", "bool", /*default=*/"true",
+           "When true, add fifo.space(port) >= pushes checks for actions that push to input ports. "
+           "If false, only pop readiness (fifo.size >= pops) is enforced.">
+  ];
   let dependentDialects = [
     "cal::CalDialect",
     "fifo::FifoDialect",
