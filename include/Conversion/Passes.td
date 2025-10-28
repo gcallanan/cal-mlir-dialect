@@ -132,6 +132,8 @@ def ConvertCalToFuncWithStaticSchedule : Pass<"convert-cal-to-func-with-static-s
             "Print out the number of firings per actor by solving the balance equations.">,
       Option<"print_static_schedule_for_testing", "print-static-schedule-for-testing", "bool", /*default=*/"false",
             "Generate an action-level schedule using the solved balance equations.">,
+      Option<"exit_on_testing_print", "exit-on-testing-print", "bool", /*default=*/"false",
+          "Exits compilation after testing print complete. Does not print IR afterwards">,
     ];
 
     let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";

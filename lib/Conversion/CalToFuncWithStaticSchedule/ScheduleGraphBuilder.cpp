@@ -2,6 +2,8 @@
 #include "Dialect/Cal/CalOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/OpImplementation.h"
+#include "llvm/ADT/DenseSet.h"
+#include <queue>
 
 namespace mlir {
 
@@ -26,8 +28,9 @@ ScheduleGraph CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
     numberOfActions++;
     for (auto predicateOp : actionOp.getOps<cal::Predicate>()) {
       if (auto predicateInfo = candidatePredicateOrNull(predicateOp)) {
-        if (auto stateIncrementPattern = getStateUpdatePatternOrNull(
-                predicateInfo->stateVar, actionOp)) {
+        auto stateIncrementPatternList =
+            getStateUpdatePatternList(predicateInfo->stateVar, actionOp);
+        if (stateIncrementPatternList.size() > 0) {
           actionToValues[predicateInfo->stateVar].insert(predicateOp);
         }
       }
@@ -112,20 +115,20 @@ ScheduleGraph CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
         }
       }
     }
-    auto stateUpdatePattern =
-        getStateUpdatePatternOrNull(commonStateVar, actionOp);
+    auto stateUpdatePatternList =
+        getStateUpdatePatternList(commonStateVar, actionOp);
 
     SchedulingVariableInfoForAction infoForAction;
     infoForAction.stateVar = commonStateVar;
     infoForAction.predicateInequalities = std::move(predicateInfos);
-    infoForAction.updatePattern = stateUpdatePattern;
+    infoForAction.updatePatternList = stateUpdatePatternList;
     actionInfoMap[actionOp] = infoForAction;
   }
 
   int initialStateValue = findInitialAssignment(commonStateVar);
 
-  if (auto scheduleGraph = constructScheduleGraphFromActionInfo(
-          actionInfoMap, initialStateValue)) {
+  if (auto scheduleGraph =
+          constructActorFsmFromActionInfo(actionInfoMap, initialStateValue)) {
     return *scheduleGraph;
   } else {
     ScheduleGraph graph;
@@ -255,45 +258,110 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::candidatePredicateOrNull(
   return std::nullopt;
 }
 
-std::optional<StateVarUpdatePattern>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getStateUpdatePatternOrNull(
+std::list<StateVarUpdatePattern>
+CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getStateUpdatePatternList(
     mlir::Value stateVar, cal::ActionOp actionOp) {
-  int numSets = 0;
-  mlir::cal::StateSetOp setOp = nullptr;
+  llvm::SmallVector<mlir::cal::StateSetOp, 4> setOps;
+
   actionOp->walk([&](mlir::cal::StateSetOp ss) {
     if (ss.getStateRef() == stateVar) {
-      setOp = ss;
-      numSets++;
+      setOps.push_back(ss);
     }
   });
 
-  if (numSets != 1 || !setOp) {
-    return std::nullopt;
+  if (setOps.empty()) {
+    return {};
   }
 
-  // Case 1: Direct constant assignment
-  if (auto assignedValue = evaluateConstantValue(setOp.getStateValue())) {
-    return StateVarUpdatePattern{
-        stateVar, StateVarUpdateKind::ConstantAssignment, *assignedValue};
+  std::list<StateVarUpdatePattern> patterns;
+
+  // Process each StateSetOp to extract its pattern
+  for (auto setOp : setOps) {
+    std::optional<StateVarUpdatePattern> pattern;
+
+    // Case 1: Direct constant assignment
+    if (auto assignedValue = evaluateConstantValue(setOp.getStateValue())) {
+      pattern = StateVarUpdatePattern{
+          stateVar, StateVarUpdateKind::ConstantAssignment, *assignedValue};
+    }
+    // Case 2: Check for modulo pattern (x = (x + increment) % K)
+    else if (auto modPattern = detectModKPattern(
+                 setOp.getStateValue().getDefiningOp(), setOp.getStateRef())) {
+      int64_t increment = modPattern->first;
+      int64_t modK = modPattern->second;
+      pattern = StateVarUpdatePattern{
+          stateVar, StateVarUpdateKind::IncrementAndModK, increment, modK};
+    }
+    // Case 3: Simple increment pattern
+    else if (auto increment = getIncrementAmount(setOp.getStateValue(),
+                                                 setOp.getStateRef())) {
+      pattern = StateVarUpdatePattern{stateVar, StateVarUpdateKind::Increment,
+                                      *increment};
+    }
+
+    // If we found a valid pattern, add it to the list
+    if (pattern) {
+      patterns.push_back(*pattern);
+    } else {
+      // If any pattern is not one of the three valid types, return empty list
+      return {};
+    }
   }
 
-  // Case 2: Check for modulo pattern (x = (x + increment % K) )
-  Operation *defOp = setOp.getStateValue().getDefiningOp();
-  if (auto modPattern = detectModKPattern(defOp, setOp.getStateRef())) {
-    int64_t increment = modPattern->first;
-    int64_t modK = modPattern->second;
-    return StateVarUpdatePattern{stateVar, StateVarUpdateKind::IncrementAndModK,
-                                 increment, modK};
-  }
+  return patterns;
+}
 
-  // Case 3: Simple increment pattern
-  if (auto increment =
-          getIncrementAmount(setOp.getStateValue(), setOp.getStateRef())) {
-    return StateVarUpdatePattern{stateVar, StateVarUpdateKind::Increment,
-                                 *increment};
-  }
+bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::isStateModifiedEarlier(
+    cal::StateGetOp getOp, Value targetStateVar) {
+  // Create a worklist of blocks to process
+  llvm::SmallVector<Block *, 8> worklist;
+  llvm::SmallPtrSet<Block *, 8> visited;
 
-  return std::nullopt; // Could not determine update pattern
+  // Start with the parent block containing the getOp
+  Block *parentBlock = getOp.getOperation()->getBlock();
+  worklist.push_back(parentBlock);
+
+  while (!worklist.empty()) {
+    Block *currentBlock = worklist.pop_back_val();
+
+    // Skip if already visited
+    if (!visited.insert(currentBlock).second)
+      continue;
+
+    // Walk the current block up to (but not including) getOp to find any
+    // earlier cal.set
+    for (Operation &op : *currentBlock) {
+      // If we're in the original parent block, stop at getOp
+      if (currentBlock == parentBlock && &op == getOp.getOperation())
+        break;
+
+      if (auto setOp = dyn_cast<cal::StateSetOp>(op)) {
+        if (setOp.getStateRef() == targetStateVar) {
+          return true; // State variable is modified earlier
+        }
+      }
+
+      // If this operation contains nested regions/blocks, enqueue those blocks
+      if (op.getNumRegions() > 0) {
+        for (Region &region : op.getRegions()) {
+          for (Block &childBlock : region) {
+            if (!visited.count(&childBlock))
+              worklist.push_back(&childBlock);
+          }
+        }
+      }
+
+      // Add predecessor blocks to the worklist so we can search earlier blocks
+      for (Block *pred : currentBlock->getPredecessors()) {
+        if (!pred)
+          continue;
+        // Only add if we haven't visited it yet
+        if (!visited.count(pred))
+          worklist.push_back(pred);
+      }
+    }
+  }
+  return false;
 }
 
 std::optional<int64_t>
@@ -375,6 +443,13 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getIncrementAmount(
       if (getOp.getStateRef() != targetStateVar)
         return std::nullopt; // Other state var
       foundMatchingState = true;
+
+      if (!isStateModifiedEarlier(getOp, targetStateVar)) {
+        continue; // Valid dependency on target state var
+      } else {
+        return std::nullopt; // State variable modified earlier in action
+      }
+
       continue;
     }
 
@@ -389,7 +464,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getIncrementAmount(
 }
 
 std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
-    constructScheduleGraphFromActionInfo(
+    constructActorFsmFromActionInfo(
         const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap,
         int initialStateValue) {
@@ -409,71 +484,111 @@ std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
   scheduleNodes.resize(
       std::max<size_t>(scheduleNodes.size(), initialStateValue + 1));
 
-  int currentStateValue = initialStateValue;
+  // Step 3: Use breadth-first search to construct the schedule graph.
+  // We use a queue to process states in order, and track visited states.
+  std::queue<int> stateQueue;
+  llvm::DenseSet<int> visitedStates;
 
-  // Step 3: Simulate the schedule graph construction by walking through state
-  // values. For each state value, determine the corresponding action and the
-  // next state, and build up the scheduleNodes vector accordingly.
-  do {
+  stateQueue.push(initialStateValue);
+  visitedStates.insert(initialStateValue);
+
+  while (!stateQueue.empty()) {
+    int currentStateValue = stateQueue.front();
+    stateQueue.pop();
+
     // Step 3.1: For the current state value, find the action that should be
     // executed.
     auto currentAction =
         getActionForStateValue(currentStateValue, actionInfoMap);
 
     if (!currentAction) {
-      return std::nullopt; // No action found for this state value
+      // No action found for this state value, skip this state
+      continue;
     }
 
     const auto &infoForAction = actionInfoMap.lookup(*currentAction);
-    auto updatePattern = infoForAction.updatePattern;
 
-    // Step 3.2: Compute the next state value based on the update pattern of the
-    // action.
-    int nextStateValue;
-    if (updatePattern->kind == StateVarUpdateKind::ConstantAssignment) {
-      nextStateValue = updatePattern->value;
-    } else if (updatePattern->kind == StateVarUpdateKind::Increment) {
-      nextStateValue = currentStateValue + updatePattern->value;
-    } else if (updatePattern->kind == StateVarUpdateKind::IncrementAndModK) {
-      nextStateValue =
-          (currentStateValue + updatePattern->value) % updatePattern->modK;
-    }
-
-    // Step 3.3: Add a ScheduleNode for the current state value.
-    // If the next state value has already been visited, create a WrapAround
-    // edge. Otherwise, create a Next edge to the next state value.
+    // Step 3.2: Create a ScheduleNode for the current state value.
+    // Ensure the vector is large enough to hold this state index.
     if (scheduleNodes.size() <= static_cast<size_t>(currentStateValue))
       scheduleNodes.resize(currentStateValue + 1);
+
     ScheduleNode node;
     node.action = *currentAction;
-    node.nextNodeIndex = nextStateValue;
 
-    // Outgoing edge set to WrapAround if we encounter an already visited
-    // state value, this is the termination condition
-    if (nextStateValue < static_cast<int>(scheduleNodes.size()) &&
-        scheduleNodes[nextStateValue].action) {
-      // We've already visited this state value, so wrap around
-      node.edgeTypeToNextNode = ScheduleEdgeType::WrapAround;
-      scheduleNodes[currentStateValue] = node;
-      break;
-    } else {
-      node.edgeTypeToNextNode = ScheduleEdgeType::Next;
+    // Step 3.3: Iterate through all update patterns and create an edge for each
+    for (const auto &updatePattern : infoForAction.updatePatternList) {
+      // Compute the next state value based on the update pattern
+      int nextStateValue;
+      if (updatePattern.kind == StateVarUpdateKind::ConstantAssignment) {
+        nextStateValue = updatePattern.value;
+      } else if (updatePattern.kind == StateVarUpdateKind::Increment) {
+        nextStateValue = currentStateValue + updatePattern.value;
+      } else if (updatePattern.kind == StateVarUpdateKind::IncrementAndModK) {
+        nextStateValue =
+            (currentStateValue + updatePattern.value) % updatePattern.modK;
+      }
+
+      // Ensure the vector is large enough for the next state
+      if (scheduleNodes.size() <= static_cast<size_t>(nextStateValue))
+        scheduleNodes.resize(nextStateValue + 1);
+
+      // Create an edge to the next state value
+      ScheduleEdge edge;
+      edge.nextNodeIndex = nextStateValue;
+
+      // If the next state has already been visited, mark this edge as a
+      // wrap-around (cycle) edge. Otherwise, mark it as a regular Next edge
+      // and add the next state to the queue for processing.
+      if (!visitedStates.count(nextStateValue)) {
+        stateQueue.push(nextStateValue);
+        visitedStates.insert(nextStateValue);
+      }
+
+      node.edges.push_back(edge);
     }
 
     scheduleNodes[currentStateValue] = node;
-
-    currentStateValue = nextStateValue;
-  } while (true);
+  }
 
   // Step 4: After simulating the schedule, construct and return the
   // ScheduleGraph object. The graph contains the actor, its type, and the
   // constructed schedule nodes.
   ScheduleGraph graph;
   graph.actor = actorOp;
-  graph.type = GraphType::StateMachineSchedule;
+  graph.type = determineFsmType(scheduleNodes, initialStateValue);
   graph.nodes = std::move(scheduleNodes);
   graph.initialStateValue = initialStateValue;
   return graph;
+}
+
+
+GraphType
+CycloStaticDataflowAnalysis::ScheduleGraphBuilder::determineFsmType(
+    std::vector<ScheduleNode> &scheduleNodes, int initialStateValue) {
+      
+    // We currently classify FSMs only as SimpleLoop or Unclassified.
+    // To detect a SimpleLoop, traverse edges starting from the initial state
+    // and locate the first cycle. If that cycle returns to the initial state,
+    // the graph is a SimpleLoop; otherwise it is Unclassified.
+    llvm::DenseSet<int> visitedNodes;
+    visitedNodes.insert(initialStateValue);
+    ScheduleNode node = scheduleNodes[initialStateValue];
+    while (true) {
+      if (node.edges.size() != 1) {
+        return GraphType::FSM_Unclassified;
+      }
+      int nextIndex = node.edges.front().nextNodeIndex;
+      if (visitedNodes.count(nextIndex)) {
+        if(nextIndex != initialStateValue) {
+          return GraphType::FSM_Unclassified;
+        }else {
+          return GraphType::FSM_SimpleLoop;
+        }
+      }
+      visitedNodes.insert(nextIndex);
+      node = scheduleNodes[nextIndex]; 
+    }
 }
 
 int CycloStaticDataflowAnalysis::ScheduleGraphBuilder::findInitialAssignment(
@@ -562,18 +677,21 @@ bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::hasPositiveInfinity(
 
   // Check if the pattern is always incrementing the state variable
   // by a positive value, which is necessary to lead to positive infinity.
-  if (!info.updatePattern) {
+  if (info.updatePatternList.size() == 0 &&
+      info.updatePatternList.size() <= 1) {
     return false;
   }
 
+  auto updatePattern = info.updatePatternList.front();
+
   // IncrementAndModK cannot lead to positive infinity because it wraps around
-  if (info.updatePattern->kind == StateVarUpdateKind::IncrementAndModK) {
+  if (updatePattern.kind == StateVarUpdateKind::IncrementAndModK) {
     return false;
   }
 
   // Only consider incrementing operations without bounds
-  if (!(info.updatePattern->kind == StateVarUpdateKind::Increment &&
-        info.updatePattern->value > 0)) {
+  if (!(updatePattern.kind == StateVarUpdateKind::Increment &&
+        updatePattern.value > 0)) {
     return false;
   }
 

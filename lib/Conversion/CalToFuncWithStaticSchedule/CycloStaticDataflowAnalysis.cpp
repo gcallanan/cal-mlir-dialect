@@ -20,33 +20,37 @@ void printScheduleGraph(ScheduleGraph &graph) {
   case GraphType::SingleAction:
     scheduleType = "SingleAction";
     break;
-  case GraphType::StateMachineSchedule:
-    scheduleType = "StateMachineSchedule";
+  case GraphType::FSM_Unclassified:
+    scheduleType = "FSM (Unclassified)";
+    break;
+  case GraphType::FSM_SimpleLoop:
+    scheduleType = "FSM (SimpleLoop)";
     break;
   case GraphType::Dynamic:
     scheduleType = "Dynamic";
     break;
   }
 
-  llvm::outs() << "ScheduleGraph for actor: " << graph.actor.getSymName()
+  llvm::outs() << "FSM for actor: " << graph.actor.getSymName()
                << ". Type: " << scheduleType << "\n";
 
   for (size_t i = 0; i < graph.nodes.size(); ++i) {
     auto &node = graph.nodes[i];
-    llvm::outs() << "  Node " << i << ": "
-                 << node.action.getActionNameAttr().getValue() << "\n";
+    std::string actionName;
+    if (node.action != nullptr)
+      actionName = node.action.getActionNameAttr().getValue();
+    else
+      actionName = "<null>";
+    llvm::outs() << "  Node " << i << ": " << actionName << "\n";
 
-    llvm::outs() << "    -> Next: Node " << node.nextNodeIndex;
-
-    switch (node.edgeTypeToNextNode) {
-    case ScheduleEdgeType::Next:
-      llvm::outs() << " (Next)";
-      break;
-    case ScheduleEdgeType::WrapAround:
-      llvm::outs() << " (WrapAround)";
-      break;
+    if (node.edges.empty()) {
+      llvm::outs() << "    -> (no edges)\n";
+    } else {
+      for (const auto &edge : node.edges) {
+        llvm::outs() << "    -> Next: Node " << edge.nextNodeIndex;
+        llvm::outs() << "\n";
+      }
     }
-    llvm::outs() << "\n";
   }
 }
 
@@ -109,8 +113,14 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   case StateVarUpdateKind::Increment:
     os << "= " << ssaName << " + ";
     break;
+  case StateVarUpdateKind::IncrementAndModK:
+    os << "= (" << ssaName << " + ";
+    break;
   }
-  os << " " << info.value << ")";
+  os << " " << info.value;
+  if (info.kind == StateVarUpdateKind::IncrementAndModK) {
+    os << ") % " << info.modK;
+  }
   return os;
 }
 
@@ -181,9 +191,9 @@ ScheduleGraph CycloStaticDataflowAnalysis::generateSingleActionSchedule(
   // Create a single node for the action
   ScheduleNode node;
   node.action = singleAction;
-  node.nextNodeIndex = 0;
-  node.edgeTypeToNextNode = ScheduleEdgeType::WrapAround;
-
+  ScheduleEdge edge;
+  edge.nextNodeIndex = 0;
+  node.edges.push_back(edge);
   graph.nodes.push_back(node);
 
   // Store or process the graph as needed (not shown)
@@ -205,6 +215,10 @@ CycloStaticDataflowAnalysis::getSDFPhases(cal::ActorOp actorOp) {
     return std::nullopt;
   }
 
+  if (graph.type == GraphType::FSM_Unclassified) {
+    return std::nullopt;
+  }
+
   if (graph.type == GraphType::SingleAction) {
     llvm::SmallVector<SDFPhase, 4> phases;
     SDFPhase phase;
@@ -214,21 +228,19 @@ CycloStaticDataflowAnalysis::getSDFPhases(cal::ActorOp actorOp) {
     return phases;
   }
 
-  if (graph.type == GraphType::StateMachineSchedule) {
+  if (graph.type == GraphType::FSM_SimpleLoop) {
     llvm::SmallVector<SDFPhase, 4> phases;
 
     ScheduleNode node = graph.nodes[graph.initialStateValue];
-    while (node.edgeTypeToNextNode != ScheduleEdgeType::WrapAround) {
+    int nodeIndex = -1;
+    do {
       SDFPhase phase;
       phase.actionOp = node.action;
       phase.portRates = phase.actionOp.getPortRates();
       phases.push_back(phase);
-      node = graph.nodes[node.nextNodeIndex];
-    }
-    SDFPhase phase;
-    phase.actionOp = node.action;
-    phase.portRates = phase.actionOp.getPortRates();
-    phases.push_back(phase);
+      nodeIndex = node.edges.front().nextNodeIndex;
+      node = graph.nodes[nodeIndex];
+    } while (nodeIndex != graph.initialStateValue);
 
     return phases;
   }
@@ -436,7 +448,7 @@ CycloStaticDataflowAnalysis::getNonSchedulableActors(cal::NetworkOp networkOp) {
     if (!actorOp)
       continue;
     auto it = actorScheduleMap.find(actorOp);
-    if (it != actorScheduleMap.end() && it->second.type == GraphType::Dynamic) {
+    if (it != actorScheduleMap.end() && it->second.type != GraphType::FSM_SimpleLoop && it->second.type != GraphType::SingleAction) {
       result.push_back(actorOp);
     }
   }

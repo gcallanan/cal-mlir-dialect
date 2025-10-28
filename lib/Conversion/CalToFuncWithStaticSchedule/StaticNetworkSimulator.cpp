@@ -67,10 +67,11 @@ cal::ActionOp fire(Actor *actor) {
 
   // Advance the actors internal state machine
   ScheduleNode fsmNode = actor->fsm.nodes[actor->currentState];
-  if (fsmNode.edgeTypeToNextNode == ScheduleEdgeType::WrapAround) {
+  actor->currentState = fsmNode.edges.front().nextNodeIndex;
+  // We have looped back to the start state
+  if(actor->fsm.initialStateValue == actor->currentState) {
     actor->numFiringsLeft--;
   }
-  actor->currentState = fsmNode.nextNodeIndex;
 
   return actionOp; // Return the action that was fired
 }
@@ -124,7 +125,6 @@ std::vector<cal::ActionOp> simulateNetwork(
     cal::NetworkOp networkOp,
     const llvm::MapVector<cal::ActorOp, int> &actorFiringsPerCycle,
     const llvm::MapVector<cal::ActorOp, ScheduleGraph> &actorScheduleMap) {
-    
   // Step 1: Create actors structs for each actor
   llvm::MapVector<cal::ActorOp, Actor> actorOpToActorStructMap;
   std::vector<Actor *> actors;
@@ -204,7 +204,6 @@ std::vector<cal::ActionOp> simulateNetwork(
       }
     }
   } while (!worklist.empty());
-
   return schedule;
 }
 

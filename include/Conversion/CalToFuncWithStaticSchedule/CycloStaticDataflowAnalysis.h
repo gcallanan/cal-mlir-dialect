@@ -9,6 +9,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/Support/raw_ostream.h"
+#include <list>
 #include <optional>
 
 namespace mlir {
@@ -17,16 +18,18 @@ namespace mlir {
 // schedule
 enum class GraphType {
   SingleAction,
-  StateMachineSchedule,
+  FSM_Unclassified, // Unclassified State Machine Schedule
+  FSM_SimpleLoop, // State Machine Schedule with Simple Loop
   Dynamic // Dynamic Dataflow
 };
 
-enum class ScheduleEdgeType { Next, WrapAround };
+struct ScheduleEdge {
+  size_t nextNodeIndex;
+};
 
 struct ScheduleNode {
   mlir::cal::ActionOp action;
-  size_t nextNodeIndex;
-  ScheduleEdgeType edgeTypeToNextNode;
+  std::list<ScheduleEdge> edges;
 };
 
 struct ScheduleGraph {
@@ -52,7 +55,11 @@ struct PredicateInequalityInfo {
   int64_t constant;
 };
 
-enum class StateVarUpdateKind { Increment, ConstantAssignment, IncrementAndModK };
+enum class StateVarUpdateKind {
+  Increment,
+  ConstantAssignment,
+  IncrementAndModK
+};
 
 // This stores information about how a state variable is updated by an action.
 // For example, if the action increments the state variable %5 by 1
@@ -69,7 +76,7 @@ struct StateVarUpdatePattern {
 struct SchedulingVariableInfoForAction {
   mlir::Value stateVar;
   llvm::SmallVector<PredicateInequalityInfo, 4> predicateInequalities;
-  std::optional<StateVarUpdatePattern> updatePattern;
+  std::list<StateVarUpdatePattern> updatePatternList;
 };
 
 // ====== End: Everything we need to store scheduling variable information for
@@ -212,11 +219,9 @@ public:
   void printFiringsPerActorFromSolvedBalanceEquations(cal::NetworkOp networkOp);
   void printStaticSchedule(cal::NetworkOp networkOp);
 
-  std::vector<cal::ActorOp> getNonSchedulableActors(
-      cal::NetworkOp networkOp);
+  std::vector<cal::ActorOp> getNonSchedulableActors(cal::NetworkOp networkOp);
 
-  std::vector<cal::ActorOp> getSchedulableActors(
-      cal::NetworkOp networkOp);
+  std::vector<cal::ActorOp> getSchedulableActors(cal::NetworkOp networkOp);
 
 private:
   llvm::MapVector<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
@@ -234,13 +239,17 @@ public:
   class ScheduleGraphBuilder {
   public:
     ScheduleGraphBuilder(cal::ActorOp actorOp);
+
     ScheduleGraph generateFsm();
 
   private:
     cal::ActorOp actorOp;
 
-    bool predicateRegionsEqual(cal::Predicate firstPredicate, cal::Predicate secondPredicate);
-    std::optional<ScheduleGraph> constructScheduleGraphFromActionInfo(
+    bool predicateRegionsEqual(cal::Predicate firstPredicate,
+                               cal::Predicate secondPredicate);
+    GraphType determineFsmType(
+        std::vector<ScheduleNode> &scheduleNodes, int initialStateValue);
+    std::optional<ScheduleGraph> constructActorFsmFromActionInfo(
         const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap,
         int initialStateValue);
@@ -248,11 +257,43 @@ public:
     std::optional<int64_t> evaluateConstantValue(Value val);
     std::optional<PredicateInequalityInfo>
     candidatePredicateOrNull(cal::Predicate predicateOp);
-    std::optional<StateVarUpdatePattern>
-    getStateUpdatePatternOrNull(mlir::Value stateVar, cal::ActionOp actionOp);
+    std::list<StateVarUpdatePattern>
+    getStateUpdatePatternList(mlir::Value stateVar, cal::ActionOp actionOp);
     std::optional<int64_t> getIncrementAmount(Value setValue,
                                               Value targetStateVar);
-    std::optional<std::pair<int64_t, int64_t>> detectModKPattern(Operation* defOp, Value stateRef);
+    std::optional<std::pair<int64_t, int64_t>>
+    detectModKPattern(Operation *defOp, Value stateRef);
+
+    /// Determines whether a state variable is modified before a given `cal.get`
+    /// operation.
+    ///
+    /// This function performs a worklist-based traversal of blocks to detect if
+    /// any `cal.set` operation modifies the target state variable before the
+    /// specified `cal.get` operation is reached. The search includes:
+    /// - Operations within the same block that appear before the `cal.get`
+    /// - Operations in nested regions/blocks within the current block
+    /// - Operations in predecessor blocks (control flow paths leading to the
+    /// current block)
+    ///
+    /// The traversal uses a visited set to avoid processing the same block
+    /// multiple times and handles complex control flow structures within CAL
+    /// actions.
+    ///
+    /// @param getOp The `cal.get` operation to check modifications against
+    /// @param targetStateVar The state variable to check for modifications
+    /// @return true if a `cal.set` operation modifying `targetStateVar` is
+    /// found before
+    ///         `getOp`, false otherwise
+    ///
+    /// Example:
+    ///   %state = cal.create_state_var<i32> : !cal.state_ref<i32>
+    ///   cal.set(%state: !cal.state_ref<i32>, %c0: i32)  // This would be
+    ///   detected %val = cal.get(%state: !cal.state_ref<i32>) : i32
+    ///
+    /// This function is used to validate state update patterns and ensure that
+    /// increment calculations don't depend on modified state values within the
+    /// same action.
+    bool isStateModifiedEarlier(cal::StateGetOp getOp, Value targetStateVar);
     int findInitialAssignment(mlir::Value stateVar);
     std::optional<cal::ActionOp> getActionForStateValue(
         int stateValue,

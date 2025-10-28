@@ -518,18 +518,38 @@ public:
            getOperation()->getRegion(0).front().getOps<cal::ActorOp>()) {
         csdfAnalysis.printActorStateMachine(actorOp);
       }
+      if(exit_on_testing_print.getValue()) {
+        llvm::outs() << "Debug print complete. Exiting compilation.\n";
+        llvm::outs().flush();
+        std::exit(0);
+      }
     }
     if (print_csdf_schedule_for_testing.getValue()) {
       for (auto actorOp :
            getOperation()->getRegion(0).front().getOps<cal::ActorOp>()) {
         csdfAnalysis.printCSDFPhases(actorOp);
       }
+      if(exit_on_testing_print.getValue()) {
+        llvm::outs() << "Debug print complete. Exiting compilation.\n";
+        llvm::outs().flush();
+        std::exit(0);
+      }
     }
     if (print_balance_equations_for_testing.getValue() && networkOp) {
       csdfAnalysis.printBalanceEquations(networkOp);
+      if(exit_on_testing_print.getValue()) {
+        llvm::outs() << "Debug print complete. Exiting compilation.\n";
+        llvm::outs().flush();
+        std::exit(0);
+      }
     }
     if (print_solved_balance_equations_for_testing.getValue() && networkOp) {
       csdfAnalysis.printFiringsPerActorFromSolvedBalanceEquations(networkOp);
+      if(exit_on_testing_print.getValue()) {
+        llvm::outs() << "Debug print complete. Exiting compilation.\n";
+        llvm::outs().flush();
+        std::exit(0);
+      }
     }
 
     // Step 3: Confirm that all actors are CSDF or SDF actors or else we bail
@@ -551,6 +571,11 @@ public:
 
     if (print_static_schedule_for_testing.getValue() && networkOp) {
       csdfAnalysis.printStaticSchedule(networkOp);
+      if(exit_on_testing_print.getValue()) {
+        llvm::outs() << "Debug print complete. Exiting compilation.\n";
+        llvm::outs().flush();
+        std::exit(0);
+      }
     }
 
     // Step 4: Generate the static schedule
