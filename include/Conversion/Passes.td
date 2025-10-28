@@ -136,8 +136,6 @@ def ConvertCalToFuncWithStaticSchedule : Pass<"convert-cal-to-func-with-static-s
           "Exits compilation after testing print complete. Does not print IR afterwards">,
     ];
 
-    let constructor = "mlir::createConvertCalToFuncWithStaticSchedulePass()";
-
     let dependentDialects = [
         "func::FuncDialect",
         "fifo::FifoDialect",

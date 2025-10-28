@@ -499,6 +499,11 @@ class ConvertCalToFuncWithStaticSchedulePass
     : public impl::ConvertCalToFuncWithStaticScheduleBase<
           ConvertCalToFuncWithStaticSchedulePass> {
 public:
+  ConvertCalToFuncWithStaticSchedulePass(const ConvertCalToFuncWithStaticScheduleOptions &options)
+      : impl::ConvertCalToFuncWithStaticScheduleBase<ConvertCalToFuncWithStaticSchedulePass>(options) {}
+
+  ConvertCalToFuncWithStaticSchedulePass() {}
+
   void runOnOperation() final {
 
     // Step 1: Generate the analysis object
@@ -518,7 +523,7 @@ public:
            getOperation()->getRegion(0).front().getOps<cal::ActorOp>()) {
         csdfAnalysis.printActorStateMachine(actorOp);
       }
-      if(exit_on_testing_print.getValue()) {
+      if (exit_on_testing_print.getValue()) {
         llvm::outs() << "Debug print complete. Exiting compilation.\n";
         llvm::outs().flush();
         std::exit(0);
@@ -529,7 +534,7 @@ public:
            getOperation()->getRegion(0).front().getOps<cal::ActorOp>()) {
         csdfAnalysis.printCSDFPhases(actorOp);
       }
-      if(exit_on_testing_print.getValue()) {
+      if (exit_on_testing_print.getValue()) {
         llvm::outs() << "Debug print complete. Exiting compilation.\n";
         llvm::outs().flush();
         std::exit(0);
@@ -537,7 +542,7 @@ public:
     }
     if (print_balance_equations_for_testing.getValue() && networkOp) {
       csdfAnalysis.printBalanceEquations(networkOp);
-      if(exit_on_testing_print.getValue()) {
+      if (exit_on_testing_print.getValue()) {
         llvm::outs() << "Debug print complete. Exiting compilation.\n";
         llvm::outs().flush();
         std::exit(0);
@@ -545,7 +550,7 @@ public:
     }
     if (print_solved_balance_equations_for_testing.getValue() && networkOp) {
       csdfAnalysis.printFiringsPerActorFromSolvedBalanceEquations(networkOp);
-      if(exit_on_testing_print.getValue()) {
+      if (exit_on_testing_print.getValue()) {
         llvm::outs() << "Debug print complete. Exiting compilation.\n";
         llvm::outs().flush();
         std::exit(0);
@@ -571,7 +576,7 @@ public:
 
     if (print_static_schedule_for_testing.getValue() && networkOp) {
       csdfAnalysis.printStaticSchedule(networkOp);
-      if(exit_on_testing_print.getValue()) {
+      if (exit_on_testing_print.getValue()) {
         llvm::outs() << "Debug print complete. Exiting compilation.\n";
         llvm::outs().flush();
         std::exit(0);
@@ -608,10 +613,3 @@ public:
 };
 
 } // namespace mlir
-
-/// Creates a pass to lower cal.network and cal.actor ops into functions and
-/// function calls.
-std::unique_ptr<mlir::Pass>
-mlir::createConvertCalToFuncWithStaticSchedulePass() {
-  return std::make_unique<mlir::ConvertCalToFuncWithStaticSchedulePass>();
-}

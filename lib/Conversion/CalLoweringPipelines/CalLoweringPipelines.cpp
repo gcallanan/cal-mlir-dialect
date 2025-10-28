@@ -166,7 +166,7 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
           pm.addPass(mlir::cal::createMergeSimpleCalActors());
 
         pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::createConvertCalToFuncWithStaticSchedulePass());
+        pm.addPass(mlir::createConvertCalToFuncWithStaticSchedule());
 
         // We add this pass as we often get functions that are the same but with
         // different names.

@@ -50,7 +50,7 @@ struct Actor {
   cal::ActorOp actorOp;
   int currentState;
   int numFiringsLeft;
-  ScheduleGraph fsm;
+  Fsm fsm;
   llvm::MapVector<mlir::Value, Channel *> portsIn;
   llvm::MapVector<mlir::Value, Channel *> portsOut;
 };
@@ -99,23 +99,7 @@ void queueFollowOnActorsToWorklist(
     std::vector<cal::ActionOp> simulateNetwork(
     cal::NetworkOp networkOp,
     const llvm::MapVector<cal::ActorOp, int> &actorFiringsPerCycle,
-    const llvm::MapVector<cal::ActorOp, ScheduleGraph> &actorScheduleMap);
-
-// Static helper methods
-
-/// \brief Retrieves the actor and its associated port from a given FIFO
-/// endpoint value.
-///
-/// Given a value representing one end of a FIFO channel, this helper function
-/// determines the corresponding actor operation and the specific block argument
-/// (port) associated with that endpoint.
-///
-/// \param fifoEnd The mlir::Value representing one end of a FIFO channel.
-/// \return A tuple containing the cal::ActorOp (the actor operation) and the
-///         mlir::BlockArgument (the port on the actor corresponding to
-///         fifoEnd).
-static std::tuple<cal::ActorOp, mlir::BlockArgument>
-getActorAndPort(mlir::Value fifoEnd);
+    const llvm::MapVector<cal::ActorOp, Fsm> &actorFsmMap);
 
 } // namespace mlir
 

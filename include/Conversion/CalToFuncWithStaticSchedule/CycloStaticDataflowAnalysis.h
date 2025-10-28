@@ -14,32 +14,32 @@
 
 namespace mlir {
 
-// ====== Start: Everything we need to store a graph describing an actor's
-// schedule
-enum class GraphType {
+// ====== Start: Everything we need to store to store to describe and FSMs for
+// an actor
+enum class FsmType {
   SingleAction,
-  FSM_Unclassified, // Unclassified State Machine Schedule
-  FSM_SimpleLoop, // State Machine Schedule with Simple Loop
-  Dynamic // Dynamic Dataflow
+  FSM_Unclassified, // Unclassified Fsm
+  FSM_SimpleLoop,   // FSM with Simple Loop
+  Dynamic           // Dynamic Dataflow
 };
 
-struct ScheduleEdge {
+struct FsmEdge {
   size_t nextNodeIndex;
 };
 
-struct ScheduleNode {
+struct FsmNode {
   mlir::cal::ActionOp action;
-  std::list<ScheduleEdge> edges;
+  std::list<FsmEdge> edges;
 };
 
-struct ScheduleGraph {
-  GraphType type;
+struct Fsm {
+  FsmType type;
   mlir::cal::ActorOp actor;
-  std::vector<ScheduleNode> nodes; // All schedule nodes
-  size_t initialStateValue;        // The initial state value for the FSM
+  std::vector<FsmNode> nodes; // All nodes in the Fsm
+  size_t initialStateValue;        // The initial state value for the Fsm
 };
 
-void printScheduleGraph(const ScheduleGraph &graph);
+void printFsm(const Fsm &graph);
 // ====== End: Everything we need to store a graph describing an actor's
 // schedule
 
@@ -96,7 +96,7 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &,
  * actors and networks to extract their cyclo-static firing patterns, port
  * rates, generate and solve balance equations for FIFOs in the network, and
  * simulate execution schedules. It supports both single-action and multi-action
- * actors, and can construct schedule graphs representing the firing state
+ * actors, and can construct Fsms representing the firing state
  * machines of actors.
  *
  * Key functionalities include:
@@ -115,7 +115,7 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &,
  *
  * The analysis assumes that the CAL network is well-formed, with each FIFO
  * having exactly one producer and one consumer. Internally, it maintains a
- * mapping from actors to their schedule graphs, and provides helper classes for
+ * mapping from actors to their Fsms, and provides helper classes for
  * constructing these graphs from action information.
  */
 struct CycloStaticDataflowAnalysis {
@@ -224,32 +224,32 @@ public:
   std::vector<cal::ActorOp> getSchedulableActors(cal::NetworkOp networkOp);
 
 private:
-  llvm::MapVector<mlir::cal::ActorOp, ScheduleGraph> actorScheduleMap;
+  llvm::MapVector<mlir::cal::ActorOp, Fsm> actorFsmMap;
 
-  void determineActorSchedule(cal::ActorOp actorOp);
-  ScheduleGraph generateSingleActionSchedule(cal::ActorOp actorOp);
-  ScheduleGraph generateMultiActionSchedule(cal::ActorOp actorOp);
+  void determineActorFsm(cal::ActorOp actorOp);
+  Fsm generateSingleActionFsm(cal::ActorOp actorOp);
+  Fsm generateMultiActionFsm(cal::ActorOp actorOp);
   int getPortRateOverAllPhases(cal::ActorOp actorOp, mlir::Value port);
 
   std::tuple<cal::ActorOp, mlir::BlockArgument>
   getActorAndPort(mlir::Value fifoEnd);
 
 public:
-  // Helper class to construct a schedule graph from action information
-  class ScheduleGraphBuilder {
+  // Helper class to infer an Fsm from action information
+  class FsmBuilder {
   public:
-    ScheduleGraphBuilder(cal::ActorOp actorOp);
+    FsmBuilder(cal::ActorOp actorOp);
 
-    ScheduleGraph generateFsm();
+    Fsm generateFsm();
 
   private:
     cal::ActorOp actorOp;
 
     bool predicateRegionsEqual(cal::Predicate firstPredicate,
                                cal::Predicate secondPredicate);
-    GraphType determineFsmType(
-        std::vector<ScheduleNode> &scheduleNodes, int initialStateValue);
-    std::optional<ScheduleGraph> constructActorFsmFromActionInfo(
+    FsmType determineFsmType(std::vector<FsmNode> &FsmNodes,
+                             int initialStateValue);
+    std::optional<Fsm> constructActorFsmFromActionInfo(
         const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap,
         int initialStateValue);

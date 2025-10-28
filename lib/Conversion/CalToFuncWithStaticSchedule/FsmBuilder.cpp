@@ -7,11 +7,11 @@
 
 namespace mlir {
 
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::ScheduleGraphBuilder(
+CycloStaticDataflowAnalysis::FsmBuilder::FsmBuilder(
     cal::ActorOp actorOp)
     : actorOp(actorOp) {}
 
-ScheduleGraph CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
+Fsm CycloStaticDataflowAnalysis::FsmBuilder::generateFsm() {
   // We need to find a state variable that is guarded by the equality
   // in a predicate and properly incremented in the corresponding action.
   // If this state variable is used in this way across every action in the
@@ -88,20 +88,19 @@ ScheduleGraph CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
   // a dynamic actor
 
   if (numCommonStateVar != 1) {
-    ScheduleGraph graph;
-    graph.actor = actorOp;
-    graph.type = GraphType::Dynamic;
-    return graph;
+    Fsm Fsm;
+    Fsm.actor = actorOp;
+    Fsm.type = FsmType::Dynamic;
+    return Fsm;
   }
 
   // STEP 2: Analyse the inequalities and state updates for the common state
-  // variable across all actions to see if we can construct a
-  // schedule graph.
+  // variable across all actions to see if we can construct a Fsm.
 
   // What do I have to do here?
   // 1. Construct a map of actions and SchedulingVariableInfoForAction objects
-  // 2. Pass this map to the schedule graph constructor which will attempt to
-  //    construct a schedule graph based on the information provided.
+  // 2. Pass this map to the Fsm constructor which will attempt to
+  //    construct a Fsm based on the information provided.
   // 3. You will need to implement checks to ensure that there is no stepping by
   // +ve or -ve infinity
 
@@ -127,19 +126,19 @@ ScheduleGraph CycloStaticDataflowAnalysis::ScheduleGraphBuilder::generateFsm() {
 
   int initialStateValue = findInitialAssignment(commonStateVar);
 
-  if (auto scheduleGraph =
+  if (auto fsm =
           constructActorFsmFromActionInfo(actionInfoMap, initialStateValue)) {
-    return *scheduleGraph;
+    return *fsm;
   } else {
-    ScheduleGraph graph;
-    graph.actor = actorOp;
-    graph.type = GraphType::Dynamic;
-    return graph;
+    Fsm fsmObj;
+    fsmObj.actor = actorOp;
+    fsmObj.type = FsmType::Dynamic;
+    return fsmObj;
   }
 }
 
 std::optional<int64_t>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::tryGetConstantValue(
+CycloStaticDataflowAnalysis::FsmBuilder::tryGetConstantValue(
     Value val) {
   if (auto constantOp = val.getDefiningOp<mlir::arith::ConstantOp>()) {
     if (auto intAttr = llvm::dyn_cast<IntegerAttr>(constantOp.getValue())) {
@@ -150,7 +149,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::tryGetConstantValue(
 }
 
 std::optional<int64_t>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::evaluateConstantValue(
+CycloStaticDataflowAnalysis::FsmBuilder::evaluateConstantValue(
     Value val) {
   if (!val)
     return std::nullopt;
@@ -214,7 +213,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::evaluateConstantValue(
 }
 
 std::optional<PredicateInequalityInfo>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::candidatePredicateOrNull(
+CycloStaticDataflowAnalysis::FsmBuilder::candidatePredicateOrNull(
     cal::Predicate predicateOp) {
   mlir::Value lhs, rhs;
   mlir::arith::CmpIPredicate pred;
@@ -259,7 +258,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::candidatePredicateOrNull(
 }
 
 std::list<StateVarUpdatePattern>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getStateUpdatePatternList(
+CycloStaticDataflowAnalysis::FsmBuilder::getStateUpdatePatternList(
     mlir::Value stateVar, cal::ActionOp actionOp) {
   llvm::SmallVector<mlir::cal::StateSetOp, 4> setOps;
 
@@ -311,7 +310,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getStateUpdatePatternList(
   return patterns;
 }
 
-bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::isStateModifiedEarlier(
+bool CycloStaticDataflowAnalysis::FsmBuilder::isStateModifiedEarlier(
     cal::StateGetOp getOp, Value targetStateVar) {
   // Create a worklist of blocks to process
   llvm::SmallVector<Block *, 8> worklist;
@@ -365,7 +364,7 @@ bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::isStateModifiedEarlier(
 }
 
 std::optional<int64_t>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getIncrementAmount(
+CycloStaticDataflowAnalysis::FsmBuilder::getIncrementAmount(
     Value setValue, Value targetStateVar) {
   std::optional<int64_t> delta = 0;
   bool foundMatchingState = false;
@@ -463,7 +462,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getIncrementAmount(
   return delta;
 }
 
-std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
+std::optional<Fsm> CycloStaticDataflowAnalysis::FsmBuilder::
     constructActorFsmFromActionInfo(
         const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
             &actionInfoMap,
@@ -477,14 +476,14 @@ std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
     }
   }
 
-  std::vector<ScheduleNode> scheduleNodes;
+  std::vector<FsmNode> FsmNodes;
   // Step 2: Ensure the vector is large enough to hold the initial state index.
-  // This prepares the scheduleNodes vector so that we can index into it by
+  // This prepares the FsmNOdes vector so that we can index into it by
   // state value.
-  scheduleNodes.resize(
-      std::max<size_t>(scheduleNodes.size(), initialStateValue + 1));
+  FsmNodes.resize(
+      std::max<size_t>(FsmNodes.size(), initialStateValue + 1));
 
-  // Step 3: Use breadth-first search to construct the schedule graph.
+  // Step 3: Use breadth-first search to construct the Fsm.
   // We use a queue to process states in order, and track visited states.
   std::queue<int> stateQueue;
   llvm::DenseSet<int> visitedStates;
@@ -508,12 +507,12 @@ std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
 
     const auto &infoForAction = actionInfoMap.lookup(*currentAction);
 
-    // Step 3.2: Create a ScheduleNode for the current state value.
+    // Step 3.2: Create a FsmNode for the current state value.
     // Ensure the vector is large enough to hold this state index.
-    if (scheduleNodes.size() <= static_cast<size_t>(currentStateValue))
-      scheduleNodes.resize(currentStateValue + 1);
+    if (FsmNodes.size() <= static_cast<size_t>(currentStateValue))
+      FsmNodes.resize(currentStateValue + 1);
 
-    ScheduleNode node;
+    FsmNode node;
     node.action = *currentAction;
 
     // Step 3.3: Iterate through all update patterns and create an edge for each
@@ -530,11 +529,11 @@ std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
       }
 
       // Ensure the vector is large enough for the next state
-      if (scheduleNodes.size() <= static_cast<size_t>(nextStateValue))
-        scheduleNodes.resize(nextStateValue + 1);
+      if (FsmNodes.size() <= static_cast<size_t>(nextStateValue))
+        FsmNodes.resize(nextStateValue + 1);
 
       // Create an edge to the next state value
-      ScheduleEdge edge;
+      FsmEdge edge;
       edge.nextNodeIndex = nextStateValue;
 
       // If the next state has already been visited, mark this edge as a
@@ -548,50 +547,50 @@ std::optional<ScheduleGraph> CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
       node.edges.push_back(edge);
     }
 
-    scheduleNodes[currentStateValue] = node;
+    FsmNodes[currentStateValue] = node;
   }
 
   // Step 4: After simulating the schedule, construct and return the
-  // ScheduleGraph object. The graph contains the actor, its type, and the
-  // constructed schedule nodes.
-  ScheduleGraph graph;
-  graph.actor = actorOp;
-  graph.type = determineFsmType(scheduleNodes, initialStateValue);
-  graph.nodes = std::move(scheduleNodes);
-  graph.initialStateValue = initialStateValue;
-  return graph;
+  // Fsm object. The Fsm contains the actor, its type, and the
+  // constructed Fsm nodes.
+  Fsm Fsm;
+  Fsm.actor = actorOp;
+  Fsm.type = determineFsmType(FsmNodes, initialStateValue);
+  Fsm.nodes = std::move(FsmNodes);
+  Fsm.initialStateValue = initialStateValue;
+  return Fsm;
 }
 
 
-GraphType
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::determineFsmType(
-    std::vector<ScheduleNode> &scheduleNodes, int initialStateValue) {
+FsmType
+CycloStaticDataflowAnalysis::FsmBuilder::determineFsmType(
+    std::vector<FsmNode> &FsmNodes, int initialStateValue) {
       
-    // We currently classify FSMs only as SimpleLoop or Unclassified.
+    // We currently classify Fsms only as SimpleLoop or Unclassified.
     // To detect a SimpleLoop, traverse edges starting from the initial state
     // and locate the first cycle. If that cycle returns to the initial state,
-    // the graph is a SimpleLoop; otherwise it is Unclassified.
+    // the Fsm is a SimpleLoop; otherwise it is Unclassified.
     llvm::DenseSet<int> visitedNodes;
     visitedNodes.insert(initialStateValue);
-    ScheduleNode node = scheduleNodes[initialStateValue];
+    FsmNode node = FsmNodes[initialStateValue];
     while (true) {
       if (node.edges.size() != 1) {
-        return GraphType::FSM_Unclassified;
+        return FsmType::FSM_Unclassified;
       }
       int nextIndex = node.edges.front().nextNodeIndex;
       if (visitedNodes.count(nextIndex)) {
         if(nextIndex != initialStateValue) {
-          return GraphType::FSM_Unclassified;
+          return FsmType::FSM_Unclassified;
         }else {
-          return GraphType::FSM_SimpleLoop;
+          return FsmType::FSM_SimpleLoop;
         }
       }
       visitedNodes.insert(nextIndex);
-      node = scheduleNodes[nextIndex]; 
+      node = FsmNodes[nextIndex]; 
     }
 }
 
-int CycloStaticDataflowAnalysis::ScheduleGraphBuilder::findInitialAssignment(
+int CycloStaticDataflowAnalysis::FsmBuilder::findInitialAssignment(
     mlir::Value stateVar) {
   mlir::cal::StateSetOp initialSetOp = nullptr;
 
@@ -610,7 +609,7 @@ int CycloStaticDataflowAnalysis::ScheduleGraphBuilder::findInitialAssignment(
 }
 
 std::optional<cal::ActionOp>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getActionForStateValue(
+CycloStaticDataflowAnalysis::FsmBuilder::getActionForStateValue(
     int stateValue,
     const llvm::MapVector<cal::ActionOp, SchedulingVariableInfoForAction>
         &actionInfoMap) {
@@ -635,7 +634,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::getActionForStateValue(
   return std::nullopt;
 }
 
-bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
+bool CycloStaticDataflowAnalysis::FsmBuilder::
     allPredicatesTrueForState(
         int stateValue,
         const llvm::SmallVectorImpl<mlir::PredicateInequalityInfo>
@@ -672,7 +671,7 @@ bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::
   return true;
 }
 
-bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::hasPositiveInfinity(
+bool CycloStaticDataflowAnalysis::FsmBuilder::hasPositiveInfinity(
     const SchedulingVariableInfoForAction &info) {
 
   // Check if the pattern is always incrementing the state variable
@@ -742,7 +741,7 @@ bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::hasPositiveInfinity(
 }
 
 std::optional<std::pair<int64_t, int64_t>>
-CycloStaticDataflowAnalysis::ScheduleGraphBuilder::detectModKPattern(
+CycloStaticDataflowAnalysis::FsmBuilder::detectModKPattern(
     Operation *defOp, Value stateRef) {
   // First try to find the remainder operation, regardless of any extension
   // operations that might wrap it
@@ -806,7 +805,7 @@ CycloStaticDataflowAnalysis::ScheduleGraphBuilder::detectModKPattern(
   return std::nullopt;
 }
 
-bool CycloStaticDataflowAnalysis::ScheduleGraphBuilder::predicateRegionsEqual(
+bool CycloStaticDataflowAnalysis::FsmBuilder::predicateRegionsEqual(
     cal::Predicate firstPredicate, cal::Predicate secondPredicate) {
   // Get predicate inequality information for both predicates
   auto firstPredicateInfo = candidatePredicateOrNull(firstPredicate);
