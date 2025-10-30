@@ -141,7 +141,8 @@ void ConnectOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
 mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) {
   auto parseSide = [&](OpAsmParser::UnresolvedOperand &base,
                        Type &ty,
-                       llvm::SmallVectorImpl<OpAsmParser::UnresolvedOperand> &maybeIndex) -> ParseResult {
+                       llvm::SmallVectorImpl<OpAsmParser::UnresolvedOperand> &maybeIndex,
+                       bool allowOutputPort, bool allowInputPort) -> ParseResult {
     if (parser.parseOperand(base))
       return failure();
     // Optional sugar: [%idx]
@@ -157,10 +158,16 @@ mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) 
     if (!maybeIndex.empty() && !mlir::isa<InstanceArrayType>(ty))
       return parser.emitError(parser.getCurrentLocation(),
                               "index form requires !cal.instance.array<...> type");
-    // If no index, require handle type.
-    if (maybeIndex.empty() && !mlir::isa<InstanceType>(ty))
-      return parser.emitError(parser.getCurrentLocation(),
-                              "handle form requires !cal.instance<...> type");
+    // If no index, require either a handle type or a permitted fifo port type.
+    if (maybeIndex.empty() && !mlir::isa<InstanceType>(ty)) {
+      bool ok = false;
+      if (allowOutputPort && mlir::isa<mlir::fifo::OutputPortType>(ty)) ok = true;
+      if (allowInputPort && mlir::isa<mlir::fifo::InputPortType>(ty)) ok = true;
+      if (!ok)
+        return parser.emitError(parser.getCurrentLocation(),
+                                "expected !cal.instance<...>"
+                                " or an allowed fifo port type for this side");
+    }
     return success();
   };
 
@@ -169,13 +176,13 @@ mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) 
   llvm::SmallVector<OpAsmParser::UnresolvedOperand,1> srcIdx, dstIdx;
   StringAttr srcPortAttr, dstPortAttr;
 
-  if (failed(parseSide(srcBase, srcTy, srcIdx)))
+  if (failed(parseSide(srcBase, srcTy, srcIdx, /*allowOutputPort=*/true, /*allowInputPort=*/false)))
     return failure();
   if (parser.parseAttribute(srcPortAttr))
     return failure();
   if (parser.parseArrow())
     return failure();
-  if (failed(parseSide(dstBase, dstTy, dstIdx)))
+  if (failed(parseSide(dstBase, dstTy, dstIdx, /*allowOutputPort=*/false, /*allowInputPort=*/true)))
     return failure();
   if (parser.parseAttribute(dstPortAttr))
     return failure();
@@ -887,27 +894,38 @@ LogicalResult ConnectOp::verify() {
     return emitOpError() << "port names must be non-empty";
   }
 
-  // Each side is either a handle (!cal.instance) alone, or an array with index pair.
-  bool srcIsArray = mlir::isa<InstanceArrayType>(getSrc().getType());
-  bool dstIsArray = mlir::isa<InstanceArrayType>(getDst().getType());
+  // Each side is either a handle (!cal.instance) or an array with index pair,
+  // or a network port SSA value: src may be !fifo.output_port<...>, dst may be !fifo.input_port<...>.
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
+  bool srcIsArray = mlir::isa<InstanceArrayType>(srcTy);
+  bool dstIsArray = mlir::isa<InstanceArrayType>(dstTy);
+  bool srcIsHandle = mlir::isa<InstanceType>(srcTy);
+  bool dstIsHandle = mlir::isa<InstanceType>(dstTy);
+  bool srcIsNetOut = mlir::isa<mlir::fifo::OutputPortType>(srcTy);
+  bool dstIsNetIn = mlir::isa<mlir::fifo::InputPortType>(dstTy);
+
   if (srcIsArray) {
     if (getSrcIndex() == nullptr)
       return emitOpError() << "source is array but index is missing (use 'handle[index]' or pass --allow-dynamic-indices to defer)";
-  } else {
-    if (!mlir::isa<InstanceType>(getSrc().getType()))
-      return emitOpError() << "source must be !cal.instance or !cal.instance.array with index";
-    if (getSrcIndex() != nullptr)
-      return emitOpError() << "source index provided but source is not an array";
+  } else if (!srcIsHandle && !srcIsNetOut) {
+    return emitOpError() << "source must be !cal.instance, !cal.instance.array[index], or !fifo.output_port<...>";
+  } else if (getSrcIndex() != nullptr && !srcIsArray) {
+    return emitOpError() << "source index provided but source is not an array";
   }
+
   if (dstIsArray) {
     if (getDstIndex() == nullptr)
       return emitOpError() << "destination is array but index is missing (use 'handle[index]' or pass --allow-dynamic-indices to defer)";
-  } else {
-    if (!mlir::isa<InstanceType>(getDst().getType()))
-      return emitOpError() << "destination must be !cal.instance or !cal.instance.array with index";
-    if (getDstIndex() != nullptr)
-      return emitOpError() << "destination index provided but destination is not an array";
+  } else if (!dstIsHandle && !dstIsNetIn) {
+    return emitOpError() << "destination must be !cal.instance, !cal.instance.array[index], or !fifo.input_port<...>";
+  } else if (getDstIndex() != nullptr && !dstIsArray) {
+    return emitOpError() << "destination index provided but destination is not an array";
   }
+
+  // Disallow network-to-network connect for now (no elaboration support).
+  if (srcIsNetOut && dstIsNetIn)
+    return emitOpError() << "connecting a network port to a network port is not supported";
 
   // Optional capacity must be non-negative if present.
   if (auto cap = getCapacityAttr()) {

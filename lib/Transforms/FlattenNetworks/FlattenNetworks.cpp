@@ -306,11 +306,14 @@ public:
       // fully-wired instances and options.
       struct PendingEdge {
         ConnectOp conn;
-        InstPlan *srcPlan;
-        InstPlan *dstPlan;
-        unsigned srcOutIdx;
-        unsigned dstInIdx;
-        Type elemTy;
+        // Endpoints can be either a plan+index (actor instance) or a network port SSA.
+        InstPlan *srcPlan = nullptr;   // when non-null, use srcOutIdx
+        InstPlan *dstPlan = nullptr;   // when non-null, use dstInIdx
+        unsigned srcOutIdx = 0;
+        unsigned dstInIdx = 0;
+        Value srcNetPort;              // !fifo.output_port<...> when used as network source
+        Value dstNetPort;              // !fifo.input_port<...> when used as network destination
+        Type elemTy;                   // element type for fifo.create when both endpoints are plans
       };
       SmallVector<PendingEdge> edges;
       SmallVector<Operation*> toErase;
@@ -330,26 +333,40 @@ public:
           conn.emitOpError("array-index connect form not fully canonicalized; run -canonicalize first");
           return failure();
         }
+        // Classify endpoints: plan handle/array (resolved) or network port SSA values.
         InstPlan *srcPlan = handleToPlan.lookup(conn.getSrc());
         InstPlan *dstPlan = handleToPlan.lookup(conn.getDst());
-        if (!srcPlan || !dstPlan) {
-          if (allowDynamicIndices) {
-            conn.emitRemark("skipping connect with unresolved dynamic handle during elaboration");
-            continue;
-          }
-          return conn.emitOpError("unable to resolve instance handle to plan; missing cal.instantiate or cal.instance_at");
+        bool srcIsNet = isa<fifo::OutputPortType>(conn.getSrc().getType());
+        bool dstIsNet = isa<fifo::InputPortType>(conn.getDst().getType());
+        if (!srcPlan && !srcIsNet) {
+          if (allowDynamicIndices) { conn.emitRemark("skipping connect with unresolved source during elaboration"); continue; }
+          return conn.emitOpError("unable to resolve source to instance plan or network port");
+        }
+        if (!dstPlan && !dstIsNet) {
+          if (allowDynamicIndices) { conn.emitRemark("skipping connect with unresolved destination during elaboration"); continue; }
+          return conn.emitOpError("unable to resolve destination to instance plan or network port");
+        }
+        if (srcIsNet && dstIsNet) {
+          return conn.emitOpError("network-to-network connect not supported during elaboration");
         }
 
-        ActorOp srcActor = srcPlan->actor;
-        ActorOp dstActor = dstPlan->actor;
-        unsigned outCount = static_cast<unsigned>(srcActor.outDegree());
-        unsigned inCount = static_cast<unsigned>(dstActor.inDegree());
-        // Retrieve declared port names if present on the actors.
-        ArrayAttr srcDeclared = srcActor->getAttrOfType<ArrayAttr>("outPortNames");
-        ArrayAttr dstDeclared = dstActor->getAttrOfType<ArrayAttr>("inPortNames");
-        FailureOr<unsigned> srcOutIdx = parsePortIndex(conn.getSrcPortAttr().getValue(), outCount, /*isDst=*/false, srcDeclared);
-        FailureOr<unsigned> dstInIdx  = parsePortIndex(conn.getDstPortAttr().getValue(),  inCount,  /*isDst=*/true,  dstDeclared);
-        if (failed(srcOutIdx)) {
+        FailureOr<unsigned> srcOutIdx; FailureOr<unsigned> dstInIdx;
+        ActorOp srcActor = nullptr, dstActor = nullptr;
+        unsigned outCount = 0, inCount = 0;
+        ArrayAttr srcDeclared, dstDeclared;
+        if (srcPlan) {
+          srcActor = srcPlan->actor;
+          outCount = static_cast<unsigned>(srcActor.outDegree());
+          srcDeclared = srcActor->getAttrOfType<ArrayAttr>("outPortNames");
+          srcOutIdx = parsePortIndex(conn.getSrcPortAttr().getValue(), outCount, /*isDst=*/false, srcDeclared);
+        }
+        if (dstPlan) {
+          dstActor = dstPlan->actor;
+          inCount = static_cast<unsigned>(dstActor.inDegree());
+          dstDeclared = dstActor->getAttrOfType<ArrayAttr>("inPortNames");
+          dstInIdx  = parsePortIndex(conn.getDstPortAttr().getValue(),  inCount,  /*isDst=*/true,  dstDeclared);
+        }
+        if (srcPlan && failed(srcOutIdx)) {
           SmallVector<StringRef> choices; choices.reserve(outCount + (srcDeclared ? srcDeclared.size() : 0));
           for (unsigned i = 0; i < outCount; ++i)
             choices.push_back(StringRef((Twine("out") + Twine(i)).str()));
@@ -372,7 +389,7 @@ public:
           err << ")" << hint;
           return err;
         }
-        if (failed(dstInIdx)) {
+        if (dstPlan && failed(dstInIdx)) {
           SmallVector<StringRef> choices; choices.reserve(inCount + (dstDeclared ? dstDeclared.size() : 0));
           for (unsigned i = 0; i < inCount; ++i)
             choices.push_back(StringRef((Twine("in") + Twine(i)).str()));
@@ -396,33 +413,50 @@ public:
           return err;
         }
 
-        // Retrieve element type for channel based on actor formal arg types.
-        Block &abody = srcActor.getBody().front();
-        SmallVector<Type> formals;
-        for (Value a : abody.getArguments()) formals.push_back(a.getType());
-        unsigned numParamsSrc = 0, numInSrc = 0;
-        for (Type t : formals) {
-          if (isa<fifo::OutputPortType>(t)) ++numInSrc;
-          else if (isa<fifo::InputPortType>(t)) {/* count only */}
-          else ++numParamsSrc;
+        // Compute element type and wire endpoints/track seen ports.
+        Type elemTy = nullptr;
+        if (srcPlan) {
+          Block &abody = srcActor.getBody().front();
+          SmallVector<Type> formals; for (Value a : abody.getArguments()) formals.push_back(a.getType());
+          unsigned numParamsSrc = 0, numInSrcCount = 0;
+          for (Type t : formals) {
+            if (isa<fifo::OutputPortType>(t)) ++numInSrcCount;
+            else if (isa<fifo::InputPortType>(t)) {/*count only*/}
+            else ++numParamsSrc;
+          }
+          unsigned portsOutStart = numParamsSrc + numInSrcCount;
+          auto fifoInTy = dyn_cast<fifo::InputPortType>(formals[portsOutStart + *srcOutIdx]);
+          if (!fifoInTy)
+            return conn.emitOpError("internal error resolving source port type");
+          elemTy = fifoInTy.getElementType();
         }
-        unsigned portsOutStart = numParamsSrc + numInSrc;
-        auto fifoInTy = dyn_cast<fifo::InputPortType>(formals[portsOutStart + *srcOutIdx]);
-        if (!fifoInTy)
-          return conn.emitOpError("internal error resolving source port type");
-        Type elemTy = fifoInTy.getElementType();
+        if (srcIsNet) {
+          auto netOutTy = dyn_cast<fifo::OutputPortType>(conn.getSrc().getType());
+          if (!netOutTy) return conn.emitOpError("expected source network port to be fifo.output_port");
+          elemTy = netOutTy.getElementType();
+        }
 
         // Track duplicate port connections early.
-        ensureTrackers(srcPlan);
-        ensureTrackers(dstPlan);
-        if (seenOut[srcPlan][*srcOutIdx])
-          return conn.emitOpError("source port already connected");
-        if (seenIn[dstPlan][*dstInIdx])
-          return conn.emitOpError("destination port already connected");
-        seenOut[srcPlan][*srcOutIdx] = true;
-        seenIn[dstPlan][*dstInIdx] = true;
-
-        edges.push_back(PendingEdge{conn, srcPlan, dstPlan, *srcOutIdx, *dstInIdx, elemTy});
+        PendingEdge e; e.conn = conn; e.elemTy = elemTy;
+        if (srcPlan) {
+          ensureTrackers(srcPlan);
+          if (seenOut[srcPlan][*srcOutIdx])
+            return conn.emitOpError("source port already connected");
+          seenOut[srcPlan][*srcOutIdx] = true;
+          e.srcPlan = srcPlan; e.srcOutIdx = *srcOutIdx;
+        } else {
+          e.srcNetPort = conn.getSrc();
+        }
+        if (dstPlan) {
+          ensureTrackers(dstPlan);
+          if (seenIn[dstPlan][*dstInIdx])
+            return conn.emitOpError("destination port already connected");
+          seenIn[dstPlan][*dstInIdx] = true;
+          e.dstPlan = dstPlan; e.dstInIdx = *dstInIdx;
+        } else {
+          e.dstNetPort = conn.getDst();
+        }
+        edges.push_back(std::move(e));
       }
 
       // Determine fully-wired plans.
@@ -454,18 +488,33 @@ public:
               return ptr->defOp->emitOpError("not all ports connected for instance in array; connect all ports before elaboration");
       }
 
-      // Materialize only edges where both endpoints will be materialized.
+      // Materialize edges: if both endpoints are plans, create fifo and assign;
+      // if one endpoint is a network port, wire the plan port directly to it.
       for (auto &e : edges) {
-        bool useEdge = fullyWired.contains(e.srcPlan) && fullyWired.contains(e.dstPlan);
-        if (!useEdge) continue;
-        builder.setInsertionPoint(e.conn);
-        uint64_t capVal = e.conn.getCapacityAttr() ? static_cast<uint64_t>(e.conn.getCapacityAttr().getInt()) : 1u;
-        Type inPortTy = fifo::InputPortType::get(ctx, e.elemTy);
-        Type outPortTy = fifo::OutputPortType::get(ctx, e.elemTy);
-        auto create = builder.create<fifo::CreateOp>(e.conn.getLoc(), TypeRange{inPortTy, outPortTy}, e.elemTy, capVal);
-        e.srcPlan->outPorts[e.srcOutIdx] = create.getInputPort();
-        e.dstPlan->inPorts[e.dstInIdx] = create.getOutputPort();
-        toErase.push_back(e.conn);
+        if (e.srcPlan && e.dstPlan) {
+          bool useEdge = fullyWired.contains(e.srcPlan) && fullyWired.contains(e.dstPlan);
+          if (!useEdge) continue;
+          builder.setInsertionPoint(e.conn);
+          uint64_t capVal = e.conn.getCapacityAttr() ? static_cast<uint64_t>(e.conn.getCapacityAttr().getInt()) : 1u;
+          Type inPortTy = fifo::InputPortType::get(ctx, e.elemTy);
+          Type outPortTy = fifo::OutputPortType::get(ctx, e.elemTy);
+          auto create = builder.create<fifo::CreateOp>(e.conn.getLoc(), TypeRange{inPortTy, outPortTy}, e.elemTy, capVal);
+          e.srcPlan->outPorts[e.srcOutIdx] = create.getInputPort();
+          e.dstPlan->inPorts[e.dstInIdx] = create.getOutputPort();
+          toErase.push_back(e.conn);
+          continue;
+        }
+        // Network-to-plan: wire directly and erase connect.
+        if (e.srcNetPort && e.dstPlan) {
+          e.dstPlan->inPorts[e.dstInIdx] = e.srcNetPort;
+          toErase.push_back(e.conn);
+          continue;
+        }
+        if (e.srcPlan && e.dstNetPort) {
+          e.srcPlan->outPorts[e.srcOutIdx] = e.dstNetPort;
+          toErase.push_back(e.conn);
+          continue;
+        }
       }
 
       // Create cal.create_instance ops for each plan (optionally partial-only when flagged).
