@@ -96,7 +96,8 @@ def Cal_ActorOp : Cal_Op<"actor", [Symbol, IsolatedFromAbove, NoTerminator]> {
   let arguments = (ins
     SymbolNameAttr:$sym_name, // Actor Name: Required by the Symbol interface
     OptionalAttr<ArrayAttr>:$inPortNames,  // Optional symbolic names for ports_in (size must equal inDegree)
-    OptionalAttr<ArrayAttr>:$outPortNames  // Optional symbolic names for ports_out (size must equal outDegree)
+    OptionalAttr<ArrayAttr>:$outPortNames, // Optional symbolic names for ports_out (size must equal outDegree)
+    OptionalAttr<UnitAttr>:$nonPreemptive  // Optional marker: when present, scheduler should drain this actor (non-preemptive)
   );
 
   let regions = (region AnyRegion:$body);

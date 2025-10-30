@@ -13,6 +13,12 @@ struct CalGenericPipelineOptions
       *this, "disable-hoist-allocs",
       llvm::cl::desc("Disable hoisting of allocations to main function."),
       llvm::cl::init(false)};
+
+  PassOptions::Option<bool> nonPreemptiveDefault{
+      *this, "non-preemptive-default",
+      llvm::cl::desc(
+          "Drain actors by default in the dynamic scheduler (non-preemptive). Per-actor annotation still applies."),
+      llvm::cl::init(false)};
 };
 
 struct CalToLLVMWithGPUTensorsPipelineOptions

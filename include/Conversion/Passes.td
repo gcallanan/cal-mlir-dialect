@@ -37,6 +37,11 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
         Description originally written by Gareth Callanan and refined using ChatGPT.
     }];
 
+    let options = [
+      Option<"non_preemptive_default", "non-preemptive-default", "bool", /*default=*/"false",
+             "Drain actors by default (non-preemptive). Per-actor annotation still applies.">
+    ];
+
     let constructor = "mlir::createConvertCalToFuncPass()";
 
     let dependentDialects = [

@@ -177,22 +177,71 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
     auto constFalse = rewriter.create<mlir::arith::ConstantOp>(
         loc, rewriter.getBoolAttr(false));
     Value actionPerformedFlag = constFalse.getResult();
-    // Clone the deferred calls into the loop body and OR their i1 results.
+    // Execute each actor at least once per outer iteration, and if marked
+    // non-preemptive (or default enabled), drain it by repeatedly calling
+    // while the last call fired. The outer progress flag is the OR of the
+    // first-call results across all actors.
     for (Operation &innerOp : networkBody) {
       auto call = dyn_cast<func::CallOp>(&innerOp);
       if (!call)
         continue;
       if (!call->hasAttr("from_create_instance"))
         continue;
-      Operation *clonedCall = rewriter.clone(*call, netToFuncMap);
-      if (auto clonedCallOp = dyn_cast<func::CallOp>(clonedCall)) {
-        if (clonedCallOp.getNumResults() == 1 &&
-            clonedCallOp.getResult(0).getType().isInteger(1)) {
-          Value result = clonedCallOp.getResult(0);
-          auto newActionPerformedFlag = rewriter.create<mlir::arith::OrIOp>(
-              loc, result, actionPerformedFlag);
-          actionPerformedFlag = newActionPerformedFlag.getResult();
+
+      // Always single-step once to seed progress and (for draining) the loop.
+      Operation *firstStep = rewriter.clone(*call, netToFuncMap);
+      Value firstResult = nullptr;
+      if (auto firstOp = dyn_cast<func::CallOp>(firstStep)) {
+        if (firstOp.getNumResults() == 1 &&
+            firstOp.getResult(0).getType().isInteger(1))
+          firstResult = firstOp.getResult(0);
+      }
+      if (firstResult) {
+        auto newProgress = rewriter.create<mlir::arith::OrIOp>(
+            loc, firstResult, actionPerformedFlag);
+        actionPerformedFlag = newProgress.getResult();
+      }
+
+      // If this actor should be drained, keep invoking while the last call fired.
+      bool drainByDefault = false;
+      if (call->hasAttr("cal.non_preemptive"))
+        drainByDefault = true;
+      // If no attribute present, we conservatively keep drainByDefault=false here
+      // because this custom pattern doesn't have access to the pass option. The
+      // main pass below handles the global default. This avoids creating an
+      // infinite loop when firstResult is false.
+      if (drainByDefault && firstResult) {
+        SmallVector<Type, 1> carried{rewriter.getI1Type()};
+        auto drainWhile = rewriter.create<mlir::scf::WhileOp>(loc, TypeRange{carried},
+                                                              ValueRange{firstResult});
+        // Condition: continue while last call fired (carried is true).
+        Block *drainCond = rewriter.createBlock(&drainWhile.getBefore(), {}, carried,
+                                                SmallVector<Location, 1>{loc});
+        rewriter.setInsertionPointToStart(drainCond);
+        Value cont = drainCond->getArgument(0);
+        rewriter.create<mlir::scf::ConditionOp>(loc, cont, ValueRange{cont});
+
+        // Body: invoke once; yield its result to drive the next iteration.
+        Block *drainBody = rewriter.createBlock(&drainWhile.getAfter(), {}, carried,
+                                                SmallVector<Location, 1>{loc});
+        rewriter.setInsertionPointToStart(drainBody);
+        Operation *iterCall = rewriter.clone(*call, netToFuncMap);
+        if (auto iterCallOp = dyn_cast<func::CallOp>(iterCall)) {
+          if (iterCallOp.getNumResults() == 1 &&
+              iterCallOp.getResult(0).getType().isInteger(1)) {
+            rewriter.create<mlir::scf::YieldOp>(loc, ValueRange{iterCallOp.getResult(0)});
+          } else {
+            auto drainFalse = rewriter.create<mlir::arith::ConstantOp>(
+                loc, rewriter.getBoolAttr(false));
+            rewriter.create<mlir::scf::YieldOp>(loc, ValueRange{drainFalse.getResult()});
+          }
+        } else {
+          auto drainFalse = rewriter.create<mlir::arith::ConstantOp>(
+              loc, rewriter.getBoolAttr(false));
+          rewriter.create<mlir::scf::YieldOp>(loc, ValueRange{drainFalse.getResult()});
         }
+        // No need to modify outer progress here; it's already updated from firstResult.
+        rewriter.setInsertionPointAfter(drainWhile);
       }
     }
 
@@ -386,6 +435,14 @@ class ConvertCalCreateInstanceToFuncCall
 
     funcCall->setAttr("from_create_instance", rewriter.getUnitAttr());
 
+    // Propagate non-preemptive scheduling hint from the actor definition, if any,
+    // onto the call so network lowering can decide whether to drain this actor.
+    if (auto actorOp = op.getActor()) {
+      if (actorOp->hasAttr("nonPreemptive")) {
+        funcCall->setAttr("cal.non_preemptive", rewriter.getUnitAttr());
+      }
+    }
+
     rewriter.eraseOp(op);
     return success();
   }
@@ -419,6 +476,11 @@ class ConvertCalCreateInstanceToFuncCall
 class ConvertCalToFuncPass
     : public impl::ConvertCalToFuncBase<ConvertCalToFuncPass> {
 public:
+  ConvertCalToFuncPass() = default;
+  explicit ConvertCalToFuncPass(bool nonPreemptiveDefault) {
+    this->non_preemptive_default = nonPreemptiveDefault;
+  }
+
   void runOnOperation() final {
     Operation *module = getOperation();
 
@@ -492,6 +554,11 @@ public:
         rewriter.create<func::ReturnOp>(loc, falseVal.getResult());
       }
 
+      // Copy the nonPreemptive attribute from actor to function if it exists
+      if (op->hasAttr("nonPreemptive")) {
+        function->setAttr("nonPreemptive", rewriter.getUnitAttr());
+      }
+
       rewriter.replaceOp(op, function);
       return success();
     };
@@ -520,6 +587,14 @@ public:
         auto call = rewriter.create<func::CallOp>(inst.getLoc(), inst.getActorRef(),
                                                   resultTypes, inst.getOperands());
         call->setAttr("from_create_instance", rewriter.getUnitAttr());
+
+        // Copy per-actor non-preemptive scheduling hint onto the call.
+        // Note: We look up by symbol name since the actor may have been converted to a function
+        SymbolTableCollection symbolTable;
+        auto funcOp = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(inst, inst.getActorRefAttr());
+        if (funcOp && funcOp->hasAttr("nonPreemptive")) {
+          call->setAttr("cal.non_preemptive", rewriter.getUnitAttr());
+        }
         rewriter.eraseOp(inst);
       }
     }
@@ -592,13 +667,52 @@ public:
             continue;
           if (!call->hasAttr("from_create_instance"))
             continue;
-          Operation *clonedCall = rewriter.clone(*call, map);
-          if (auto clonedCallOp = dyn_cast<func::CallOp>(clonedCall)) {
-            if (clonedCallOp.getNumResults() == 1 &&
-                clonedCallOp.getResult(0).getType().isInteger(1)) {
-              Value r = clonedCallOp.getResult(0);
-              auto newProg = rewriter.create<arith::OrIOp>(loc, r, progress);
-              progress = newProg.getResult();
+
+          // Always single-step once per outer iteration to seed both
+          // progress computation and (for draining) the inner loop.
+          Operation *firstStep = rewriter.clone(*call, map);
+          Value firstResult = nullptr;
+          if (auto firstOp = dyn_cast<func::CallOp>(firstStep)) {
+            if (firstOp.getNumResults() == 1 &&
+                firstOp.getResult(0).getType().isInteger(1))
+              firstResult = firstOp.getResult(0);
+          }
+          if (firstResult) {
+            auto newProg = rewriter.create<arith::OrIOp>(loc, firstResult, progress);
+            progress = newProg.getResult();
+          }
+
+          // If marked non-preemptive or globally enabled, keep invoking while last call fired.
+          bool drainByDefault = this->non_preemptive_default;
+          if (call->hasAttr("cal.non_preemptive") || drainByDefault) {
+            if (firstResult) {
+              SmallVector<Type, 1> drainCarried{rewriter.getI1Type()};
+              auto drainWhile = rewriter.create<scf::WhileOp>(loc, TypeRange{drainCarried}, ValueRange{firstResult});
+
+              // Condition region: continue while carried flag is true.
+              Block *drainCond = rewriter.createBlock(&drainWhile.getBefore(), {}, drainCarried, SmallVector<Location, 1>{loc});
+              rewriter.setInsertionPointToStart(drainCond);
+              Value drainArg = drainCond->getArgument(0);
+              rewriter.create<scf::ConditionOp>(loc, drainArg, ValueRange{drainArg});
+
+              // Body region: call actor once; yield result as next condition (continue if fired).
+              Block *drainBody = rewriter.createBlock(&drainWhile.getAfter(), {}, drainCarried, SmallVector<Location, 1>{loc});
+              rewriter.setInsertionPointToStart(drainBody);
+              Operation *drainCall = rewriter.clone(*call, map);
+              if (auto drainCallOp = dyn_cast<func::CallOp>(drainCall)) {
+                if (drainCallOp.getNumResults() == 1 && drainCallOp.getResult(0).getType().isInteger(1)) {
+                  Value fired = drainCallOp.getResult(0);
+                  rewriter.create<scf::YieldOp>(loc, ValueRange{fired});
+                } else {
+                  auto drainFalse = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+                  rewriter.create<scf::YieldOp>(loc, ValueRange{drainFalse.getResult()});
+                }
+              } else {
+                auto drainFalse = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+                rewriter.create<scf::YieldOp>(loc, ValueRange{drainFalse.getResult()});
+              }
+              // No need to adjust `progress` here; it already accounts for firstResult.
+              rewriter.setInsertionPointAfter(drainWhile);
             }
           }
         }
@@ -621,4 +735,8 @@ public:
 /// function calls.
 std::unique_ptr<mlir::Pass> mlir::createConvertCalToFuncPass() {
   return std::make_unique<mlir::ConvertCalToFuncPass>();
+}
+
+std::unique_ptr<mlir::Pass> mlir::createConvertCalToFuncPass(bool nonPreemptiveDefault) {
+  return std::make_unique<mlir::ConvertCalToFuncPass>(nonPreemptiveDefault);
 }

@@ -89,14 +89,15 @@ void registerLowerCalToLLVMPipeline() {
         // it into the default pipeline so users don't need to spell it out.
         pm.addPass(mlir::cal::lowerCalFsmToExecutionBody());
 
-        pm.addPass(mlir::cal::insertCalPortPredicates());
+  pm.addPass(mlir::cal::insertCalPortPredicates());
         // Convert any remaining cal.action-based actors (non-FSM actors)
         // into execution bodies.
-        pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
+  pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
-        pm.addPass(mlir::cal::hoistCalStateOutOfActor());
+  pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::createConvertCalToFuncPass());
+  // Honor pipeline option to drain actors by default (non-preemptive).
+  pm.addPass(mlir::createConvertCalToFuncPass(options.nonPreemptiveDefault));
 
         // We add this pass as we often get functions that are the same but with
         // different names.
@@ -249,7 +250,8 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
 
   pm.addPass(mlir::cal::hoistCalStateOutOfActor());
   pm.addPass(mlir::createCanonicalizerPass());
-  pm.addPass(mlir::createConvertCalToFuncPass());
+  // Honor pipeline option to drain actors by default (non-preemptive).
+  pm.addPass(mlir::createConvertCalToFuncPass(options.nonPreemptiveDefault));
 
   // We add this pass as we often get functions that are the same but with
   // different names.
