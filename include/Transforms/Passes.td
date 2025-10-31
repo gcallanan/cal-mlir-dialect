@@ -284,4 +284,23 @@ def FifoMemrefAtomicizePass : Pass<"fifo-memref-atomicize"> {
   ];
 }
 
+def LowerInstanceForPass : Pass<"lower-instance-for", "mlir::ModuleOp"> {
+  let summary = "Lower cal.instance_for to tuple (or array) literals by unrolling static ranges";
+  let description = [{
+    This pass recognizes `cal.instance_for` structural comprehensions and, when the
+    loop bounds are statically known, unrolls them into tuple literals (or instance
+    array literals where present), replacing the loop with a concrete collection of
+    `cal.instantiate` results suitable for subsequent network elaboration.
+
+    If the trip count is not statically known, the pass leaves the op unchanged.
+    A follow-up elaboration pass may then issue a diagnostic if flattening is required.
+  }];
+  let constructor = "mlir::createLowerInstanceForPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::fifo::FifoDialect"
+  ];
+}
+
 #endif // CAL_TRANSFORM_PASSES

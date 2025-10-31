@@ -72,4 +72,46 @@ def Cal_InstanceArray : Cal_Type<"InstanceArray", "instance.array", []> {
   let assemblyFormat = "`<` $actorRef `,` $count `>`";
 }
 
+// -------------------------------------------------------------------------- //
+// Interface-typed scalar instance handle. Printed form:
+//   !cal.instance.iface<@MyIface>
+def Cal_InterfaceInstance : Cal_Type<"InterfaceInstance", "instance.iface", []> {
+  let summary = "Handle to a symbolic instance typed by an interface";
+  let description = [{
+    A handle designating an entity instance by interface conformance rather
+    than a specific symbol. Any actor or network that declares implementation
+    of the referenced interface may back this handle.
+  }];
+  let parameters = (ins "mlir::FlatSymbolRefAttr":$ifaceRef);
+  let assemblyFormat = "`<` $ifaceRef `>`";
+}
+
+// Fixed-length array of interface-typed instance handles.
+//   !cal.instance.array.iface<@MyIface, N>
+def Cal_InterfaceInstanceArray : Cal_Type<"InterfaceInstanceArray", "instance.array.iface", []> {
+  let summary = "Array of interface-typed instance handles";
+  let description = [{
+    Represents N instances whose concrete entities implement the given
+    interface symbol. Elements may be different concrete entities as long as
+    they conform to the interface.
+  }];
+  let parameters = (ins "mlir::FlatSymbolRefAttr":$ifaceRef, "int":$count);
+  let assemblyFormat = "`<` $ifaceRef `,` $count `>`";
+}
+
+// Unknown-length homogeneous collections (entity or interface).
+//   !cal.instances<@Actor>
+//   !cal.instances.iface<@Iface>
+def Cal_Instances : Cal_Type<"Instances", "instances", []> {
+  let summary = "Unknown-length collection of entity-typed handles";
+  let parameters = (ins "mlir::FlatSymbolRefAttr":$actorRef);
+  let assemblyFormat = "`<` $actorRef `>`";
+}
+
+def Cal_InterfaceInstances : Cal_Type<"InterfaceInstances", "instances.iface", []> {
+  let summary = "Unknown-length collection of interface-typed handles";
+  let parameters = (ins "mlir::FlatSymbolRefAttr":$ifaceRef);
+  let assemblyFormat = "`<` $ifaceRef `>`";
+}
+
 #endif // CAL_TYPES

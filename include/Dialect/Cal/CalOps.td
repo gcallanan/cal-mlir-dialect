@@ -624,9 +624,15 @@ def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">, AttrSizedOperandS
   let description = [{
     Declares a symbolic FIFO channel from a source actor instance handle to a
     destination actor instance handle, both identified via handles (possibly
-    extracted from arrays) plus explicit port names. A later elaboration pass
-    materializes the FIFO via fifo.create and threads the concrete port SSA
-    values into cal.create_instance ops.
+    extracted from arrays) plus explicit port names. Alternatively, either side
+    may directly reference a network port SSA value:
+      - Source may be a `!fifo.output_port<T>` network input port (ports_in).
+      - Destination may be a `!fifo.input_port<T>` network output port (ports_out).
+
+    When a network port is used on one side, elaboration wires that SSA value
+    directly to the corresponding actor port without creating an intermediate
+    fifo. A fifo.create is only materialized when both endpoints are actor
+    instance ports.
 
     Assembly sugar (to be implemented in the custom parser/printer) will allow:
        cal.connect %producers[0] "out" -> %consumers[3] "in0" capacity(8)
@@ -637,17 +643,66 @@ def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">, AttrSizedOperandS
     The explicit form (without sugar) matches the assemblyFormat below.
   }];
   let arguments = (ins
-    AnyType:$src,                  // Either !cal.instance or !cal.instance.array
+    AnyType:$src,                  // !cal.instance/array or !fifo.output_port<...>
     Optional<Index>:$srcIndex,     // Present when src is array sugar
-    StrAttr:$srcPort,              // Source output port name
-    AnyType:$dst,                  // Either !cal.instance or !cal.instance.array
+    StrAttr:$srcPort,              // Source output port name (ignored when src is a network port)
+    AnyType:$dst,                  // !cal.instance/array or !fifo.input_port<...>
     Optional<Index>:$dstIndex,     // Present when dst is array sugar
-    StrAttr:$dstPort,              // Destination input port name
-    OptionalAttr<I64Attr>:$capacity  // Optional FIFO capacity / depth
+    StrAttr:$dstPort,              // Destination input port name (ignored when dst is a network port)
+    OptionalAttr<I64Attr>:$capacity  // Optional FIFO capacity / depth (used only when creating an intermediate fifo)
   );
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Interface declaration and usage ops (stubs)
+//===----------------------------------------------------------------------===//
+
+// cal.interface @Name { ports_in(...), ports_out(...) }
+// Minimal stub: capture port names and types as attributes for now.
+def Cal_InterfaceOp : Cal_Op<"interface", [Symbol, NoTerminator, IsolatedFromAbove]> {
+  let summary = "Declare a named interface with typed ports";
+  let description = [{
+    Declares an interface symbol that describes a set of typed ports. Concrete
+    entities (actors or networks) may declare that they implement this
+    interface, enabling interface-typed instance handles and arrays.
+  }];
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    OptionalAttr<ArrayAttr>:$inPortNames,
+    OptionalAttr<ArrayAttr>:$inPortTypes,
+    OptionalAttr<ArrayAttr>:$outPortNames,
+    OptionalAttr<ArrayAttr>:$outPortTypes
+  );
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
+// cal.implements @Iface for @Entity
+def Cal_ImplementsOp : Cal_Op<"implements", [NoTerminator, DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Declare that an entity implements an interface";
+  let description = [{
+    Associates a concrete entity symbol (actor or network) with an interface
+    symbol. Used for verification and for enabling interface-typed handles.
+  }];
+  let arguments = (ins
+    FlatSymbolRefAttr:$ifaceRef,
+    FlatSymbolRefAttr:$entityRef
+  );
+  let assemblyFormat = "$ifaceRef `for` $entityRef attr-dict";
+}
+
+// cal.instance.cast %h : !cal.instance<@E> -> !cal.instance.iface<@I>
+def Cal_InstanceCastOp : Cal_Op<"instance.cast", []> {
+  let summary = "Cast a concrete instance handle to an interface-typed handle";
+  let description = [{
+    Converts a concrete entity handle to an interface-typed handle. The cast is
+    valid only if the concrete entity implements the interface.
+  }];
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+  let assemblyFormat = "$input `:` type($input) `->` type($output) attr-dict";
 }
 
 //===----------------------------------------------------------------------===//
@@ -724,6 +779,44 @@ def Cal_TransitionOp : Cal_Op<"transition", [HasParent<"StateOp">]> {
   // Nice, parser-friendly assembly without custom C++.
   let assemblyFormat = "`action` `(` $actionName `)` `->` $target attr-dict ";
 
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Instance comprehensions and conditionals (RFC stubs)
+// These ops allow structural construction of instance handles prior to
+// elaboration. They are intentionally lightweight and may gain custom
+// parsers/printers and verifiers in follow-ups.
+//===----------------------------------------------------------------------===//
+
+def Cal_InstanceYieldOp : Cal_Op<"instance_yield", [Terminator]> {
+  let summary = "Yield a handle from an instance-building region";
+  let description = [{
+    Terminator for `cal.instance_if` and `cal.instance_for` regions. Yields
+    a single value which must match the parent op's expected element or
+    collection element type.
+  }];
+
+  let arguments = (ins AnyType:$value);
+  let assemblyFormat = "attr-dict $value `:` type($value)";
+}
+
+// NOTE: cal.instance_if is temporarily omitted until custom multi-region
+// parsing is added. We'll add it alongside a custom parser/printer.
+
+def Cal_InstanceForOp : Cal_Op<"instance_for", [HasParent<"NetworkOp">, NoTerminator]> {
+  let summary = "Structural comprehension over a static range";
+  let description = [{
+    Builds a collection of instances by iterating a static range. The body
+    must `cal.instance_yield` one handle per iteration. Result may be a tuple
+    of handles or an instance array; custom parsing/printing of loop bounds
+    and induction variable may be added later.
+  }];
+
+  let arguments = (ins Index:$lb, Index:$ub, Index:$step);
+  let results = (outs AnyType:$result);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "`(` $lb `,` $ub `,` $step `)` $body attr-dict `:` type($result)";
   let hasVerifier = 1;
 }
 

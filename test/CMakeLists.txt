@@ -30,3 +30,4 @@ set_target_properties(check-cal PROPERTIES FOLDER "Tests")
 add_lit_testsuites(CAL ${CMAKE_CURRENT_SOURCE_DIR} DEPENDS ${CAL_TEST_DEPENDS})
 
 add_subdirectory(CAPI)
+add_subdirectory(Transforms)

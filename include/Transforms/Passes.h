@@ -14,7 +14,11 @@
 namespace mlir {
 
 //===- Generated passes ---------------------------------------------------===//
+// Forward declare constructors that are referenced by registration helpers here
+// to avoid double-including the generated header across various pass headers.
+std::unique_ptr<mlir::Pass> createLowerInstanceForPass();
 
+// Emit registration functions.
 #define GEN_PASS_REGISTRATION
 #include "Transforms/Passes.h.inc"
 

@@ -23,6 +23,61 @@ using namespace mlir::cal;
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.cpp.inc"
 //===----------------------------------------------------------------------===//
+// InstanceForOp verifier
+//===----------------------------------------------------------------------===//
+
+static std::optional<int64_t> getConstIndex(Value v) {
+  if (auto c = v.getDefiningOp<mlir::arith::ConstantIndexOp>())
+    return c.value();
+  if (auto c2 = v.getDefiningOp<mlir::arith::ConstantOp>())
+    if (auto ia = llvm::dyn_cast<IntegerAttr>(c2.getValue()))
+      return static_cast<int64_t>(ia.getInt());
+  return std::nullopt;
+}
+
+LogicalResult InstanceForOp::verify() {
+  // Region structure: exactly one block; optional single index IV; terminator must be cal.instance_yield with one value.
+  if (!getBody().hasOneBlock())
+    return emitOpError() << "expected region to have exactly one block";
+  Block &body = getBody().front();
+  if (body.getNumArguments() > 1)
+    return emitOpError() << "body must have at most one induction variable";
+  if (body.getNumArguments() == 1 && !body.getArgument(0).getType().isIndex())
+    return emitOpError() << "induction variable must be of type index";
+  Operation *term = body.getTerminator();
+  auto yield = dyn_cast<InstanceYieldOp>(term);
+  if (!yield)
+    return emitOpError() << "body must terminate with cal.instance_yield";
+  if (!yield.getValue())
+    return emitOpError() << "cal.instance_yield must yield one value";
+
+  // If bounds are all constant, check tuple arity matches trip count.
+  auto lbC = getConstIndex(getLb());
+  auto ubC = getConstIndex(getUb());
+  auto stC = getConstIndex(getStep());
+  if (lbC && ubC && stC) {
+    int64_t lb = *lbC, ub = *ubC, step = *stC;
+    if (step <= 0)
+      return emitOpError() << "step must be > 0 when constant";
+    int64_t trip = 0;
+    if (ub > lb) {
+      int64_t diff = ub - lb;
+      trip = (diff + step - 1) / step;
+    }
+    Type resTy = getResult().getType();
+    if (auto tupleTy = dyn_cast<TupleType>(resTy)) {
+      if (static_cast<int64_t>(tupleTy.size()) != trip)
+        return emitOpError() << "result tuple arity (" << tupleTy.size()
+                             << ") does not match static trip count (" << trip << ")";
+    }
+  }
+  return success();
+}
+
+// Note: Return type inference for cal.instance_for is intentionally omitted
+// in this revision; result typing remains explicit until a non-tuple
+// collection design is finalized.
+//===----------------------------------------------------------------------===//
 // FSM op verifiers
 //===----------------------------------------------------------------------===//
 
@@ -1387,6 +1442,33 @@ cal::ActorOp CreateInstanceOp::getActor() {
     return nullptr;
   }
   return actor;
+}
+
+// Verify symbol uses for cal.implements. Ensures that the referenced
+// interface exists and that the entity refers to either a cal.actor or
+// cal.network symbol in the nearest symbol table.
+LogicalResult ImplementsOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr ifaceRef = getIfaceRefAttr();
+  FlatSymbolRefAttr entityRef = getEntityRefAttr();
+
+  // Interface must resolve to a cal.interface symbol.
+  if (!symbolTable.lookupNearestSymbolFrom<InterfaceOp>(*this, ifaceRef)) {
+    return emitOpError() << "interface '" << ifaceRef.getValue()
+                         << "' not found in nearest symbol table";
+  }
+
+  // Entity must resolve to either a cal.actor or cal.network.
+  bool isActor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, entityRef);
+  bool isNetwork = symbolTable.lookupNearestSymbolFrom<NetworkOp>(*this, entityRef);
+  if (!isActor && !isNetwork) {
+    return emitOpError() << "entity '" << entityRef.getValue()
+                         << "' does not reference a cal.actor or cal.network";
+  }
+
+  // Future work: verify that the entity's port signature matches the
+  // interface declaration (names/types). For now, resolving the symbols is
+  // sufficient to keep builds and basic correctness.
+  return success();
 }
 
 // NOTE: verification for future array/connect ops will be added once those
