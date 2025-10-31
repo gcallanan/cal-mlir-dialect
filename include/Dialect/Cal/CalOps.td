@@ -600,7 +600,7 @@ def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", [HasParent<"NetworkOp">
     OptionalAttr<StrAttr>:$baseName,      // Optional base name for elements
     Variadic<AnyType>:$params             // Optional parameter operands
   );
-  let results = (outs AnyType:$handlesArray); // Will be !cal.instance_array<@Actor, count>
+  let results = (outs Cal_InstanceArray:$handlesArray);
   let assemblyFormat = "$actorRef `count` `(` $count `)` (`basename` `(` $baseName^ `)`)? (`(` $params `:` type($params)^ `)`) ? attr-dict `:` type($handlesArray)";
   let hasVerifier = 1;
 }
@@ -613,9 +613,30 @@ def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {
     it is within [0, count). Dynamic indices are allowed but may inhibit some
     elaboration-time optimizations.
   }];
-  let arguments = (ins AnyType:$array, Index:$index); // array expected: !cal.instance_array<...>
-  let results = (outs Cal_Instance:$handle);
+  let arguments = (ins AnyType:$array, Index:$index); // array expected: !cal.instance.array<...> or !cal.instance.array.iface<...>
+  let results = (outs AnyType:$handle); // result: !cal.instance<@Actor> or !cal.instance.iface<@Iface>
   let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array) `,` type($index) `->` type($handle)";
+  let hasVerifier = 1;
+}
+
+// Interface-typed variant: produce an array of interface instance handles.
+// Printed type form: !cal.instance.array.iface<@Iface, N>
+def Cal_InstantiateArrayIfaceOp : Cal_Op<"instantiate_array.iface", [HasParent<"NetworkOp">]> {
+  let summary = "Create an array of interface-typed instance handles";
+  let description = [{
+    Allocates (symbolically) an array of N instances typed by @Interface. No
+    concrete entity is chosen here; elaboration will require resolution to
+    concrete entities that implement the interface. Intended primarily for
+    structural tests and interface wiring.
+  }];
+  let arguments = (ins
+    FlatSymbolRefAttr:$ifaceRef,         // Target interface symbol
+    I64Attr:$count,                      // Number of elements
+    OptionalAttr<StrAttr>:$baseName,     // Optional base name for elements
+    Variadic<AnyType>:$params            // Parameters are not supported; kept for syntax parity (must be empty).
+  );
+  let results = (outs Cal_InterfaceInstanceArray:$handlesArray);
+  let assemblyFormat = "$ifaceRef `count` `(` $count `)` (`basename` `(` $baseName^ `)`)? (`(` $params `:` type($params)^ `)`) ? attr-dict `:` type($handlesArray)";
   let hasVerifier = 1;
 }
 
@@ -677,6 +698,7 @@ def Cal_InterfaceOp : Cal_Op<"interface", [Symbol, NoTerminator, IsolatedFromAbo
     OptionalAttr<ArrayAttr>:$outPortTypes
   );
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 // cal.implements @Iface for @Entity
@@ -703,6 +725,8 @@ def Cal_InstanceCastOp : Cal_Op<"instance.cast", []> {
   let arguments = (ins AnyType:$input);
   let results = (outs AnyType:$output);
   let assemblyFormat = "$input `:` type($input) `->` type($output) attr-dict";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 //===----------------------------------------------------------------------===//

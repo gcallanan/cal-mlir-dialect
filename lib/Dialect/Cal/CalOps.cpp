@@ -23,6 +23,29 @@ using namespace mlir::cal;
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.cpp.inc"
 //===----------------------------------------------------------------------===//
+// Helpers
+//===----------------------------------------------------------------------===//
+
+static LogicalResult verifyPortNames(Operation *op, ArrayAttr names, StringRef which) {
+  if (!names)
+    return success();
+  llvm::SmallDenseSet<StringRef, 8> seen;
+  for (Attribute a : names) {
+    auto s = dyn_cast<StringAttr>(a);
+    if (!s || s.getValue().empty())
+      return op->emitOpError() << which << " port names must be non-empty strings";
+    if (!seen.insert(s.getValue()).second)
+      return op->emitOpError() << which << " port names must be unique; duplicate '" << s.getValue() << "'";
+  }
+  return success();
+}
+
+template <typename PortTy>
+static bool isPortTypeOf(Type t) {
+  return isa<PortTy>(t);
+}
+
+//===----------------------------------------------------------------------===//
 // InstanceForOp verifier
 //===----------------------------------------------------------------------===//
 
@@ -210,18 +233,20 @@ mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) 
     if (parser.parseColon() || parser.parseType(ty))
       return failure();
     // If index was provided, require array type.
-    if (!maybeIndex.empty() && !mlir::isa<InstanceArrayType>(ty))
+    if (!maybeIndex.empty() &&
+        !(mlir::isa<InstanceArrayType>(ty) || mlir::isa<InterfaceInstanceArrayType>(ty)))
       return parser.emitError(parser.getCurrentLocation(),
                               "index form requires !cal.instance.array<...> type");
     // If no index, require either a handle type or a permitted fifo port type.
-    if (maybeIndex.empty() && !mlir::isa<InstanceType>(ty)) {
+    if (maybeIndex.empty() &&
+        !(mlir::isa<InstanceType>(ty) || mlir::isa<InterfaceInstanceType>(ty))) {
       bool ok = false;
       if (allowOutputPort && mlir::isa<mlir::fifo::OutputPortType>(ty)) ok = true;
       if (allowInputPort && mlir::isa<mlir::fifo::InputPortType>(ty)) ok = true;
       if (!ok)
         return parser.emitError(parser.getCurrentLocation(),
                                 "expected !cal.instance<...>"
-                                " or an allowed fifo port type for this side");
+                                " or !cal.instance.iface<...> or an allowed fifo port type for this side");
     }
     return success();
   };
@@ -827,6 +852,66 @@ LogicalResult NetworkOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// cal.interface verifier
+//===----------------------------------------------------------------------===//
+
+LogicalResult InterfaceOp::verify() {
+  auto inNames = getInPortNamesAttr();
+  auto outNames = getOutPortNamesAttr();
+  auto inTypes = getInPortTypesAttr();
+  auto outTypes = getOutPortTypesAttr();
+
+  // Names must be unique and non-empty when provided.
+  if (failed(verifyPortNames(getOperation(), inNames, "input")))
+    return failure();
+  if (failed(verifyPortNames(getOperation(), outNames, "output")))
+    return failure();
+
+  // Types, when provided, must be arrays of TypeAttr of the correct fifo port kinds.
+  auto checkTypes = [&](ArrayAttr arr, StringRef which, bool expectInputPorts) -> FailureOr<unsigned> {
+    if (!arr)
+      return 0u;
+    unsigned n = 0;
+    for (Attribute a : arr) {
+      auto ta = dyn_cast<TypeAttr>(a);
+      if (!ta)
+        return emitOpError() << which << " port types must be a list of type attributes";
+      Type ty = ta.getValue();
+      bool ok = expectInputPorts ? isPortTypeOf<mlir::fifo::InputPortType>(ty)
+                                 : isPortTypeOf<mlir::fifo::OutputPortType>(ty);
+      if (!ok)
+        return emitOpError() << which << " port type at index " << n << " must be a "
+                             << (expectInputPorts ? "fifo.input_port<...>" : "fifo.output_port<...>");
+      ++n;
+    }
+    return n;
+  };
+
+  FailureOr<unsigned> inCount = checkTypes(inTypes, "input", /*expectInputPorts=*/false);
+  if (failed(inCount)) return failure();
+  FailureOr<unsigned> outCount = checkTypes(outTypes, "output", /*expectInputPorts=*/true);
+  if (failed(outCount)) return failure();
+
+  // If names are provided, they must match the type counts.
+  auto checkNameCount = [&](ArrayAttr names, unsigned expect, StringRef which) -> LogicalResult {
+    if (!names)
+      return success();
+    if (names.size() != expect) {
+      emitOpError() << which << " name count (" << names.size() << ") does not match "
+                    << which << " port type count (" << expect << ")";
+      return failure();
+    }
+    return success();
+  };
+  if (succeeded(inCount) && failed(checkNameCount(inNames, *inCount, "input")))
+    return failure();
+  if (succeeded(outCount) && failed(checkNameCount(outNames, *outCount, "output")))
+    return failure();
+
+  return success();
+}
+
 LogicalResult StateGetOp::verify() {
   Type stateValueType = getStateValue().getType();
   Type stateRefType = getStateRef().getType();
@@ -907,6 +992,68 @@ LogicalResult InstantiateArrayOp::verify() {
     return emitOpError() << "result count " << arrTy.getCount()
                          << " does not match attribute count " << getCount();
 
+  // Count must be > 0.
+  if (getCount() <= 0)
+    return emitOpError() << "array count must be > 0";
+
+  // Base name, if present, must be non-empty
+  if (auto bn = getBaseNameAttr(); bn && bn.getValue().empty())
+    return emitOpError() << "basename, if provided, must be non-empty";
+
+  // Validate parameter arity/types match the actor's leading non-port parameters.
+  SymbolTableCollection symbolTable;
+  auto actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, getActorRefAttr());
+  if (!actor)
+    return emitOpError() << "actor symbol '" << getActorRefAttr().getValue() << "' not found";
+  SmallVector<Type> formalParams;
+  for (Value a : actor.getBody().getArguments()) {
+    Type t = a.getType();
+    if (isa<mlir::fifo::OutputPortType>(t) || isa<mlir::fifo::InputPortType>(t))
+      break;
+    formalParams.push_back(t);
+  }
+  auto actuals = getParams();
+  if (actuals.size() != formalParams.size()) {
+    return emitOpError() << "parameter count mismatch for actor '" << actor.getSymName()
+                         << "': expected " << formalParams.size() << ", got " << actuals.size();
+  }
+  for (size_t i = 0; i < actuals.size(); ++i) {
+    if (actuals[i].getType() != formalParams[i]) {
+      return emitOpError() << "parameter type mismatch at index " << i << ": expected "
+                           << formalParams[i] << ", got " << actuals[i].getType();
+    }
+  }
+
+  return success();
+}
+
+LogicalResult InstantiateArrayIfaceOp::verify() {
+  // Result type must be !cal.instance.array.iface<@Iface, N>
+  Type resTy = getHandlesArray().getType();
+  auto arrTy = mlir::dyn_cast<InterfaceInstanceArrayType>(resTy);
+  if (!arrTy)
+    return emitOpError() << "result must be !cal.instance.array.iface<@Iface, N>, got " << resTy;
+
+  // Check interface symbol exists and matches
+  SymbolTableCollection symbolTable;
+  if (!symbolTable.lookupNearestSymbolFrom<InterfaceOp>(*this, getIfaceRefAttr()))
+    return emitOpError() << "interface symbol '" << getIfaceRefAttr().getValue() << "' not found";
+
+  if (arrTy.getIfaceRef() != getIfaceRefAttr())
+    return emitOpError() << "result interface '" << arrTy.getIfaceRef()
+                         << "' does not match attribute '" << getIfaceRefAttr() << "'";
+
+  // Check count matches and is > 0
+  if (static_cast<uint64_t>(arrTy.getCount()) != getCount())
+    return emitOpError() << "result count " << arrTy.getCount()
+                         << " does not match attribute count " << getCount();
+  if (getCount() <= 0)
+    return emitOpError() << "array count must be > 0";
+
+  // Params are not currently supported for interface arrays (no concrete entity to validate against)
+  if (!getParams().empty())
+    return emitOpError() << "parameters are not supported for interface arrays";
+
   // Base name, if present, must be non-empty
   if (auto bn = getBaseNameAttr(); bn && bn.getValue().empty())
     return emitOpError() << "basename, if provided, must be non-empty";
@@ -915,32 +1062,55 @@ LogicalResult InstantiateArrayOp::verify() {
 }
 
 LogicalResult InstanceAtOp::verify() {
-  // Array must be an instance array; result is an instance of the same actor.
-  auto arrayTy = mlir::dyn_cast<InstanceArrayType>(getArray().getType());
-  if (!arrayTy)
-    return emitOpError() << "array must be !cal.instance.array<@Actor, N>";
+  Type arrT = getArray().getType();
+  Type hT = getHandle().getType();
 
-  auto handleTy = mlir::dyn_cast<InstanceType>(getHandle().getType());
-  if (!handleTy)
-    return emitOpError() << "result must be !cal.instance<@Actor>";
+  // Two supported pairs:
+  //  - !cal.instance.array<@Actor, N>        -> !cal.instance<@Actor>
+  //  - !cal.instance.array.iface<@Iface, N>  -> !cal.instance.iface<@Iface>
+  if (auto entArr = mlir::dyn_cast<InstanceArrayType>(arrT)) {
+    auto entHandle = mlir::dyn_cast<InstanceType>(hT);
+    if (!entHandle)
+      return emitOpError() << "result must be !cal.instance<@Actor> for entity array operand";
+    if (entArr.getActorRef() != entHandle.getActorRef())
+      return emitOpError() << "actor mismatch between array and result: "
+                           << entArr.getActorRef() << " vs " << entHandle.getActorRef();
 
-  if (arrayTy.getActorRef() != handleTy.getActorRef())
-    return emitOpError() << "actor mismatch between array and result: "
-                         << arrayTy.getActorRef() << " vs " << handleTy.getActorRef();
-
-  // If the index is a constant, ensure it is within bounds.
-  if (auto c = getIndex().getDefiningOp<arith::ConstantOp>()) {
-    Attribute val = c.getValueAttr();
-    if (auto intAttr = mlir::dyn_cast<IntegerAttr>(val)) {
-      // Accept both index-typed and integer attributes.
-      int64_t idx = intAttr.getInt();
-  if (idx < 0 || static_cast<uint64_t>(idx) >= static_cast<uint64_t>(arrayTy.getCount()))
-        return emitOpError() << "constant index " << idx << " out of bounds [0,"
-             << arrayTy.getCount() << ")";
+    // Constant index bounds check
+    if (auto c = getIndex().getDefiningOp<arith::ConstantOp>()) {
+      Attribute val = c.getValueAttr();
+      if (auto intAttr = mlir::dyn_cast<IntegerAttr>(val)) {
+        int64_t idx = intAttr.getInt();
+        if (idx < 0 || static_cast<uint64_t>(idx) >= static_cast<uint64_t>(entArr.getCount()))
+          return emitOpError() << "constant index " << idx << " out of bounds [0,"
+                               << entArr.getCount() << ")";
+      }
     }
+    return success();
   }
 
-  return success();
+  if (auto ifaceArr = mlir::dyn_cast<InterfaceInstanceArrayType>(arrT)) {
+    auto ifaceHandle = mlir::dyn_cast<InterfaceInstanceType>(hT);
+    if (!ifaceHandle)
+      return emitOpError() << "result must be !cal.instance.iface<@Iface> for interface array operand";
+    if (ifaceArr.getIfaceRef() != ifaceHandle.getIfaceRef())
+      return emitOpError() << "interface mismatch between array and result: "
+                           << ifaceArr.getIfaceRef() << " vs " << ifaceHandle.getIfaceRef();
+
+    // Constant index bounds check
+    if (auto c = getIndex().getDefiningOp<arith::ConstantOp>()) {
+      Attribute val = c.getValueAttr();
+      if (auto intAttr = mlir::dyn_cast<IntegerAttr>(val)) {
+        int64_t idx = intAttr.getInt();
+        if (idx < 0 || static_cast<uint64_t>(idx) >= static_cast<uint64_t>(ifaceArr.getCount()))
+          return emitOpError() << "constant index " << idx << " out of bounds [0,"
+                               << ifaceArr.getCount() << ")";
+      }
+    }
+    return success();
+  }
+
+  return emitOpError() << "array must be !cal.instance.array<@Actor, N> or !cal.instance.array.iface<@Iface, N>";
 }
 
 LogicalResult ConnectOp::verify() {
@@ -953,10 +1123,10 @@ LogicalResult ConnectOp::verify() {
   // or a network port SSA value: src may be !fifo.output_port<...>, dst may be !fifo.input_port<...>.
   Type srcTy = getSrc().getType();
   Type dstTy = getDst().getType();
-  bool srcIsArray = mlir::isa<InstanceArrayType>(srcTy);
-  bool dstIsArray = mlir::isa<InstanceArrayType>(dstTy);
-  bool srcIsHandle = mlir::isa<InstanceType>(srcTy);
-  bool dstIsHandle = mlir::isa<InstanceType>(dstTy);
+  bool srcIsArray = mlir::isa<InstanceArrayType>(srcTy) || mlir::isa<InterfaceInstanceArrayType>(srcTy);
+  bool dstIsArray = mlir::isa<InstanceArrayType>(dstTy) || mlir::isa<InterfaceInstanceArrayType>(dstTy);
+  bool srcIsHandle = mlir::isa<InstanceType>(srcTy) || mlir::isa<InterfaceInstanceType>(srcTy);
+  bool dstIsHandle = mlir::isa<InstanceType>(dstTy) || mlir::isa<InterfaceInstanceType>(dstTy);
   bool srcIsNetOut = mlir::isa<mlir::fifo::OutputPortType>(srcTy);
   bool dstIsNetIn = mlir::isa<mlir::fifo::InputPortType>(dstTy);
 
@@ -1444,6 +1614,57 @@ cal::ActorOp CreateInstanceOp::getActor() {
   return actor;
 }
 
+//===----------------------------------------------------------------------===//
+// cal.instance.cast verifier and canonicalization
+//===----------------------------------------------------------------------===//
+
+LogicalResult InstanceCastOp::verify() {
+  Type inTy = getInput().getType();
+  Type outTy = getOutput().getType();
+  auto entTy = dyn_cast<InstanceType>(inTy);
+  auto ifTy  = dyn_cast<InterfaceInstanceType>(outTy);
+  if (!entTy || !ifTy)
+    return emitOpError() << "expected cast from !cal.instance<@E> to !cal.instance.iface<@I>";
+
+  // Verify that entity implements the interface in the nearest symbol table scope.
+  SymbolTableCollection symbolTable;
+  auto ifaceSym = ifTy.getIfaceRef();
+  auto entSym = entTy.getActorRef();
+  // Walk for a matching cal.implements @Iface for @Entity
+  Operation *scope = SymbolTable::getNearestSymbolTable(getOperation());
+  if (!scope)
+    scope = getOperation()->getParentOfType<ModuleOp>();
+  bool found = false;
+  if (scope) {
+    scope->walk([&](ImplementsOp impl) {
+      if (impl.getIfaceRefAttr() == ifaceSym && impl.getEntityRefAttr() == entSym)
+        found = true;
+    });
+  }
+  if (!found)
+    return emitOpError() << "entity '" << entSym.getValue() << "' does not implement interface '"
+                         << ifaceSym.getValue() << "'";
+  return success();
+}
+
+namespace {
+struct FoldIdentityInstanceCast : OpRewritePattern<InstanceCastOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(InstanceCastOp op, PatternRewriter &rewriter) const override {
+    if (op.getInput().getType() == op.getOutput().getType()) {
+      rewriter.replaceOp(op, op.getInput());
+      return success();
+    }
+    return failure();
+  }
+};
+} // namespace
+
+void InstanceCastOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                                 MLIRContext *ctx) {
+  patterns.add<FoldIdentityInstanceCast>(ctx);
+}
+
 // Verify symbol uses for cal.implements. Ensures that the referenced
 // interface exists and that the entity refers to either a cal.actor or
 // cal.network symbol in the nearest symbol table.
@@ -1465,9 +1686,127 @@ LogicalResult ImplementsOp::verifySymbolUses(SymbolTableCollection &symbolTable)
                          << "' does not reference a cal.actor or cal.network";
   }
 
-  // Future work: verify that the entity's port signature matches the
-  // interface declaration (names/types). For now, resolving the symbols is
-  // sufficient to keep builds and basic correctness.
+  // Conformance check: if the interface declares port types, the entity must
+  // match arity and port types (direction and element type) positionally.
+  auto iface = symbolTable.lookupNearestSymbolFrom<InterfaceOp>(*this, ifaceRef);
+  if (!iface)
+    return emitOpError() << "internal error: interface symbol resolved earlier disappeared";
+
+  auto inTypesAttr = iface.getInPortTypesAttr();
+  auto outTypesAttr = iface.getOutPortTypesAttr();
+  auto inNamesAttr = iface.getInPortNamesAttr();
+  auto outNamesAttr = iface.getOutPortNamesAttr();
+  unsigned ifaceInCount = inTypesAttr ? static_cast<unsigned>(inTypesAttr.size()) : 0u;
+  unsigned ifaceOutCount = outTypesAttr ? static_cast<unsigned>(outTypesAttr.size()) : 0u;
+  if (ifaceInCount == 0 && ifaceOutCount == 0)
+    return success(); // Nothing declared to check.
+
+  // Helper to extract port argument types from an entity (actor or network).
+  auto extractEntityPortTypes = [](auto entityOp,
+                                  SmallVectorImpl<Type> &inPortTypes,
+                                  SmallVectorImpl<Type> &outPortTypes) {
+    for (Value arg : entityOp.getBody().getArguments()) {
+      Type t = arg.getType();
+      if (auto outTy = dyn_cast<mlir::fifo::OutputPortType>(t))
+        inPortTypes.push_back(outTy);
+      else if (auto inTy = dyn_cast<mlir::fifo::InputPortType>(t))
+        outPortTypes.push_back(inTy);
+    }
+  };
+
+  SmallVector<Type> entIn, entOut;
+  ArrayAttr entInNames, entOutNames;
+  if (auto actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, entityRef)) {
+    extractEntityPortTypes(actor, entIn, entOut);
+    entInNames = actor->getAttrOfType<ArrayAttr>("inPortNames");
+    entOutNames = actor->getAttrOfType<ArrayAttr>("outPortNames");
+  } else if (auto net = symbolTable.lookupNearestSymbolFrom<NetworkOp>(*this, entityRef)) {
+    extractEntityPortTypes(net, entIn, entOut);
+    entInNames = net->getAttrOfType<ArrayAttr>("inPortNames");
+    entOutNames = net->getAttrOfType<ArrayAttr>("outPortNames");
+  }
+
+  auto typeFromArray = [](ArrayAttr arr, unsigned idx) -> Type {
+    if (!arr) return Type();
+    if (idx >= arr.size()) return Type();
+    if (auto ta = dyn_cast<TypeAttr>(arr[idx])) return ta.getValue();
+    return Type();
+  };
+
+  bool ok = true;
+  std::string msg;
+
+  if (entIn.size() != ifaceInCount) {
+    ok = false;
+    msg += "input port count mismatch: expected ";
+    msg += std::to_string(ifaceInCount);
+    msg += ", got ";
+    msg += std::to_string(entIn.size());
+    msg += "; ";
+  }
+  if (entOut.size() != ifaceOutCount) {
+    ok = false;
+    msg += "output port count mismatch: expected ";
+    msg += std::to_string(ifaceOutCount);
+    msg += ", got ";
+    msg += std::to_string(entOut.size());
+    msg += "; ";
+  }
+
+  // Per-port type compatibility when counts are equal.
+  if (ok) {
+    for (unsigned i = 0; i < ifaceInCount; ++i) {
+      Type ifaceTy = typeFromArray(inTypesAttr, i);
+      if (!ifaceTy || entIn[i] != ifaceTy) {
+        ok = false;
+        msg += "input port["; msg += std::to_string(i); msg += "] type mismatch; ";
+      }
+    }
+    for (unsigned i = 0; i < ifaceOutCount; ++i) {
+      Type ifaceTy = typeFromArray(outTypesAttr, i);
+      if (!ifaceTy || entOut[i] != ifaceTy) {
+        ok = false;
+        msg += "output port["; msg += std::to_string(i); msg += "] type mismatch; ";
+      }
+    }
+  }
+
+  if (!ok) {
+    return emitOpError() << "entity '" << entityRef.getValue()
+                         << "' does not conform to interface '" << ifaceRef.getValue()
+                         << "': " << msg;
+  }
+
+  // Optional name conformance: if the interface specifies port names and the
+  // entity also provides names (via in_names/out_names), require exact
+  // positional match for clearer wiring and better diagnostics.
+  auto checkNames = [&](ArrayAttr ifaceNames, ArrayAttr entNames, unsigned expect, StringRef which) -> LogicalResult {
+    if (!ifaceNames)
+      return success(); // nothing to check
+    if (!entNames)
+      return success(); // be permissive if entity didn't declare names
+    if (entNames.size() != expect) {
+      return emitOpError() << which << " port name count (" << entNames.size()
+                           << ") does not match expected " << expect;
+    }
+    for (unsigned i = 0; i < expect; ++i) {
+      auto ifaceNm = dyn_cast<StringAttr>(ifaceNames[i]);
+      auto entNm = dyn_cast<StringAttr>(entNames[i]);
+      if (!ifaceNm || !entNm || ifaceNm.getValue() != entNm.getValue()) {
+        return emitOpError() << which << " port[" << i << "] name mismatch: expected '"
+                             << (ifaceNm ? ifaceNm.getValue() : StringRef(""))
+                             << "', got '"
+                             << (entNm ? entNm.getValue() : StringRef("")) << "'";
+      }
+    }
+    return success();
+  };
+
+  if (failed(checkNames(inNamesAttr, entInNames, ifaceInCount, "input")))
+    return failure();
+  if (failed(checkNames(outNamesAttr, entOutNames, ifaceOutCount, "output")))
+    return failure();
+
   return success();
 }
 

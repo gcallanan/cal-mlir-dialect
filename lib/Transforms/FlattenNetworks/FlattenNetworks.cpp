@@ -7,6 +7,7 @@
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
+#include "Dialect/Cal/CalTypes.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -42,6 +43,14 @@ public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
     SymbolTableCollection symbolTable;
+    // Precompute interface conformance map: entity -> set of interfaces it implements.
+    // Store by StringRef for lightweight lookups using symbol names from ops.
+    DenseMap<StringRef, SmallVector<StringRef>> entityImplements;
+    module.walk([&](cal::ImplementsOp impl){
+      auto iface = impl.getIfaceRefAttr().getRootReference().getValue();
+      auto ent = impl.getEntityRefAttr().getRootReference().getValue();
+      entityImplements[ent].push_back(iface);
+    });
     // Statistics (conditionally reported when emitStats option is set)
     uint64_t statFlattenedInstances = 0;
     uint64_t statPrunedNetworks = 0;
@@ -198,7 +207,9 @@ public:
 
       // Plans for instances (single) and arrays.
       struct InstPlan {
-        ActorOp actor;
+        // Always initialize wrapper ops to null to avoid accidental deref of garbage.
+        ActorOp actor = nullptr;
+        cal::InterfaceOp iface = nullptr;       // Optional: interface symbol when plan is interface-typed
         SmallVector<Value> params;
         SmallVector<Value> inPorts;  // fifo.output_port<elem>
         SmallVector<Value> outPorts; // fifo.input_port<elem>
@@ -258,6 +269,39 @@ public:
           arrayPlans[arr.getHandlesArray()] = std::move(plans);
           continue;
         }
+        if (auto arrIf = dyn_cast<InstantiateArrayIfaceOp>(&op)) {
+          cal::InterfaceOp iface = symbolTable.lookupNearestSymbolFrom<cal::InterfaceOp>(&op, arrIf.getIfaceRefAttr());
+          if (!iface)
+            return op.emitOpError("instantiate_array.iface references unknown cal.interface");
+          unsigned count = static_cast<unsigned>(arrIf.getCount());
+          auto inTypes = iface.getInPortTypesAttr();
+          auto outTypes = iface.getOutPortTypesAttr();
+          auto inNames = iface.getInPortNamesAttr();
+          auto outNames = iface.getOutPortNamesAttr();
+          unsigned inCount = 0, outCount = 0;
+          if (inTypes && !inTypes.empty()) inCount = inTypes.size();
+          else if (inNames && !inNames.empty()) inCount = inNames.size();
+          if (outTypes && !outTypes.empty()) outCount = outTypes.size();
+          else if (outNames && !outNames.empty()) outCount = outNames.size();
+
+          SmallVector<std::unique_ptr<InstPlan>> plans;
+          plans.reserve(count);
+          for (unsigned i = 0; i < count; ++i) {
+            auto plan = std::make_unique<InstPlan>();
+            plan->iface = iface;
+            plan->defOp = &op;
+            if (auto base = arrIf.getBaseNameAttr()) {
+              std::string n = (base.getValue() + StringRef("[") + Twine(i).str() + "]").str();
+              plan->name = StringAttr::get(ctx, n);
+            }
+            plan->params.assign(arrIf.getParams().begin(), arrIf.getParams().end());
+            plan->inPorts.resize(inCount);
+            plan->outPorts.resize(outCount);
+            plans.push_back(std::move(plan));
+          }
+          arrayPlans[arrIf.getHandlesArray()] = std::move(plans);
+          continue;
+        }
         if (auto at = dyn_cast<InstanceAtOp>(&op)) {
           instanceAtOps.push_back(at);
           continue;
@@ -315,27 +359,130 @@ public:
         Value dstNetPort;              // !fifo.input_port<...> when used as network destination
         Type elemTy;                   // element type for fifo.create when both endpoints are plans
       };
-      SmallVector<PendingEdge> edges;
+  SmallVector<PendingEdge> edges;
       SmallVector<Operation*> toErase;
 
-      // Per-plan connectivity trackers to detect duplicates and completeness.
-      DenseMap<InstPlan*, SmallVector<bool>> seenOut, seenIn;
+  // Per-plan connectivity trackers to detect duplicates and completeness.
+  DenseMap<InstPlan*, SmallVector<bool>> seenOut, seenIn;
+  // Track the first connect op that wired a given port to produce a helpful note on duplicates.
+  DenseMap<InstPlan*, SmallVector<Operation*>> firstOutConn, firstInConn;
+
+      // Track capacity per logical channel to detect conflicts. A channel is uniquely
+      // identified by (srcPlan, srcOutIdx, dstPlan, dstInIdx) when both endpoints are plans.
+      struct ChannelKey {
+        InstPlan *s; unsigned so; InstPlan *d; unsigned di;
+      };
+      struct ChannelKeyInfo {
+        static inline ChannelKey getEmptyKey() { return ChannelKey{nullptr, 0u, nullptr, 0u}; }
+        static inline ChannelKey getTombstoneKey() { return ChannelKey{reinterpret_cast<InstPlan*>(1), 0u, reinterpret_cast<InstPlan*>(1), 0u}; }
+        static unsigned getHashValue(const ChannelKey &k) {
+          return llvm::hash_combine(k.s, k.so, k.d, k.di);
+        }
+        static bool isEqual(const ChannelKey &a, const ChannelKey &b) {
+          return a.s == b.s && a.so == b.so && a.d == b.d && a.di == b.di;
+        }
+      };
+      llvm::DenseMap<ChannelKey, std::pair<uint64_t, Operation*>, ChannelKeyInfo> channelCaps;
 
       auto ensureTrackers = [&](InstPlan *p) {
         if (!seenOut.count(p)) seenOut[p] = SmallVector<bool>(p->outPorts.size(), false);
         if (!seenIn.count(p))  seenIn[p]  = SmallVector<bool>(p->inPorts.size(),  false);
+        if (!firstOutConn.count(p)) firstOutConn[p] = SmallVector<Operation*>(p->outPorts.size(), nullptr);
+        if (!firstInConn.count(p))  firstInConn[p]  = SmallVector<Operation*>(p->inPorts.size(),  nullptr);
       };
 
       for (Operation *op : connectOps) {
         auto conn = cast<ConnectOp>(op);
-        // Canonicalizer may have already lowered sugar; ensure indices are resolved.
-        if (conn.getSrcIndex() || conn.getDstIndex()) {
-          conn.emitOpError("array-index connect form not fully canonicalized; run -canonicalize first");
-          return failure();
-        }
+        // Canonicalizer may have already lowered sugar. If indices remain on
+        // the connect, attempt to resolve constant indices here so users don't
+        // have to run -canonicalize explicitly. When dynamic and not allowed,
+        // fail with a clear diagnostic; when allowed, skip this connect.
         // Classify endpoints: plan handle/array (resolved) or network port SSA values.
-        InstPlan *srcPlan = handleToPlan.lookup(conn.getSrc());
-        InstPlan *dstPlan = handleToPlan.lookup(conn.getDst());
+        // Resolve endpoints: allow raw handle, handle behind cal.instance.cast,
+        // or network SSA ports.
+        Value rawSrc = conn.getSrc();
+        Value rawDst = conn.getDst();
+
+        // Handle array-index sugar directly if present on connect.
+        auto resolveArrayEndpoint = [&](Value &rawVal, Value idxVal, bool isDst) -> FailureOr<InstPlan*> {
+          if (!idxVal)
+            return FailureOr<InstPlan*>(nullptr);
+          // Expect the raw value to be an instance array (concrete or iface-typed).
+          if (!isa<InstanceArrayType, InterfaceInstanceArrayType>(rawVal.getType())) {
+            return conn.emitOpError(isDst ? "destination index provided but destination is not an array"
+                                          : "source index provided but source is not an array");
+          }
+          // Constant index required unless dynamic indices are allowed.
+          if (auto c = idxVal.getDefiningOp<arith::ConstantOp>()) {
+            auto intAttr = dyn_cast<IntegerAttr>(c.getValueAttr());
+            if (!intAttr)
+              return conn.emitOpError("unsupported index attribute on array-index connect");
+            int64_t idx = intAttr.getInt();
+            // Look up the plans for this array value; bounds-check against plan count.
+            auto it = arrayPlans.find(rawVal);
+            if (it == arrayPlans.end()) {
+              return conn.emitOpError("internal error: array endpoint has no instantiated plan");
+            }
+            auto &vec = it->second;
+            if (idx < 0 || static_cast<unsigned>(idx) >= vec.size()) {
+              return conn.emitOpError("index out of bounds for instance array on connect");
+            }
+            return vec[static_cast<unsigned>(idx)].get();
+          } else {
+            if (!allowDynamicIndices) {
+              return conn.emitOpError("dynamic index not supported in elaboration; pass --allow-dynamic-indices to skip materialization and defer to later passes");
+            }
+            conn.emitRemark("skipping connect with dynamic array index during elaboration");
+            return FailureOr<InstPlan*>(nullptr);
+          }
+        };
+
+        // If indices exist on the connect, resolve to plans before chasing casts below.
+        InstPlan *srcPlanIdx = nullptr;
+        if (conn.getSrcIndex()) {
+          auto res = resolveArrayEndpoint(rawSrc, conn.getSrcIndex(), /*isDst=*/false);
+          if (failed(res)) return failure();
+          srcPlanIdx = *res;
+          if (!srcPlanIdx && conn.getSrcIndex()) {
+            // Dynamic case with allowDynamicIndices: skip this connect entirely.
+            continue;
+          }
+        }
+        InstPlan *dstPlanIdx = nullptr;
+        if (conn.getDstIndex()) {
+          auto res = resolveArrayEndpoint(rawDst, conn.getDstIndex(), /*isDst=*/true);
+          if (failed(res)) return failure();
+          dstPlanIdx = *res;
+          if (!dstPlanIdx && conn.getDstIndex()) {
+            // Dynamic case with allowDynamicIndices: skip this connect entirely.
+            continue;
+          }
+        }
+  // Track if the endpoint is interface-typed (so we can use interface names)
+  // and whether a cast was present to validate conformance later.
+  cal::InterfaceOp srcIfaceSym = nullptr;
+  cal::InterfaceOp dstIfaceSym = nullptr;
+  bool srcHadCast = false;
+  bool dstHadCast = false;
+        // If value is produced by cal.instance.cast, chase to the concrete handle
+        // and record the interface symbol for port-name lookup.
+        if (auto castSrc = rawSrc.getDefiningOp<cal::InstanceCastOp>()) {
+          rawSrc = castSrc.getInput();
+          if (auto ifTy = dyn_cast_if_present<cal::InterfaceInstanceType>(castSrc.getOutput().getType())) {
+            srcIfaceSym = symbolTable.lookupNearestSymbolFrom<cal::InterfaceOp>(castSrc, ifTy.getIfaceRef());
+            srcHadCast = true;
+          }
+        }
+        if (auto castDst = rawDst.getDefiningOp<cal::InstanceCastOp>()) {
+          rawDst = castDst.getInput();
+          if (auto ifTy = dyn_cast_if_present<cal::InterfaceInstanceType>(castDst.getOutput().getType())) {
+            dstIfaceSym = symbolTable.lookupNearestSymbolFrom<cal::InterfaceOp>(castDst, ifTy.getIfaceRef());
+            dstHadCast = true;
+          }
+        }
+
+  InstPlan *srcPlan = srcPlanIdx ? srcPlanIdx : handleToPlan.lookup(rawSrc);
+  InstPlan *dstPlan = dstPlanIdx ? dstPlanIdx : handleToPlan.lookup(rawDst);
         bool srcIsNet = isa<fifo::OutputPortType>(conn.getSrc().getType());
         bool dstIsNet = isa<fifo::InputPortType>(conn.getDst().getType());
         if (!srcPlan && !srcIsNet) {
@@ -350,21 +497,77 @@ public:
           return conn.emitOpError("network-to-network connect not supported during elaboration");
         }
 
+        // Now that plans are known, validate that any instance.cast conforms to the declared interface.
+        if (srcPlan && srcHadCast && srcIfaceSym) {
+          StringRef entName = srcPlan->actor ? srcPlan->actor.getSymName() : (srcPlan->iface ? srcPlan->iface.getSymName() : StringRef("<unknown>"));
+          StringRef ifaceName = srcIfaceSym.getSymName();
+          bool ok = false;
+          if (auto it = entityImplements.find(entName); it != entityImplements.end())
+            ok = llvm::is_contained(it->second, ifaceName);
+          if (!ok) {
+            return conn.emitOpError("invalid instance.cast on source: entity '") << entName
+                   << "' does not implement interface '" << ifaceName << "'";
+          }
+        }
+        if (dstPlan && dstHadCast && dstIfaceSym) {
+          StringRef entName = dstPlan->actor ? dstPlan->actor.getSymName() : (dstPlan->iface ? dstPlan->iface.getSymName() : StringRef("<unknown>"));
+          StringRef ifaceName = dstIfaceSym.getSymName();
+          bool ok = false;
+          if (auto it = entityImplements.find(entName); it != entityImplements.end())
+            ok = llvm::is_contained(it->second, ifaceName);
+          if (!ok) {
+            return conn.emitOpError("invalid instance.cast on destination: entity '") << entName
+                   << "' does not implement interface '" << ifaceName << "'";
+          }
+        }
+
         FailureOr<unsigned> srcOutIdx; FailureOr<unsigned> dstInIdx;
         ActorOp srcActor = nullptr, dstActor = nullptr;
         unsigned outCount = 0, inCount = 0;
         ArrayAttr srcDeclared, dstDeclared;
+        ArrayAttr srcIfaceDeclared, dstIfaceDeclared;
         if (srcPlan) {
           srcActor = srcPlan->actor;
-          outCount = static_cast<unsigned>(srcActor.outDegree());
-          srcDeclared = srcActor->getAttrOfType<ArrayAttr>("outPortNames");
+          if (srcActor) {
+            outCount = static_cast<unsigned>(srcActor.outDegree());
+            srcDeclared = srcActor->getAttrOfType<ArrayAttr>("outPortNames");
+          } else if (srcPlan->iface) {
+            auto outTypes = srcPlan->iface.getOutPortTypesAttr();
+            auto outNames = srcPlan->iface.getOutPortNamesAttr();
+            if (outTypes && !outTypes.empty()) outCount = outTypes.size();
+            else if (outNames && !outNames.empty()) outCount = outNames.size();
+          }
+          // Try actor-declared names first; if that fails and we have an interface, try interface-declared out names.
           srcOutIdx = parsePortIndex(conn.getSrcPortAttr().getValue(), outCount, /*isDst=*/false, srcDeclared);
+          if (failed(srcOutIdx)) {
+            if (srcIfaceSym)
+              srcIfaceDeclared = srcIfaceSym.getOutPortNamesAttr();
+            else if (srcPlan->iface)
+              srcIfaceDeclared = srcPlan->iface.getOutPortNamesAttr();
+            if (srcIfaceDeclared)
+              srcOutIdx = parsePortIndex(conn.getSrcPortAttr().getValue(), outCount, /*isDst=*/false, srcIfaceDeclared);
+          }
         }
         if (dstPlan) {
           dstActor = dstPlan->actor;
-          inCount = static_cast<unsigned>(dstActor.inDegree());
-          dstDeclared = dstActor->getAttrOfType<ArrayAttr>("inPortNames");
+          if (dstActor) {
+            inCount = static_cast<unsigned>(dstActor.inDegree());
+            dstDeclared = dstActor->getAttrOfType<ArrayAttr>("inPortNames");
+          } else if (dstPlan->iface) {
+            auto inTypes = dstPlan->iface.getInPortTypesAttr();
+            auto inNames = dstPlan->iface.getInPortNamesAttr();
+            if (inTypes && !inTypes.empty()) inCount = inTypes.size();
+            else if (inNames && !inNames.empty()) inCount = inNames.size();
+          }
           dstInIdx  = parsePortIndex(conn.getDstPortAttr().getValue(),  inCount,  /*isDst=*/true,  dstDeclared);
+          if (failed(dstInIdx)) {
+            if (dstIfaceSym)
+              dstIfaceDeclared = dstIfaceSym.getInPortNamesAttr();
+            else if (dstPlan->iface)
+              dstIfaceDeclared = dstPlan->iface.getInPortNamesAttr();
+            if (dstIfaceDeclared)
+              dstInIdx  = parsePortIndex(conn.getDstPortAttr().getValue(),  inCount,  /*isDst=*/true,  dstIfaceDeclared);
+          }
         }
         if (srcPlan && failed(srcOutIdx)) {
           SmallVector<StringRef> choices; choices.reserve(outCount + (srcDeclared ? srcDeclared.size() : 0));
@@ -373,10 +576,14 @@ public:
           if (srcDeclared)
             for (Attribute a : srcDeclared)
               if (auto s = dyn_cast<StringAttr>(a)) choices.push_back(s.getValue());
+          if (srcIfaceDeclared)
+            for (Attribute a : srcIfaceDeclared)
+              if (auto s = dyn_cast<StringAttr>(a)) choices.push_back(s.getValue());
           std::string hint = suggestClosest(conn.getSrcPortAttr().getValue(), choices);
           auto err = conn.emitOpError("cannot resolve source port '") << conn.getSrcPortAttr().getValue() << "'";
           bool hasDeclared = srcDeclared && !srcDeclared.empty();
-          if (hasDeclared)
+          bool hasIfaceDeclared = srcIfaceDeclared && !srcIfaceDeclared.empty();
+          if (hasDeclared || hasIfaceDeclared)
             err << " (expected 'out<idx>' or one of declared names: ";
           else
             err << " (expected 'out'/'out<idx>'";
@@ -384,6 +591,13 @@ public:
             bool first = true;
             for (Attribute a : srcDeclared) if (auto s = dyn_cast<StringAttr>(a)) {
               if (!first) err << ", "; first = false; err << "'" << s.getValue() << "'";
+            }
+          }
+          if (hasIfaceDeclared) {
+            if (srcDeclared && !srcDeclared.empty()) err << ", ";
+            bool first2 = true;
+            for (Attribute a : srcIfaceDeclared) if (auto s = dyn_cast<StringAttr>(a)) {
+              if (!first2) err << ", "; first2 = false; err << "'" << s.getValue() << "'";
             }
           }
           err << ")" << hint;
@@ -396,10 +610,14 @@ public:
           if (dstDeclared)
             for (Attribute a : dstDeclared)
               if (auto s = dyn_cast<StringAttr>(a)) choices.push_back(s.getValue());
+          if (dstIfaceDeclared)
+            for (Attribute a : dstIfaceDeclared)
+              if (auto s = dyn_cast<StringAttr>(a)) choices.push_back(s.getValue());
           std::string hint = suggestClosest(conn.getDstPortAttr().getValue(), choices);
           auto err = conn.emitOpError("cannot resolve destination port '") << conn.getDstPortAttr().getValue() << "'";
           bool hasDeclared = dstDeclared && !dstDeclared.empty();
-          if (hasDeclared)
+          bool hasIfaceDeclared = dstIfaceDeclared && !dstIfaceDeclared.empty();
+          if (hasDeclared || hasIfaceDeclared)
             err << " (expected 'in<idx>' or one of declared names: ";
           else
             err << " (expected 'in'/'in<idx>'";
@@ -409,6 +627,13 @@ public:
               if (!first) err << ", "; first = false; err << "'" << s.getValue() << "'";
             }
           }
+          if (hasIfaceDeclared) {
+            if (dstDeclared && !dstDeclared.empty()) err << ", ";
+            bool first2 = true;
+            for (Attribute a : dstIfaceDeclared) if (auto s = dyn_cast<StringAttr>(a)) {
+              if (!first2) err << ", "; first2 = false; err << "'" << s.getValue() << "'";
+            }
+          }
           err << ")" << hint;
           return err;
         }
@@ -416,19 +641,31 @@ public:
         // Compute element type and wire endpoints/track seen ports.
         Type elemTy = nullptr;
         if (srcPlan) {
-          Block &abody = srcActor.getBody().front();
-          SmallVector<Type> formals; for (Value a : abody.getArguments()) formals.push_back(a.getType());
-          unsigned numParamsSrc = 0, numInSrcCount = 0;
-          for (Type t : formals) {
-            if (isa<fifo::OutputPortType>(t)) ++numInSrcCount;
-            else if (isa<fifo::InputPortType>(t)) {/*count only*/}
-            else ++numParamsSrc;
+          if (srcActor) {
+            Block &abody = srcActor.getBody().front();
+            SmallVector<Type> formals; for (Value a : abody.getArguments()) formals.push_back(a.getType());
+            unsigned numParamsSrc = 0, numInSrcCount = 0;
+            for (Type t : formals) {
+              if (isa<fifo::OutputPortType>(t)) ++numInSrcCount;
+              else if (isa<fifo::InputPortType>(t)) {/*count only*/}
+              else ++numParamsSrc;
+            }
+            unsigned portsOutStart = numParamsSrc + numInSrcCount;
+            auto fifoInTy = dyn_cast<fifo::InputPortType>(formals[portsOutStart + *srcOutIdx]);
+            if (!fifoInTy)
+              return conn.emitOpError("internal error resolving source port type");
+            elemTy = fifoInTy.getElementType();
+          } else if (srcPlan->iface) {
+            auto outTypes = srcPlan->iface.getOutPortTypesAttr();
+            if (outTypes && *srcOutIdx < outTypes.size()) {
+              if (auto tyAttr = dyn_cast<TypeAttr>(outTypes[*srcOutIdx])) {
+                if (auto inPT = dyn_cast<fifo::InputPortType>(tyAttr.getValue()))
+                  elemTy = inPT.getElementType();
+              }
+            }
+            if (!elemTy)
+              return conn.emitOpError("unable to resolve element type from interface out port");
           }
-          unsigned portsOutStart = numParamsSrc + numInSrcCount;
-          auto fifoInTy = dyn_cast<fifo::InputPortType>(formals[portsOutStart + *srcOutIdx]);
-          if (!fifoInTy)
-            return conn.emitOpError("internal error resolving source port type");
-          elemTy = fifoInTy.getElementType();
         }
         if (srcIsNet) {
           auto netOutTy = dyn_cast<fifo::OutputPortType>(conn.getSrc().getType());
@@ -436,22 +673,80 @@ public:
           elemTy = netOutTy.getElementType();
         }
 
+        // Capacity conflict detection: if both endpoints are plans and capacity is set,
+        // ensure no conflicting capacity was previously recorded for this channel.
+        if (srcPlan && dstPlan) {
+          if (auto capAttr = conn.getCapacityAttr()) {
+            ChannelKey key{srcPlan, *srcOutIdx, dstPlan, *dstInIdx};
+            auto it = channelCaps.find(key);
+            uint64_t capVal = static_cast<uint64_t>(capAttr.getInt());
+            if (it == channelCaps.end()) {
+              channelCaps.insert({key, {capVal, conn}});
+            } else if (it->second.first != capVal) {
+              auto err = conn.emitOpError("conflicting capacity for channel: existing=") << it->second.first
+                        << ", new=" << capVal;
+              if (it->second.second)
+                it->second.second->emitRemark("first capacity specified here");
+              return failure();
+            }
+          }
+        } else {
+          // If one endpoint is a network port and a capacity is specified, it will be ignored.
+          if (conn.getCapacityAttr())
+            conn.emitRemark("capacity on network-port connect is ignored; specify capacity where FIFO is materialized");
+        }
+
         // Track duplicate port connections early.
         PendingEdge e; e.conn = conn; e.elemTy = elemTy;
         if (srcPlan) {
           ensureTrackers(srcPlan);
-          if (seenOut[srcPlan][*srcOutIdx])
-            return conn.emitOpError("source port already connected");
+          if (seenOut[srcPlan][*srcOutIdx]) {
+            auto diag = conn.emitOpError("source port already connected");
+            // Provide context: entity symbol (actor or interface), optional instance name, and port index.
+            std::string entityLabel;
+            std::string entityName;
+            if (srcPlan->actor) { entityLabel = "actor"; entityName = srcPlan->actor.getSymName().str(); }
+            else if (srcPlan->iface) { entityLabel = "interface"; entityName = srcPlan->iface.getSymName().str(); }
+            else { entityLabel = "entity"; entityName = "<unknown>"; }
+            std::string ctxMsg = " (" + entityLabel + "=@" + entityName + ", instance=";
+            if (srcPlan->name && !srcPlan->name.getValue().empty())
+              ctxMsg += '"' + srcPlan->name.getValue().str() + '"';
+            else
+              ctxMsg += "<unnamed>";
+            ctxMsg += ", port=out" + Twine(*srcOutIdx).str() + ")";
+            diag << ctxMsg;
+            if (Operation *first = firstOutConn[srcPlan][*srcOutIdx])
+              first->emitRemark("first connection to this port was here");
+            return failure();
+          }
           seenOut[srcPlan][*srcOutIdx] = true;
+          firstOutConn[srcPlan][*srcOutIdx] = conn;
           e.srcPlan = srcPlan; e.srcOutIdx = *srcOutIdx;
         } else {
           e.srcNetPort = conn.getSrc();
         }
         if (dstPlan) {
           ensureTrackers(dstPlan);
-          if (seenIn[dstPlan][*dstInIdx])
-            return conn.emitOpError("destination port already connected");
+          if (seenIn[dstPlan][*dstInIdx]) {
+            auto diag = conn.emitOpError("destination port already connected");
+            std::string entityLabel2;
+            std::string entityName2;
+            if (dstPlan->actor) { entityLabel2 = "actor"; entityName2 = dstPlan->actor.getSymName().str(); }
+            else if (dstPlan->iface) { entityLabel2 = "interface"; entityName2 = dstPlan->iface.getSymName().str(); }
+            else { entityLabel2 = "entity"; entityName2 = "<unknown>"; }
+            std::string ctxMsg = " (" + entityLabel2 + "=@" + entityName2 + ", instance=";
+            if (dstPlan->name && !dstPlan->name.getValue().empty())
+              ctxMsg += '"' + dstPlan->name.getValue().str() + '"';
+            else
+              ctxMsg += "<unnamed>";
+            ctxMsg += ", port=in" + Twine(*dstInIdx).str() + ")";
+            diag << ctxMsg;
+            if (Operation *first = firstInConn[dstPlan][*dstInIdx])
+              first->emitRemark("first connection to this port was here");
+            return failure();
+          }
           seenIn[dstPlan][*dstInIdx] = true;
+          firstInConn[dstPlan][*dstInIdx] = conn;
           e.dstPlan = dstPlan; e.dstInIdx = *dstInIdx;
         } else {
           e.dstNetPort = conn.getDst();
@@ -461,6 +756,14 @@ public:
 
       // Determine fully-wired plans.
       DenseSet<InstPlan*> fullyWired;
+      // We'll also assign deterministic sequence numbers within this network
+      // to enable stable instance and fifo naming independent of hash maps.
+      struct PlanOrder {
+        InstPlan *plan;
+        Operation *def;
+        unsigned arrayIdx; // UINT_MAX when not from an array
+      };
+      SmallVector<PlanOrder> allPlansForOrder;
       auto isFullyWired = [&](InstPlan *p) -> bool {
         // All in/out ports must be seen exactly once.
         auto itOut = seenOut.find(p);
@@ -471,11 +774,46 @@ public:
         return llvm::all_of(itOut->second, [](bool v){return v;}) &&
                llvm::all_of(itIn->second,  [](bool v){return v;});
       };
-      for (auto &kv : singlePlans)
-        if (isFullyWired(kv.second.get())) fullyWired.insert(kv.second.get());
-      for (auto &kv : arrayPlans)
-        for (auto &ptr : kv.second)
-          if (isFullyWired(ptr.get())) fullyWired.insert(ptr.get());
+      for (auto &kv : singlePlans) {
+        InstPlan *p = kv.second.get();
+        if (isFullyWired(p))
+          fullyWired.insert(p);
+        // Collect for deterministic ordering regardless of wiring, but
+        // we'll filter when assigning sequence ids.
+        allPlansForOrder.push_back(PlanOrder{p, p->defOp, /*arrayIdx=*/std::numeric_limits<unsigned>::max()});
+      }
+      for (auto &kv : arrayPlans) {
+        unsigned idx = 0;
+        for (auto &ptr : kv.second) {
+          InstPlan *p = ptr.get();
+          if (isFullyWired(p))
+            fullyWired.insert(p);
+          allPlansForOrder.push_back(PlanOrder{p, p->defOp, idx});
+          ++idx;
+        }
+      }
+
+      // Sort plans deterministically: by defining op position in block, then by array index.
+      llvm::sort(allPlansForOrder, [&](const PlanOrder &a, const PlanOrder &b){
+        if (a.def != b.def)
+          return a.def->isBeforeInBlock(b.def);
+        return a.arrayIdx < b.arrayIdx;
+      });
+
+      // Assign sequence numbers to fully-wired plans and synthesize names if missing.
+      DenseMap<InstPlan*, unsigned> planSeq;
+      unsigned seqCounter = 0;
+      for (const auto &po : allPlansForOrder) {
+        if (!fullyWired.contains(po.plan))
+          continue;
+        planSeq[po.plan] = seqCounter++;
+        if (!po.plan->name) {
+          Twine entityName = po.plan->actor ? Twine(po.plan->actor.getSymName())
+                                            : (po.plan->iface ? Twine(po.plan->iface.getSymName()) : Twine("unknown"));
+          std::string autoName = (Twine(net.getSymName()) + "." + entityName + "." + Twine(planSeq[po.plan])).str();
+          po.plan->name = StringAttr::get(ctx, autoName);
+        }
+      }
 
   if (!allowPartialConnectivity && !allowDynamicIndices) {
         // In strict mode, require all plans to be fully wired.
@@ -492,6 +830,11 @@ public:
       // if one endpoint is a network port, wire the plan port directly to it.
       for (auto &e : edges) {
         if (e.srcPlan && e.dstPlan) {
+          // Skip materialization if either endpoint is interface-typed.
+          if ((!e.srcPlan->actor && e.srcPlan->iface) || (!e.dstPlan->actor && e.dstPlan->iface)) {
+            e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
+            continue;
+          }
           bool useEdge = fullyWired.contains(e.srcPlan) && fullyWired.contains(e.dstPlan);
           if (!useEdge) continue;
           builder.setInsertionPoint(e.conn);
@@ -499,6 +842,13 @@ public:
           Type inPortTy = fifo::InputPortType::get(ctx, e.elemTy);
           Type outPortTy = fifo::OutputPortType::get(ctx, e.elemTy);
           auto create = builder.create<fifo::CreateOp>(e.conn.getLoc(), TypeRange{inPortTy, outPortTy}, e.elemTy, capVal);
+          // Attach a deterministic name attribute to this fifo for stable testing/logging.
+          if (planSeq.count(e.srcPlan) && planSeq.count(e.dstPlan)) {
+            std::string fifoName = (Twine(net.getSymName()) + "." +
+                                    e.srcPlan->name.getValue() + ".out" + Twine(e.srcOutIdx) +
+                                    "->" + e.dstPlan->name.getValue() + ".in" + Twine(e.dstInIdx)).str();
+            create->setAttr("cal.name", StringAttr::get(ctx, fifoName));
+          }
           e.srcPlan->outPorts[e.srcOutIdx] = create.getInputPort();
           e.dstPlan->inPorts[e.dstInIdx] = create.getOutputPort();
           toErase.push_back(e.conn);
@@ -506,11 +856,17 @@ public:
         }
         // Network-to-plan: wire directly and erase connect.
         if (e.srcNetPort && e.dstPlan) {
+          // If destination is interface-typed, surface a remark and still thread the SSA value.
+          if (!e.dstPlan->actor && e.dstPlan->iface)
+            e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
           e.dstPlan->inPorts[e.dstInIdx] = e.srcNetPort;
           toErase.push_back(e.conn);
           continue;
         }
         if (e.srcPlan && e.dstNetPort) {
+          // If source is interface-typed, surface a remark and still thread the SSA value.
+          if (!e.srcPlan->actor && e.srcPlan->iface)
+            e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
           e.srcPlan->outPorts[e.srcOutIdx] = e.dstNetPort;
           toErase.push_back(e.conn);
           continue;
@@ -519,6 +875,10 @@ public:
 
       // Create cal.create_instance ops for each plan (optionally partial-only when flagged).
   auto materializeInstance = [&](InstPlan &plan) -> FailureOr<CreateInstanceOp> {
+        if (!plan.actor && plan.iface) {
+          // Do not materialize interface-typed instances at this stage; defer with no remark.
+          return failure();
+        }
         // Ensure all ports are connected.
         for (unsigned i = 0, e = plan.inPorts.size(); i < e; ++i)
           if (!plan.inPorts[i])
@@ -535,15 +895,21 @@ public:
   // Insert after all fifo.create ops to ensure dominance of operands.
   builder.setInsertionPointToEnd(&body);
   auto inst = builder.create<CreateInstanceOp>(plan.defOp->getLoc(), plan.actor.getSymNameAttr(), plan.name, all);
+        // Also mirror the chosen instance name into a generic attribute for convenience.
+        if (plan.name)
+          inst->setAttr("cal.name", plan.name);
         return inst;
       };
 
       SmallVector<Operation*> defsToErase;
       for (auto &it : singlePlans) {
         if (fullyWired.contains(it.second.get())) {
-          if (failed(materializeInstance(*it.second)))
-            return it.second->defOp->emitOpError("internal error: expected fully-wired instance to materialize");
-          defsToErase.push_back(it.second->defOp);
+          auto res = materializeInstance(*it.second);
+          if (succeeded(res))
+            defsToErase.push_back(it.second->defOp);
+          else {
+            // Interface-typed instance skipped; keep symbolic def.
+          }
   } else if (allowPartialConnectivity) {
           it.second->defOp->emitRemark("skipping materialization of partially-connected instance");
         } else {
@@ -554,8 +920,10 @@ public:
         bool allMat = true;
         for (auto &ptr : kv.second) {
           if (fullyWired.contains(ptr.get())) {
-            if (failed(materializeInstance(*ptr)))
-              return ptr->defOp->emitOpError("internal error: expected fully-wired instance to materialize (array)");
+            if (failed(materializeInstance(*ptr))) {
+              // interface-typed instance skipped; keep array def
+              allMat = false;
+            }
           } else {
             allMat = false;
             if (allowPartialConnectivity)
@@ -683,13 +1051,11 @@ public:
             if (symbolTable.lookupNearestSymbolFrom<ActorOp>(ci, ci.getActorRefAttr()))
               hasActorInstance = true;
           });
-          // When dynamic indices are allowed, preserve networks with unresolved symbolic operations
-          if (allowDynamicIndices) {
-            net.walk([&](Operation *op) {
-              if (isa<InstantiateOp, InstantiateArrayOp, ConnectOp, InstanceAtOp>(op))
-                hasSymbolicOps = true;
-            });
-          }
+          // Preserve networks with unresolved symbolic operations (including interface arrays)
+          net.walk([&](Operation *op) {
+            if (isa<InstantiateOp, InstantiateArrayOp, InstantiateArrayIfaceOp, ConnectOp, InstanceAtOp>(op))
+              hasSymbolicOps = true;
+          });
           if (!hasActorInstance && !hasSymbolicOps)
             toErase.push_back(net);
         }
