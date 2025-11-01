@@ -23,6 +23,7 @@ std::unique_ptr<mlir::Pass> createResolveInstanceIfPass();
 // Passes.h.inc in multiple places.
 std::unique_ptr<mlir::Pass> createCalConstEvalPass();
 std::unique_ptr<mlir::Pass> createElaborateScfStructuresPass();
+std::unique_ptr<mlir::Pass> createVerifyConnectPortsPass();
 
 // Emit registration functions.
 #define GEN_PASS_REGISTRATION

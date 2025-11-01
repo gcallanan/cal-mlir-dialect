@@ -15,6 +15,8 @@ static void buildCalStructuralElabPipeline(OpPassManager &pm) {
   pm.addPass(createResolveInstanceIfPass());
   pm.addPass(createLowerInstanceForPass());
   pm.addPass(createElaborateScfStructuresPass());
+  // Late verification: ensure connect port names match entity/interface ports
+  pm.addPass(createVerifyConnectPortsPass());
 }
 
 void registerCalGenericTransformationsPipelines() {

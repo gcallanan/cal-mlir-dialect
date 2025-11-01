@@ -365,4 +365,30 @@ def ElaborateScfStructuresPass : Pass<"elaborate-scf-structures", "mlir::ModuleO
   ];
 }
 
+// Late verification: after structural resolution, check that all cal.connect
+// endpoints that refer to instance handles name ports that actually exist on
+// the referenced entity (actor or network), or on the referenced interface
+// if interface-typed handles are used. Network SSA ports (block arguments)
+// are exempt because their names on the connect are ignored.
+def VerifyConnectPortsPass : Pass<"verify-connect-ports", "mlir::ModuleOp"> {
+  let summary = "Verify that cal.connect uses valid port names on concrete entities";
+  let description = [{
+    This late verifier walks `cal.connect` operations and checks that any
+    endpoint that refers to an instance handle (concrete or interface-typed)
+    uses a port name that exists on the referenced entity or interface for the
+    appropriate direction (source: out ports, destination: in ports).
+
+    Endpoints that are network SSA ports (block arguments of a `cal.network`)
+    are ignored for this check because names are not consulted on those sides.
+
+    Diagnostics include the instance context (best-effort name or symbol) and
+    the set of available ports to aid frontend codegen and debugging.
+  }];
+  let constructor = "mlir::createVerifyConnectPortsPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::fifo::FifoDialect"
+  ];
+}
+
 #endif // CAL_TRANSFORM_PASSES
