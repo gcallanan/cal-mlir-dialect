@@ -844,4 +844,71 @@ def Cal_InstanceForOp : Cal_Op<"instance_for", [HasParent<"NetworkOp">, NoTermin
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// RFC: Instance conditionals and array utilities
+//===----------------------------------------------------------------------===//
+
+// NOTE: cal.instance_if remains to be added with a custom parser/printer.
+
+// Construct a fixed-length instance array from a variadic list of instance
+// handles. Homogeneity is checked by verifiers in downstream passes.
+def Cal_InstanceArrayLiteralOp : Cal_Op<"instance_array.literal", [HasParent<"NetworkOp">]> {
+  let summary = "Build an instance array from scalar handles";
+  let description = [{
+    Creates a `!cal.instance.array<@Entity, N>` from N scalar instance handles
+    of the same entity (or interface) type.
+  }];
+  let arguments = (ins Variadic<AnyType>:$inputs);
+  let results = (outs AnyType:$array);
+  let assemblyFormat = "`(` $inputs `)` attr-dict `:` type($inputs) `->` type($array)";
+  let hasVerifier = 1;
+}
+
+// Concatenate two instance arrays into a larger array. The element type must
+// match (concrete entity or interface-typed) and sizes add up. Kept lightweight
+// here; detailed checks can be performed in a later verifier or canonicalizer.
+def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", [HasParent<"NetworkOp">]> {
+  let summary = "Concatenate two instance arrays";
+  let description = [{
+    Concatenates two instance arrays with the same element handle type into a
+    single array whose length is the sum of the inputs.
+  }];
+  let arguments = (ins AnyType:$lhs, AnyType:$rhs);
+  let results = (outs AnyType:$array);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($array)";
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Structural conditional for instance handles/arrays
+//===----------------------------------------------------------------------===//
+
+def Cal_InstanceIfOp : Cal_Op<"instance_if", [HasParent<"NetworkOp">, NoTerminator]> {
+  let summary = "Conditional selection between two instance-producing regions";
+  let description = [{
+    Structural conditional that selects between two regions producing either a
+    single instance handle or an instance array handle. Both regions must
+    terminate with `cal.instance_yield` of exactly one value, and the yielded
+    types must match the result type of this op.
+
+    Example:
+      %h = cal.instance_if %cond {
+        %a = cal.instantiate @A : !cal.instance<@A>
+        cal.instance_yield %a : !cal.instance<@A>
+      } else {
+        %b = cal.instantiate @B : !cal.instance<@B>
+        %ib = cal.instance.cast %b : !cal.instance<@B> -> !cal.instance<@A>
+        cal.instance_yield %ib : !cal.instance<@A>
+      } : !cal.instance<@A>
+  }];
+
+  let arguments = (ins I1:$cond);
+  let results = (outs AnyType:$result);
+  let regions = (region AnyRegion:$thenRegion, AnyRegion:$elseRegion);
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 #endif // CAL_OPS

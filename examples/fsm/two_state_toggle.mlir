@@ -14,7 +14,7 @@ cal.actor @toggle(%max: i32)
 
     // FSM: S0 -> a0 -> S1, S1 -> a1 -> S0
     cal.fsm {
-        cal.state @S0 {
+        cal.state @S0  {
             cal.transition action("a0") -> @S1
         } { initial }
         cal.state @S1 {

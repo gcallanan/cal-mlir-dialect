@@ -16,6 +16,7 @@
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/IRMapping.h"
 
 using namespace mlir;
 using namespace mlir::cal;
@@ -1027,6 +1028,85 @@ LogicalResult InstantiateArrayOp::verify() {
   return success();
 }
 
+// Verify that a list of inputs are all instance handles of the same element
+// kind and that the provided result array type matches the element and count.
+LogicalResult InstanceArrayLiteralOp::verify() {
+  auto inputs = getInputs();
+  if (inputs.empty())
+    return emitOpError() << "expects at least one input handle";
+
+  // Result must be an instance array (entity or interface typed).
+  Type resTy = getArray().getType();
+  if (auto entArr = dyn_cast<InstanceArrayType>(resTy)) {
+    // All inputs must be !cal.instance<@Actor> with same actor symbol.
+    FlatSymbolRefAttr actor = entArr.getActorRef();
+    for (Value v : inputs) {
+      auto h = dyn_cast<InstanceType>(v.getType());
+      if (!h)
+        return emitOpError() << "expects all inputs to be !cal.instance<@Actor> for result " << resTy;
+      if (h.getActorRef() != actor)
+        return emitOpError() << "input actor '" << h.getActorRef().getValue()
+                             << "' does not match result actor '" << actor.getValue() << "'";
+    }
+    if (static_cast<uint64_t>(inputs.size()) != static_cast<uint64_t>(entArr.getCount()))
+      return emitOpError() << "input count " << inputs.size() << " does not match result count " << entArr.getCount();
+    return success();
+  }
+
+  if (auto ifArr = dyn_cast<InterfaceInstanceArrayType>(resTy)) {
+    // All inputs must be !cal.instance.iface<@Iface> with same interface.
+    FlatSymbolRefAttr iface = ifArr.getIfaceRef();
+    for (Value v : inputs) {
+      auto h = dyn_cast<InterfaceInstanceType>(v.getType());
+      if (!h)
+        return emitOpError() << "expects all inputs to be !cal.instance.iface<@Iface> for result " << resTy;
+      if (h.getIfaceRef() != iface)
+        return emitOpError() << "input interface '" << h.getIfaceRef().getValue()
+                             << "' does not match result interface '" << iface.getValue() << "'";
+    }
+    if (static_cast<uint64_t>(inputs.size()) != static_cast<uint64_t>(ifArr.getCount()))
+      return emitOpError() << "input count " << inputs.size() << " does not match result count " << ifArr.getCount();
+    return success();
+  }
+
+  return emitOpError() << "result must be !cal.instance.array<@Actor,N> or !cal.instance.array.iface<@Iface,N>, got " << resTy;
+}
+
+LogicalResult InstanceArrayConcatOp::verify() {
+  Type lhsTy = getLhs().getType();
+  Type rhsTy = getRhs().getType();
+  Type resTy = getArray().getType();
+
+  if (auto l = dyn_cast<InstanceArrayType>(lhsTy)) {
+    auto r = dyn_cast<InstanceArrayType>(rhsTy);
+    auto o = dyn_cast<InstanceArrayType>(resTy);
+    if (!r || !o)
+      return emitOpError() << "both inputs and result must be !cal.instance.array<@Actor,N>";
+    if (l.getActorRef() != r.getActorRef() || l.getActorRef() != o.getActorRef())
+      return emitOpError() << "actor symbol mismatch across lhs/rhs/result";
+    if (static_cast<uint64_t>(o.getCount()) != static_cast<uint64_t>(l.getCount() + r.getCount()))
+      return emitOpError() << "result count " << o.getCount() << " must equal lhs+rhs ("
+                           << l.getCount() << "+" << r.getCount() << ")";
+    return success();
+  }
+
+  if (auto l = dyn_cast<InterfaceInstanceArrayType>(lhsTy)) {
+    auto r = dyn_cast<InterfaceInstanceArrayType>(rhsTy);
+    auto o = dyn_cast<InterfaceInstanceArrayType>(resTy);
+    if (!r || !o)
+      return emitOpError() << "both inputs and result must be !cal.instance.array.iface<@Iface,N>";
+    if (l.getIfaceRef() != r.getIfaceRef() || l.getIfaceRef() != o.getIfaceRef())
+      return emitOpError() << "interface symbol mismatch across lhs/rhs/result";
+    if (static_cast<uint64_t>(o.getCount()) != static_cast<uint64_t>(l.getCount() + r.getCount()))
+      return emitOpError() << "result count " << o.getCount() << " must equal lhs+rhs ("
+                           << l.getCount() << "+" << r.getCount() << ")";
+    return success();
+  }
+
+  return emitOpError() << "lhs/rhs must be instance arrays (entity or interface), got "
+                       << lhsTy << ", " << rhsTy;
+}
+
 LogicalResult InstantiateArrayIfaceOp::verify() {
   // Result type must be !cal.instance.array.iface<@Iface, N>
   Type resTy = getHandlesArray().getType();
@@ -1812,4 +1892,111 @@ LogicalResult ImplementsOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
 // NOTE: verification for future array/connect ops will be added once those
 // ops are fully integrated via TableGen generation.
+
+//===----------------------------------------------------------------------===//
+// cal.instance_if: parse/print/verify and folding
+//===----------------------------------------------------------------------===//
+
+ParseResult InstanceIfOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand cond;
+  if (parser.parseOperand(cond)) return failure();
+
+  // Parse then region
+  Region *thenRegion = result.addRegion();
+  if (parser.parseRegion(*thenRegion, /*arguments=*/{})) return failure();
+
+  // Expect 'else' and parse else region
+  if (parser.parseKeyword("else")) return failure();
+  Region *elseRegion = result.addRegion();
+  if (parser.parseRegion(*elseRegion, /*arguments=*/{})) return failure();
+
+  // Result type
+  Type resTy;
+  if (parser.parseColon() || parser.parseType(resTy)) return failure();
+  result.addTypes(resTy);
+
+  // Attributes (none expected, but accept attr-dict for future-proofing)
+  (void)parser.parseOptionalAttrDict(result.attributes);
+
+  // Resolve cond
+  if (parser.resolveOperand(cond, parser.getBuilder().getI1Type(), result.operands))
+    return failure();
+  return success();
+}
+
+void InstanceIfOp::print(OpAsmPrinter &printer) {
+  printer << ' ';
+  printer.printOperand(getCond());
+  printer.printNewline();
+  printer << "{\n";
+  printer.increaseIndent();
+  printer.printRegion(getThenRegion(), /*printEntryBlockArgs=*/false, /*printBlockTerminators=*/false);
+  printer.decreaseIndent();
+  printer << "}\n else {\n";
+  printer.increaseIndent();
+  printer.printRegion(getElseRegion(), /*printEntryBlockArgs=*/false, /*printBlockTerminators=*/false);
+  printer.decreaseIndent();
+  printer << "}\n : ";
+  printer.printType(getResult().getType());
+}
+
+LogicalResult InstanceIfOp::verify() {
+  // Regions must have one block each and terminate with cal.instance_yield.
+  auto checkRegion = [&](Region &r, StringRef which, Type expectedTy) -> LogicalResult {
+    if (!r.hasOneBlock())
+      return emitOpError() << which << " region must have exactly one block";
+    Operation *term = r.front().getTerminator();
+    auto y = dyn_cast<InstanceYieldOp>(term);
+    if (!y)
+      return emitOpError() << which << " region must terminate with cal.instance_yield";
+    if (!y.getValue())
+      return emitOpError() << which << " region must yield exactly one value";
+    if (y.getValue().getType() != expectedTy)
+      return emitOpError() << which << " region yielded type " << y.getValue().getType()
+                           << " does not match op result type " << expectedTy;
+    return success();
+  };
+
+  Type resTy = getResult().getType();
+  if (failed(checkRegion(getThenRegion(), "then", resTy))) return failure();
+  if (failed(checkRegion(getElseRegion(), "else", resTy))) return failure();
+  return success();
+}
+
+namespace {
+struct FoldConstantInstanceIf : OpRewritePattern<InstanceIfOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(InstanceIfOp op, PatternRewriter &rewriter) const override {
+    // Match constant i1 cond
+    auto c = op.getCond().getDefiningOp<arith::ConstantOp>();
+    if (!c) return failure();
+    auto b = dyn_cast_or_null<IntegerAttr>(c.getValue());
+    if (!b) return failure();
+    bool takeThen = b.getInt() != 0;
+
+    Region &chosen = takeThen ? op.getThenRegion() : op.getElseRegion();
+    // Clone chosen region body into parent at op location.
+    IRMapping map;
+    rewriter.setInsertionPoint(op);
+    Value replacement;
+    for (Operation &inner : chosen.front()) {
+      if (auto y = dyn_cast<InstanceYieldOp>(&inner)) {
+        replacement = map.lookupOrDefault(y.getValue());
+        break;
+      }
+      Operation *cloned = rewriter.clone(inner, map);
+      for (auto [orig, neu] : llvm::zip(inner.getResults(), cloned->getResults()))
+        map.map(orig, neu);
+    }
+    if (!replacement)
+      return failure();
+    rewriter.replaceOp(op, replacement);
+    return success();
+  }
+};
+} // namespace
+
+void InstanceIfOp::getCanonicalizationPatterns(RewritePatternSet &patterns, MLIRContext *ctx) {
+  patterns.add<FoldConstantInstanceIf>(ctx);
+}
 

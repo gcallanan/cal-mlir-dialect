@@ -1,6 +1,7 @@
+<!-- markdownlint-disable MD032 MD033 MD007 MD029 -->
 # RFC: Array-first instance conditionals and comprehensions in CAL IR
 
-This RFC proposes two new high-level structural ops to model entity selection and replication directly in CAL IR without forcing frontend network flattening, with an array-first collection model that avoids MLIR tuples.
+This RFC proposes two new high-level structural ops to model entity selection and replication directly in CAL IR without forcing frontend network flattening, with an array-first collection model that avoids MLIR tuples. It also specifies hierarchical network flattening semantics so that instances may be either actors or networks and the entire design can be fully elaborated into a flat network of actor instances and FIFO channels.
 
 - `cal.instance_if`: a structural conditional that selects between two instance-producing regions (scalar handle or array handle).
 - `cal.instance_for`: a structural comprehension that builds an array of instances from a (static or dynamic) loop.
@@ -24,6 +25,10 @@ Both ops work uniformly for actors and networks, using instance handle types and
 Notes:
 - Arrays are homogeneous by construction, but “homogeneous by interface” supports mixing different concrete entities provided they share the required interface.
 - We do not use MLIR tuples for collections; all collection operations work on array types above.
+
+Entity kinds:
+- Actor entity: `cal.actor` symbol with optional `ports_in/ports_out` and parameters.
+- Network entity: `cal.network` symbol with optional parameters and `ports_in/ports_out` that expose its boundary ports; networks may also implement interfaces.
 
 ### Entity interfaces (prerequisite)
 
@@ -151,6 +156,13 @@ TableGen sketch:
 
 These enable building arrays from scalars and composing/reshaping arrays without relying on tuples.
 
+Verifier notes (implemented):
+- `cal.instance_array.literal` requires all inputs to be scalar instance handles of the same element kind:
+  - For entity-typed results: all inputs must be `!cal.instance<@E>` with the same `@E`, and the result type must be `!cal.instance.array<@E, K>` where `K = #inputs`.
+  - For interface-typed results: all inputs must be `!cal.instance.iface<@I>` with the same `@I`, and the result type must be `!cal.instance.array.iface<@I, K>` where `K = #inputs`.
+- `cal.instance_array.concat` requires LHS and RHS to be instance arrays with matching element handle type (same `@E` or same `@I`). The result count must equal `lhs.count + rhs.count`.
+- Both ops accept only homogeneous collections; mixing entity and interface element kinds is rejected.
+
 Interface utilities:
 - `cal.instance.cast %h : !cal.instance<@E> -> !cal.instance<iface:@I>`
 - The array literal and concat ops accept interface-typed operands/results as long as all operands implement the target interface.
@@ -163,6 +175,7 @@ Interface utilities:
   - For interface-typed handles, port names and types are verified against the interface definition.
   - Element-wise array connect requires equal length (or unknown lengths refined later); mixing concrete and interface sides is allowed if the concrete implements the interface.
   - Scalar-to-array fan-out or array-to-scalar fan-in require explicit ops (`cal.fanout`, `cal.gather`).
+  - When connecting to a network instance handle, the port names are resolved against the network’s declared `ports_in/ports_out` (or implemented interface), exactly like for actors.
 
 ## Verifier rules (summary)
 
@@ -195,8 +208,8 @@ Interface utilities:
 4) Elaborate connections
   - Extend `flatten-cal-networks` to handle array endpoints and expand element-wise connects.
 
-5) Inline network instances
-  - Pass `cal-inline-network-instances`: inline nested `cal.network` instances into the parent network.
+5) Inline network instances (hierarchical flattening)
+  - Pass `cal-inline-network-instances`: inline nested `cal.network` instances into the parent network until only actor instances remain. See the new section “Hierarchical networks and inlining” for exact semantics.
 
 6) Interface conformance and specialization (throughout)
   - Ensure all interface-typed handles are backed by entities that implement the interface where materialization requires it.
@@ -285,3 +298,108 @@ Recommended approaches:
 
 Non-goals for now:
 - A single `!cal.instance.array<…>` holding mixed symbols without an interface is not supported; it weakens type guarantees and complicates connect verification.
+
+## Hierarchical networks and inlining (flattening semantics)
+
+This section defines how instances of networks are elaborated and inlined into their parent networks, enabling a fully flat network consisting only of actor instances, FIFO channels, and connections.
+
+### Network public shape
+
+- A `cal.network @N` may declare `ports_in(...)` and `ports_out(...)` with symbolic names and FIFO port types. These form the public boundary of the network and can be referenced by instance connections in parent networks via `cal.connect` using the port names.
+- Networks may optionally implement interfaces via `cal.implements @Iface for @N`; when connecting to a network instance through an interface-typed handle, port names and types are checked against the interface.
+
+### Instantiating an actor vs a network
+
+- `cal.instantiate` and `cal.instantiate_array` produce handles to either actor or network symbols. The handle type encodes the symbol (`!cal.instance<@Actor>` or `!cal.instance<@Network>`), or an interface type.
+- `cal.create_instance` materialization step (performed by elaboration) accepts both actor and network handles. For actor handles it emits a `cal.create_instance` targeting the actor. For network handles it triggers inlining of the referenced network (see below) and does not emit a `cal.create_instance` for the network itself.
+
+### Inlining algorithm (cal-inline-network-instances)
+
+Given a parent `cal.network` P with an instance of child `cal.network` C:
+
+1. Preconditions
+   - No recursion: the instance graph must be acyclic. Detect and diagnose cycles with a clear chain of symbols.
+   - The trip counts and array sizes used to replicate C (via `cal.instantiate_array` or `cal.instance_for`) must be statically known before inlining, or a previous pass must have resolved them.
+   - Interface conformance: if the handle is interface-typed, resolve it to a concrete symbol that implements the interface before inlining (via `cal.instance.cast` or verifier lookups).
+
+2. Clone internals
+   - Clone all operations in C’s body into P, excluding C’s region entry block and any symbolic structural ops already resolved (e.g., comprehensions), preserving relative order.
+   - Use an SSA capture map to remap C’s region block arguments to the actual operands passed at the instance site (parameters and public ports).
+   - Apply name mangling for symbol-like attributes (instance names) to ensure uniqueness, e.g., `parent.childX.*`.
+
+3. Parameter and argument materialization
+   - Parameters to C are plain SSA values; they can be constants (`arith.constant`), computed expressions inside P, or results of `func.call`.
+   - Elaboration is structural: it does not execute code. It substitutes arguments by wiring SSA uses. Constants remain constants; function calls remain calls and are not evaluated at compile time.
+   - Dominance and placement: if an argument value is defined after the instance site, move-or-clone pure producers (constants, arithmetic) before the inlined region as needed. Side-effecting ops (including unknown `func.call`s) are not moved; instead, require correct dominance at the call site and diagnose when violated.
+   - Optional constant-folding can run as a separate pass before/after inlining.
+
+4. Port rewiring
+   - Internal connects inside C are cloned verbatim.
+   - Connections that target C’s public ports are rewired to P’s endpoints:
+     - For an internal source connected to C’s `ports_out` port “out0”, replace the endpoint with the corresponding endpoint that was connected to the network instance “out0” in P.
+     - For an internal destination connected to C’s `ports_in` port “in0”, replace that endpoint with the corresponding endpoint that was connected to the network instance “in0” in P.
+   - No intermediate `fifo.create` is introduced for network boundary rewiring; existing capacity on connects is preserved. If P connects a producer to the network instance input port with a capacity override, that capacity is applied to the materialized channel (diagnose multiple conflicting capacities).
+
+5. Instance arrays
+   - When inlining an array of network instances, apply the algorithm element-wise, using the element index to mangle names. All rewiring is element-wise; array fan-in/fan-out requires explicit ops.
+
+6. Cleanup
+   - Erase the network instance handle and its structural connects at P’s level once all inlined content is wired.
+   - Repeat until no network instances remain under P.
+
+### Constants and function calls in network arguments
+
+- Constants: remain as `arith.constant` values captured and substituted. They may be constant-folded by general MLIR canonicalization/const-prop.
+- Function calls:
+  - Allowed as argument producers. They remain as `func.call` in P and feed the inlined uses through SSA substitution.
+  - Side effects: elaboration does not reorder or duplicate side-effecting calls. If duplication would be required (e.g., multiple array elements reading the same call result but dominance forbids sharing), the pass will diagnose and request an explicit hoist or explicit replication by the user/frontend.
+  - Structural requirements: any value used to form structural counts (array sizes, capacities) must be proven constant before the structural pass that requires it. Otherwise, emit a diagnostic that the structure is not statically decidable.
+
+### Symbol resolution and scope
+
+- Symbol lookup for actor/network/interface names follows MLIR’s nested symbol tables. When inlining, inner references are resolved relative to the nearest enclosing symbol table of C before cloning; after cloning, references are updated to point to P-local clones where applicable.
+- Name mangling strategy should be deterministic and reversible enough for diagnostics, e.g., `@P::C[i]::A::instName`.
+
+### Diagnostics (non-exhaustive)
+
+- Recursive or cyclic network instantiation: error with instance chain.
+- Unknown port name on network boundary: error lists available names.
+- Multiple conflicting capacities on a single materialized channel: error with all sites listed.
+- Dynamic structure (non-constant sizes or indices) where a static decision is required for inlining: precise error indicating the offending operand.
+
+### Example: Network-in-Network with constants and call arguments
+
+ cal.actor @leaf(%p: i32) ports_in(%i: !fifo.output_port<i32>) ports_out(%o: !fifo.input_port<i32>) {
+   cal.execution_body {
+     %tok = fifo.pop(%i : !fifo.output_port<i32>) : i32
+     %sum = arith.addi %tok, %p : i32
+     fifo.push(%o : !fifo.input_port<i32>, %sum : i32)
+     %t = arith.constant true
+     cal.action_done %t : i1
+   }
+ }
+
+ cal.network @child(%bias: i32)
+   ports_in(%in: !fifo.output_port<i32>)
+   ports_out(%out: !fifo.input_port<i32>) {
+   %in0, %out0 = fifo.create<i32>(2) : !fifo.input_port<i32>, !fifo.output_port<i32>
+   cal.create_instance @leaf "L" (%bias : i32)
+     ports_in(%out : !fifo.output_port<i32>)
+     ports_out(%in0 : !fifo.input_port<i32>)
+   cal.connect %out0 "out" -> %out "out" capacity(2)
+ }
+
+ cal.network @top() {
+   %c10 = arith.constant 10 : i32
+   %arg = func.call @producer() : () -> i32
+   %inA, %outA = fifo.create<i32>(4) : !fifo.input_port<i32>, !fifo.output_port<i32>
+   %inB, %outB = fifo.create<i32>(4) : !fifo.input_port<i32>, !fifo.output_port<i32>
+
+   // Instantiate network @child with argument (%c10 + %arg)
+   %sum = arith.addi %c10, %arg : i32
+   %h = cal.instantiate @child (%sum : i32) : !cal.instance<@child>
+   cal.connect %outA "out" -> %h "in"
+   cal.connect %h "out" -> %inB "in" capacity(4)
+ }
+
+Flattening inlines @child into @top, rewires ports, preserves the capacity(4), and leaves the `func.call @producer` in place as the SSA producer for `%sum`.
