@@ -303,4 +303,66 @@ def LowerInstanceForPass : Pass<"lower-instance-for", "mlir::ModuleOp"> {
   ];
 }
 
+def ResolveInstanceIfPass : Pass<"resolve-instance-if", "mlir::ModuleOp"> {
+  let summary = "Resolve (fold) cal.instance_if with constant conditions";
+  let description = [{
+    This pass performs a lightweight resolution of structural conditionals
+    expressed with `cal.instance_if`. If the `cond` operand is a constant
+    `arith.constant` of type `i1`, the pass replaces the `cal.instance_if`
+    with the value yielded by the selected region. The region body is cloned
+    and the op is erased. For non-constant conditions, the op is left intact.
+
+    Implementation detail: the pass leverages the canonicalization patterns
+    registered on `cal.instance_if` and runs a greedy pattern application to
+    fold constant conditions.
+  }];
+  let constructor = "mlir::createResolveInstanceIfPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
+// Evaluate constexpr-like helper functions and fold arithmetic/recurrences
+// so structural conditions and loop bounds become constants.
+def CalConstEvalPass : Pass<"cal-const-eval", "mlir::ModuleOp"> {
+  let summary = "Const-evaluate pure helper functions and fold arithmetic for structural elaboration";
+  let description = [{
+    This pass prepares CAL networks for structural elaboration by evaluating
+    calls to small, side-effect-free helper functions with constant arguments
+    (e.g., pow2), inlining them and then applying constant propagation and
+    canonicalization so that conditions and loop trip counts become compile-time
+    constants. The pass is conservative: non-constant arguments or side effects
+    cause calls to remain; a follow-up diagnostic pass may require constants.
+  }];
+  let constructor = "mlir::createCalConstEvalPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::cal::CalDialect",
+    // Canonicalization/inlining may materialize ops that depend on UB dialect;
+    // pre-register it to avoid dynamic loading during multithreaded execution.
+    "mlir::ub::UBDialect"
+  ];
+}
+
+// Elaborate structural scf.if/scf.for with constant conditions and trip counts
+// into concrete instances and connects.
+def ElaborateScfStructuresPass : Pass<"elaborate-scf-structures", "mlir::ModuleOp"> {
+  let summary = "Elaborate scf.if/scf.for with constant predicates into concrete CAL structure";
+  let description = [{
+    Unrolls scf.for with static trip counts and replaces scf.if with its taken
+    branch when the condition is constant, cloning structural CAL ops (instantiate,
+    connect, fifo.create, etc.) into the parent network. Leaves dynamic constructs
+    unchanged and may emit diagnostics when static elaboration is required.
+  }];
+  let constructor = "mlir::createElaborateScfStructuresPass()";
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 #endif // CAL_TRANSFORM_PASSES

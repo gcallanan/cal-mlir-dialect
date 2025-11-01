@@ -41,6 +41,19 @@ static LogicalResult verifyPortNames(Operation *op, ArrayAttr names, StringRef w
   return success();
 }
 
+// Returns success if the operation has an ancestor cal.network. This allows
+// structural construction ops to appear nested under scf.if/for as long as
+// they are within some network.
+static LogicalResult requireNetworkAncestor(Operation *op, StringRef opname) {
+  for (Operation *cur = op->getParentOp(); cur; cur = cur->getParentOp()) {
+    if (llvm::isa<mlir::cal::NetworkOp>(cur))
+      return success();
+  }
+  return op->emitOpError() << "'" << opname
+                           << "' must be nested within a cal.network (ancestor),"
+                           << " potentially under scf.if/scf.for";
+}
+
 template <typename PortTy>
 static bool isPortTypeOf(Type t) {
   return isa<PortTy>(t);
@@ -60,6 +73,8 @@ static std::optional<int64_t> getConstIndex(Value v) {
 }
 
 LogicalResult InstanceForOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instance_for")))
+    return failure();
   // Region structure: exactly one block; optional single index IV; terminator must be cal.instance_yield with one value.
   if (!getBody().hasOneBlock())
     return emitOpError() << "expected region to have exactly one block";
@@ -977,6 +992,8 @@ LogicalResult CreateStateVarOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult InstantiateArrayOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instantiate_array")))
+    return failure();
   // Result type must be !cal.instance.array<actorRef, count>
   Type resTy = getHandlesArray().getType();
   auto arrTy = mlir::dyn_cast<InstanceArrayType>(resTy);
@@ -1031,6 +1048,8 @@ LogicalResult InstantiateArrayOp::verify() {
 // Verify that a list of inputs are all instance handles of the same element
 // kind and that the provided result array type matches the element and count.
 LogicalResult InstanceArrayLiteralOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instance_array.literal")))
+    return failure();
   auto inputs = getInputs();
   if (inputs.empty())
     return emitOpError() << "expects at least one input handle";
@@ -1073,6 +1092,8 @@ LogicalResult InstanceArrayLiteralOp::verify() {
 }
 
 LogicalResult InstanceArrayConcatOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instance_array.concat")))
+    return failure();
   Type lhsTy = getLhs().getType();
   Type rhsTy = getRhs().getType();
   Type resTy = getArray().getType();
@@ -1108,6 +1129,8 @@ LogicalResult InstanceArrayConcatOp::verify() {
 }
 
 LogicalResult InstantiateArrayIfaceOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instantiate_array.iface")))
+    return failure();
   // Result type must be !cal.instance.array.iface<@Iface, N>
   Type resTy = getHandlesArray().getType();
   auto arrTy = mlir::dyn_cast<InterfaceInstanceArrayType>(resTy);
@@ -1142,6 +1165,8 @@ LogicalResult InstantiateArrayIfaceOp::verify() {
 }
 
 LogicalResult InstanceAtOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instance_at")))
+    return failure();
   Type arrT = getArray().getType();
   Type hT = getHandle().getType();
 
@@ -1194,6 +1219,8 @@ LogicalResult InstanceAtOp::verify() {
 }
 
 LogicalResult ConnectOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.connect")))
+    return failure();
   // Port names must be non-empty.
   if (getSrcPortAttr().getValue().empty() || getDstPortAttr().getValue().empty()) {
     return emitOpError() << "port names must be non-empty";
@@ -1699,6 +1726,8 @@ cal::ActorOp CreateInstanceOp::getActor() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult InstanceCastOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instance.cast")))
+    return failure();
   Type inTy = getInput().getType();
   Type outTy = getOutput().getType();
   auto entTy = dyn_cast<InstanceType>(inTy);
@@ -1941,6 +1970,8 @@ void InstanceIfOp::print(OpAsmPrinter &printer) {
 }
 
 LogicalResult InstanceIfOp::verify() {
+  if (failed(requireNetworkAncestor(getOperation(), "cal.instance_if")))
+    return failure();
   // Regions must have one block each and terminate with cal.instance_yield.
   auto checkRegion = [&](Region &r, StringRef which, Type expectedTy) -> LogicalResult {
     if (!r.hasOneBlock())
@@ -1962,6 +1993,8 @@ LogicalResult InstanceIfOp::verify() {
   if (failed(checkRegion(getElseRegion(), "else", resTy))) return failure();
   return success();
 }
+
+// (No separate verifier body for cal.instantiate; ODS does not require one.)
 
 namespace {
 struct FoldConstantInstanceIf : OpRewritePattern<InstanceIfOp> {

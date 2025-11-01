@@ -10,6 +10,12 @@ Both ops work uniformly for actors and networks, using instance handle types and
 
 ## Goals
 
+Note: For structural conditionals and replication, we now prefer standard
+MLIR `scf.if` and `scf.for` with compile-time constants when possible.
+See also: `RFC-structural-elaboration.md` for the elaboration plan using scf
+and a small const-eval step to fully materialize networks at compile time.
+
+
 - Allow frontends to express conditional choice of entity (actor or network) and replicate entities in IR.
 - Keep types homogeneous and flattenable.
 - Preserve symbolic structure until an elaboration pipeline resolves it.

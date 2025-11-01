@@ -97,18 +97,27 @@ cal.network {
 
 ### Transformation Pipelines
 
-MLIR enables transformation through a series of passes that gradually lower high-level dialects into lower-level representations like LLVM IR for execution. These passes can be grouped into pipelines that can be invoked with a single command line argument. We provide three specialized pipelines:
+MLIR enables transformation through a series of passes that gradually lower high-level dialects into lower-level representations like LLVM IR for execution. These passes can be grouped into pipelines that can be invoked with a single command line argument. We provide specialized pipelines:
 1. **lower-cal-to-llvm** - The standard pipeline for lowering CAL and FIFO dialects to LLVM IR. It creates a dynamic, data-dependent execution schedule that works with all actors. This is the recommended default pipeline.
 2. **lower-cal-to-llvm-with-static-schedule** - This pipeline attempts to generate a static schedule for actors, which can significantly improve performance. It requires that your actors conform to Synchronous Dataflow (SDF) or Cyclo-Static Dataflow (CSDF) models, where token production and consumption rates are predictable. Use this pipeline when your network fits these models and you want to optimize throughput.
 3. **lower-cal-to-llvm-with-gpu-tensors** - This specialized pipeline targets GPU acceleration by lowering tensor operations to NVIDIA GPU kernels. It's ideal for computationally intensive applications that manipulate tensors and perform linear algebra operations that can benefit from GPU parallelism.
 
+Additionally, for source that uses structural CAL constructs (e.g., cal.instance_if / cal.instance_for and SCF used structurally under cal.network), we provide a compact elaboration pipeline that exposes compile-time constants and erases structural control:
+
+- **cal-structural-elaboration** – Runs constant evaluation, resolves cal.instance_if, lowers cal.instance_for, and elaborates constant scf.if/scf.for under cal.network. This is useful before flattening networks or lowering to functions. Invoke it via the composite fixed-point pass:
+
+Optional command (useful when you have structural constructs to elaborate):
+
+- cal-opt --composite-fixed-point-pass="pipeline=cal-structural-elaboration" input.mlir
+
 Each pipeline applies a different sequence of transformation passes. The complete pipeline definitions can be found in [CalLoweringPipelines.h](include/Conversion/CalLoweringPipelines/CalLoweringPipelines.h) and [CalLoweringPipelines.cpp](lib/Conversion/CalLoweringPipelines/CalLoweringPipelines.cpp).
 
-To use a pipeline with cal-opt, run: `cal-opt --<pipeline-name> input.mlir`
+To use a lowering pipeline with cal-opt, run: `cal-opt --<pipeline-name> input.mlir`
 
 ### Frontends
 
 We have provided two frontends for generating this dialect (examples on how to use them are provided):
+
 1. StreamBlocks frontend for CAL - StreamBlocks is a CAL compiler that can target different platforms. We added a new platform that can take CAL code and generate this dialect. See [streamblocks-toolchain](examples/streamblocks-toolchain/) for details on how to install and use StreamBlocks for this purpose.
 2. Thalassa PDE Solver Framework - Thalassa is a tool for taking a system of PDE equations and generating a solver for them. We provide a target for Thalassa that generates a network in this dialect while passing tensor types around. It is a nice example for demonstrating GPU acceleration using the GPU pipeline. See [thalassa-pde-solver](examples/thalassa-pde-solver/) for details on how to install and use it.
 

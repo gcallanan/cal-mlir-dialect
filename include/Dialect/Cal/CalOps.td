@@ -540,7 +540,7 @@ def CAL_StateSetOp : Cal_Op<"set", [MemoryEffects<[MemWrite]>]> {
 // or (no params / no name):
 //   %h = cal.instantiate @MyActor
 // The result is !cal.instance<@MyActor>.
-def Cal_InstantiateOp : Cal_Op<"instantiate", [HasParent<"NetworkOp">]> {
+def Cal_InstantiateOp : Cal_Op<"instantiate", []> {
   let summary = "Create a symbolic actor instance handle";
   let description = [{
     Produces a `!cal.instance<@Actor>` handle for use in subsequent structural
@@ -586,7 +586,7 @@ def Cal_InstantiateOp : Cal_Op<"instantiate", [HasParent<"NetworkOp">]> {
 // If not yet defined, add a TODO for implementers.
 // Expected spelling: Cal_InstanceArray (mirrors Cal_Instance)
 
-def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", [HasParent<"NetworkOp">]> {
+def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", []> {
   let summary = "Create an array of symbolic actor instance handles";
   let description = [{
     Allocates (symbolically) an array of N instances of @Actor. No FIFOs are
@@ -621,7 +621,7 @@ def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {
 
 // Interface-typed variant: produce an array of interface instance handles.
 // Printed type form: !cal.instance.array.iface<@Iface, N>
-def Cal_InstantiateArrayIfaceOp : Cal_Op<"instantiate_array.iface", [HasParent<"NetworkOp">]> {
+def Cal_InstantiateArrayIfaceOp : Cal_Op<"instantiate_array.iface", []> {
   let summary = "Create an array of interface-typed instance handles";
   let description = [{
     Allocates (symbolically) an array of N instances typed by @Interface. No
@@ -640,7 +640,7 @@ def Cal_InstantiateArrayIfaceOp : Cal_Op<"instantiate_array.iface", [HasParent<"
   let hasVerifier = 1;
 }
 
-def Cal_ConnectOp : Cal_Op<"connect", [HasParent<"NetworkOp">, AttrSizedOperandSegments]> {
+def Cal_ConnectOp : Cal_Op<"connect", [AttrSizedOperandSegments]> {
   let summary = "Symbolic connection between two (possibly array-indexed) instances";
   let description = [{
     Declares a symbolic FIFO channel from a source actor instance handle to a
@@ -828,7 +828,7 @@ def Cal_InstanceYieldOp : Cal_Op<"instance_yield", [Terminator]> {
 // NOTE: cal.instance_if is temporarily omitted until custom multi-region
 // parsing is added. We'll add it alongside a custom parser/printer.
 
-def Cal_InstanceForOp : Cal_Op<"instance_for", [HasParent<"NetworkOp">, NoTerminator]> {
+def Cal_InstanceForOp : Cal_Op<"instance_for", [NoTerminator]> {
   let summary = "Structural comprehension over a static range";
   let description = [{
     Builds a collection of instances by iterating a static range. The body
@@ -852,7 +852,7 @@ def Cal_InstanceForOp : Cal_Op<"instance_for", [HasParent<"NetworkOp">, NoTermin
 
 // Construct a fixed-length instance array from a variadic list of instance
 // handles. Homogeneity is checked by verifiers in downstream passes.
-def Cal_InstanceArrayLiteralOp : Cal_Op<"instance_array.literal", [HasParent<"NetworkOp">]> {
+def Cal_InstanceArrayLiteralOp : Cal_Op<"instance_array.literal", []> {
   let summary = "Build an instance array from scalar handles";
   let description = [{
     Creates a `!cal.instance.array<@Entity, N>` from N scalar instance handles
@@ -867,7 +867,7 @@ def Cal_InstanceArrayLiteralOp : Cal_Op<"instance_array.literal", [HasParent<"Ne
 // Concatenate two instance arrays into a larger array. The element type must
 // match (concrete entity or interface-typed) and sizes add up. Kept lightweight
 // here; detailed checks can be performed in a later verifier or canonicalizer.
-def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", [HasParent<"NetworkOp">]> {
+def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", []> {
   let summary = "Concatenate two instance arrays";
   let description = [{
     Concatenates two instance arrays with the same element handle type into a
@@ -883,7 +883,7 @@ def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", [HasParent<"Netw
 // Structural conditional for instance handles/arrays
 //===----------------------------------------------------------------------===//
 
-def Cal_InstanceIfOp : Cal_Op<"instance_if", [HasParent<"NetworkOp">, NoTerminator]> {
+def Cal_InstanceIfOp : Cal_Op<"instance_if", [NoTerminator]> {
   let summary = "Conditional selection between two instance-producing regions";
   let description = [{
     Structural conditional that selects between two regions producing either a

@@ -27,6 +27,10 @@
 // Async dialect
 #include "mlir/Dialect/Async/IR/Async.h"
 #include "mlir/Dialect/Async/Passes.h"
+// (Optional) Inliner interfaces would go here if needed.
+
+// Func dialect extensions (inliner) are not available in this MLIR snapshot;
+// avoid including/registering them here to keep link compatibility.
 
 // MLIR Dialect Transforms
 #include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
@@ -69,6 +73,7 @@ int main(int argc, char **argv) {
   mlir::registerCalConversionPasses();
   mlir::fifo::registerPasses();
   mlir::registerCalGenericTransformationsPasses();
+  mlir::registerCalGenericTransformationsPipelines();
   mlir::cal::registerCalPipelines();
     // Ensure the TU with the legacy no-op pass is linked into this binary.
     mlir::cal::forceRegisterLegacyMergeSimpleCalActorsPass();
@@ -118,6 +123,8 @@ int main(int argc, char **argv) {
   // mlir::func::registerAllExtensions(registry);
   // mlir::tensor::registerAllExtensions(registry);
   mlir::registerConvertFuncToLLVMInterface(registry);
+  // Note: Func inliner extension not registered here due to missing symbol in
+  // this MLIR build; CalConstEval avoids inliner use for now.
   mlir::index::registerConvertIndexToLLVMInterface(registry);
   mlir::registerConvertMathToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
@@ -131,6 +138,12 @@ int main(int argc, char **argv) {
   mlir::registerGPUDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
   mlir::registerNVVMDialectTranslation(registry);
+
+  // (No-op) If specific dialect extensions are needed, register them here.
+  // No local inliner interface registration; CalConstEval implements a small
+  // targeted inliner internally for now.
+  // Note: Global registerAllExtensions is not available in this MLIR build,
+  // so we skip it here to avoid link errors.
 
   // Add the following to include *all* MLIR Core dialects, or selectively
   // include what you need like above. You only need to register dialects that

@@ -10,6 +10,7 @@ set(LIBS
         MLIROptLib
         MLIRCal
         MLIRFifo
+        CalGenericTransformsPipelines
         #MLIRFifoAtomicize
         #FlattenNetworksPass
         )
