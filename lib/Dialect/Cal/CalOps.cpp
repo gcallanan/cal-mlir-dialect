@@ -12,11 +12,9 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/IRMapping.h"
 
 using namespace mlir;
 using namespace mlir::cal;
@@ -59,63 +57,7 @@ static bool isPortTypeOf(Type t) {
   return isa<PortTy>(t);
 }
 
-//===----------------------------------------------------------------------===//
-// InstanceForOp verifier
-//===----------------------------------------------------------------------===//
-
-static std::optional<int64_t> getConstIndex(Value v) {
-  if (auto c = v.getDefiningOp<mlir::arith::ConstantIndexOp>())
-    return c.value();
-  if (auto c2 = v.getDefiningOp<mlir::arith::ConstantOp>())
-    if (auto ia = llvm::dyn_cast<IntegerAttr>(c2.getValue()))
-      return static_cast<int64_t>(ia.getInt());
-  return std::nullopt;
-}
-
-LogicalResult InstanceForOp::verify() {
-  if (failed(requireNetworkAncestor(getOperation(), "cal.instance_for")))
-    return failure();
-  // Region structure: exactly one block; optional single index IV; terminator must be cal.instance_yield with one value.
-  if (!getBody().hasOneBlock())
-    return emitOpError() << "expected region to have exactly one block";
-  Block &body = getBody().front();
-  if (body.getNumArguments() > 1)
-    return emitOpError() << "body must have at most one induction variable";
-  if (body.getNumArguments() == 1 && !body.getArgument(0).getType().isIndex())
-    return emitOpError() << "induction variable must be of type index";
-  Operation *term = body.getTerminator();
-  auto yield = dyn_cast<InstanceYieldOp>(term);
-  if (!yield)
-    return emitOpError() << "body must terminate with cal.instance_yield";
-  if (!yield.getValue())
-    return emitOpError() << "cal.instance_yield must yield one value";
-
-  // If bounds are all constant, check tuple arity matches trip count.
-  auto lbC = getConstIndex(getLb());
-  auto ubC = getConstIndex(getUb());
-  auto stC = getConstIndex(getStep());
-  if (lbC && ubC && stC) {
-    int64_t lb = *lbC, ub = *ubC, step = *stC;
-    if (step <= 0)
-      return emitOpError() << "step must be > 0 when constant";
-    int64_t trip = 0;
-    if (ub > lb) {
-      int64_t diff = ub - lb;
-      trip = (diff + step - 1) / step;
-    }
-    Type resTy = getResult().getType();
-    if (auto tupleTy = dyn_cast<TupleType>(resTy)) {
-      if (static_cast<int64_t>(tupleTy.size()) != trip)
-        return emitOpError() << "result tuple arity (" << tupleTy.size()
-                             << ") does not match static trip count (" << trip << ")";
-    }
-  }
-  return success();
-}
-
-// Note: Return type inference for cal.instance_for is intentionally omitted
-// in this revision; result typing remains explicit until a non-tuple
-// collection design is finalized.
+// Legacy cal.instance_for op was removed; associated verifier deleted.
 //===----------------------------------------------------------------------===//
 // FSM op verifiers
 //===----------------------------------------------------------------------===//
@@ -1908,114 +1850,6 @@ LogicalResult ImplementsOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 // NOTE: verification for future array/connect ops will be added once those
 // ops are fully integrated via TableGen generation.
 
-//===----------------------------------------------------------------------===//
-// cal.instance_if: parse/print/verify and folding
-//===----------------------------------------------------------------------===//
-
-ParseResult InstanceIfOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand cond;
-  if (parser.parseOperand(cond)) return failure();
-
-  // Parse then region
-  Region *thenRegion = result.addRegion();
-  if (parser.parseRegion(*thenRegion, /*arguments=*/{})) return failure();
-
-  // Expect 'else' and parse else region
-  if (parser.parseKeyword("else")) return failure();
-  Region *elseRegion = result.addRegion();
-  if (parser.parseRegion(*elseRegion, /*arguments=*/{})) return failure();
-
-  // Result type
-  Type resTy;
-  if (parser.parseColon() || parser.parseType(resTy)) return failure();
-  result.addTypes(resTy);
-
-  // Attributes (none expected, but accept attr-dict for future-proofing)
-  (void)parser.parseOptionalAttrDict(result.attributes);
-
-  // Resolve cond
-  if (parser.resolveOperand(cond, parser.getBuilder().getI1Type(), result.operands))
-    return failure();
-  return success();
-}
-
-void InstanceIfOp::print(OpAsmPrinter &printer) {
-  printer << ' ';
-  printer.printOperand(getCond());
-  printer.printNewline();
-  printer << "{\n";
-  printer.increaseIndent();
-  printer.printRegion(getThenRegion(), /*printEntryBlockArgs=*/false, /*printBlockTerminators=*/false);
-  printer.decreaseIndent();
-  printer << "}\n else {\n";
-  printer.increaseIndent();
-  printer.printRegion(getElseRegion(), /*printEntryBlockArgs=*/false, /*printBlockTerminators=*/false);
-  printer.decreaseIndent();
-  printer << "}\n : ";
-  printer.printType(getResult().getType());
-}
-
-LogicalResult InstanceIfOp::verify() {
-  if (failed(requireNetworkAncestor(getOperation(), "cal.instance_if")))
-    return failure();
-  // Regions must have one block each and terminate with cal.instance_yield.
-  auto checkRegion = [&](Region &r, StringRef which, Type expectedTy) -> LogicalResult {
-    if (!r.hasOneBlock())
-      return emitOpError() << which << " region must have exactly one block";
-    Operation *term = r.front().getTerminator();
-    auto y = dyn_cast<InstanceYieldOp>(term);
-    if (!y)
-      return emitOpError() << which << " region must terminate with cal.instance_yield";
-    if (!y.getValue())
-      return emitOpError() << which << " region must yield exactly one value";
-    if (y.getValue().getType() != expectedTy)
-      return emitOpError() << which << " region yielded type " << y.getValue().getType()
-                           << " does not match op result type " << expectedTy;
-    return success();
-  };
-
-  Type resTy = getResult().getType();
-  if (failed(checkRegion(getThenRegion(), "then", resTy))) return failure();
-  if (failed(checkRegion(getElseRegion(), "else", resTy))) return failure();
-  return success();
-}
-
-// (No separate verifier body for cal.instantiate; ODS does not require one.)
-
-namespace {
-struct FoldConstantInstanceIf : OpRewritePattern<InstanceIfOp> {
-  using OpRewritePattern::OpRewritePattern;
-  LogicalResult matchAndRewrite(InstanceIfOp op, PatternRewriter &rewriter) const override {
-    // Match constant i1 cond
-    auto c = op.getCond().getDefiningOp<arith::ConstantOp>();
-    if (!c) return failure();
-    auto b = dyn_cast_or_null<IntegerAttr>(c.getValue());
-    if (!b) return failure();
-    bool takeThen = b.getInt() != 0;
-
-    Region &chosen = takeThen ? op.getThenRegion() : op.getElseRegion();
-    // Clone chosen region body into parent at op location.
-    IRMapping map;
-    rewriter.setInsertionPoint(op);
-    Value replacement;
-    for (Operation &inner : chosen.front()) {
-      if (auto y = dyn_cast<InstanceYieldOp>(&inner)) {
-        replacement = map.lookupOrDefault(y.getValue());
-        break;
-      }
-      Operation *cloned = rewriter.clone(inner, map);
-      for (auto [orig, neu] : llvm::zip(inner.getResults(), cloned->getResults()))
-        map.map(orig, neu);
-    }
-    if (!replacement)
-      return failure();
-    rewriter.replaceOp(op, replacement);
-    return success();
-  }
-};
-} // namespace
-
-void InstanceIfOp::getCanonicalizationPatterns(RewritePatternSet &patterns, MLIRContext *ctx) {
-  patterns.add<FoldConstantInstanceIf>(ctx);
-}
+// Legacy cal.instance_if op was removed; custom parser/printer/verifier and
+// canonicalization patterns have been deleted accordingly.
 

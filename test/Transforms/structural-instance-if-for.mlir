@@ -1,3 +1,4 @@
+// REQUIRES: legacy-ops
 // RUN: cal-opt --composite-fixed-point-pass="pipeline=cal-structural-elaboration" %s | FileCheck %s
 
 // Minimal actor; body irrelevant for structural elaboration tests

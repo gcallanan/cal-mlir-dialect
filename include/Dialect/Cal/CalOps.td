@@ -811,53 +811,8 @@ def Cal_TransitionOp : Cal_Op<"transition", [HasParent<"StateOp">]> {
 }
 
 //===----------------------------------------------------------------------===//
-// Instance comprehensions and conditionals (RFC stubs)
-// These ops allow structural construction of instance handles prior to
-// elaboration. They are intentionally lightweight and may gain custom
-// parsers/printers and verifiers in follow-ups.
+// Array utilities
 //===----------------------------------------------------------------------===//
-
-def Cal_InstanceYieldOp : Cal_Op<"instance_yield", [Terminator]> {
-  let summary = "Yield a handle from an instance-building region";
-  let description = [{
-    Terminator for `cal.instance_if` and `cal.instance_for` regions. Yields
-    a single value which must match the parent op's expected element or
-    collection element type.
-  }];
-
-  let arguments = (ins AnyType:$value);
-  let assemblyFormat = "attr-dict $value `:` type($value)";
-}
-
-// NOTE: cal.instance_if is temporarily omitted until custom multi-region
-// parsing is added. We'll add it alongside a custom parser/printer.
-
-// Keep for backward-compatibility during migration; prefer scf.for + init/set.
-def Cal_InstanceForOp : Cal_Op<"instance_for", [NoTerminator]> {
-  let summary = "Structural comprehension over a static range (deprecated)";
-  let description = [{
-    Builds a collection of instances by iterating a static range. The body
-    must `cal.instance_yield` one handle per iteration. Prefer using
-    `scf.for` with `cal.instance.array.init`/`cal.instance.array.set`.
-
-    Deprecated: Use standard MLIR control flow instead.
-    - Replace with `scf.for` and array construction using
-      `cal.instance.array.init` + `cal.instance.array.set`.
-    - See docs/InstanceArrays-ND-and-SCF.md for recipes and verifier guidance.
-  }];
-
-  let arguments = (ins Index:$lb, Index:$ub, Index:$step);
-  let results = (outs AnyType:$result);
-  let regions = (region AnyRegion:$body);
-  let assemblyFormat = "`(` $lb `,` $ub `,` $step `)` $body attr-dict `:` type($result)";
-  let hasVerifier = 1;
-}
-
-//===----------------------------------------------------------------------===//
-// RFC: Instance conditionals and array utilities
-//===----------------------------------------------------------------------===//
-
-// NOTE: cal.instance_if remains to be added with a custom parser/printer.
 
 // Construct a fixed-length instance array from a variadic list of instance
 // handles. Homogeneity is checked by verifiers in downstream passes.
@@ -886,34 +841,6 @@ def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", []> {
   let results = (outs AnyType:$array);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($array)";
   let hasVerifier = 1;
-}
-
-//===----------------------------------------------------------------------===//
-// Structural conditional for instance handles/arrays
-//===----------------------------------------------------------------------===//
-
-// Keep for backward-compatibility during migration; prefer scf.if.
-def Cal_InstanceIfOp : Cal_Op<"instance_if", [NoTerminator]> {
-  let summary = "Conditional selection between two instance-producing regions (deprecated)";
-  let description = [{
-    Structural conditional that selects between two regions producing either a
-    single instance handle or an instance array handle. Both regions must
-    terminate with `cal.instance_yield` of exactly one value, and the yielded
-    types must match the result type of this op. Prefer `scf.if` instead.
-
-    Deprecated: Use `scf.if` that yields a `!cal.instance<...>` or
-    `!cal.instance.iface<...>` handle. For arrays, construct with
-    `cal.instance.array.init` + `cal.instance.array.set` in the selected branch
-    or yield a common array value from both branches.
-  }];
-
-  let arguments = (ins I1:$cond);
-  let results = (outs AnyType:$result);
-  let regions = (region AnyRegion:$thenRegion, AnyRegion:$elseRegion);
-
-  let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
-  let hasCanonicalizer = 1;
 }
 
 //===----------------------------------------------------------------------===//

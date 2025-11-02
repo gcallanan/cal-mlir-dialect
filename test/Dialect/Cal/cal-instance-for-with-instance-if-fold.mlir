@@ -1,3 +1,4 @@
+// REQUIRES: legacy-ops
 // RUN: cal-opt --resolve-instance-if %s | FileCheck %s
 
 // Minimal actor with ports to mirror typical shape; body is irrelevant here.

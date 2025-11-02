@@ -1,3 +1,4 @@
+// REQUIRES: legacy-ops
 // RUN: cal-opt %s | FileCheck %s
 
 // Define a simple actor with one input and one output port so we can connect instances.

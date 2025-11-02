@@ -16,8 +16,7 @@ namespace mlir {
 //===- Generated passes ---------------------------------------------------===//
 // Forward declare constructors that are referenced by registration helpers here
 // to avoid double-including the generated header across various pass headers.
-std::unique_ptr<mlir::Pass> createLowerInstanceForPass();
-std::unique_ptr<mlir::Pass> createResolveInstanceIfPass();
+// Legacy migration passes removed.
 // New pass factories declared in Passes.td; provide prototypes here so
 // users including this header can call them without including the generated
 // Passes.h.inc in multiple places.

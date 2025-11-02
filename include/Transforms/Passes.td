@@ -284,44 +284,7 @@ def FifoMemrefAtomicizePass : Pass<"fifo-memref-atomicize"> {
   ];
 }
 
-def LowerInstanceForPass : Pass<"lower-instance-for", "mlir::ModuleOp"> {
-  let summary = "Lower cal.instance_for to tuple (or array) literals by unrolling static ranges";
-  let description = [{
-    This pass recognizes `cal.instance_for` structural comprehensions and, when the
-    loop bounds are statically known, unrolls them into tuple literals (or instance
-    array literals where present), replacing the loop with a concrete collection of
-    `cal.instantiate` results suitable for subsequent network elaboration.
-
-    If the trip count is not statically known, the pass leaves the op unchanged.
-    A follow-up elaboration pass may then issue a diagnostic if flattening is required.
-  }];
-  let constructor = "mlir::createLowerInstanceForPass()";
-  let dependentDialects = [
-    "mlir::cal::CalDialect",
-    "mlir::arith::ArithDialect",
-    "mlir::fifo::FifoDialect"
-  ];
-}
-
-def ResolveInstanceIfPass : Pass<"resolve-instance-if", "mlir::ModuleOp"> {
-  let summary = "Resolve (fold) cal.instance_if with constant conditions";
-  let description = [{
-    This pass performs a lightweight resolution of structural conditionals
-    expressed with `cal.instance_if`. If the `cond` operand is a constant
-    `arith.constant` of type `i1`, the pass replaces the `cal.instance_if`
-    with the value yielded by the selected region. The region body is cloned
-    and the op is erased. For non-constant conditions, the op is left intact.
-
-    Implementation detail: the pass leverages the canonicalization patterns
-    registered on `cal.instance_if` and runs a greedy pattern application to
-    fold constant conditions.
-  }];
-  let constructor = "mlir::createResolveInstanceIfPass()";
-  let dependentDialects = [
-    "mlir::cal::CalDialect",
-    "mlir::arith::ArithDialect"
-  ];
-}
+// Removed: LowerInstanceForPass and ResolveInstanceIfPass were experimental and are now deleted.
 
 // Evaluate constexpr-like helper functions and fold arithmetic/recurrences
 // so structural conditions and loop bounds become constants.

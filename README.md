@@ -105,11 +105,11 @@ MLIR enables transformation through a series of passes that gradually lower high
 Additionally, for structural source we recommend using standard MLIR control flow with CAL instance arrays:
 
 - Prefer scf.for/if plus `cal.instance.array.init` and `cal.instance.array.set` to build arrays of instance handles. See docs/InstanceArrays-ND-and-SCF.md for the ND array types and recipes.
-- Legacy structural ops `cal.instance_for` and `cal.instance_if` remain supported for backwards compatibility, but are deprecated.
+- Note: legacy structural ops `cal.instance_for` and `cal.instance_if` have been removed. Use SCF-based patterns instead.
 
-We also provide a compact elaboration pipeline that exposes compile-time constants and erases structural control (useful when handling legacy structural ops or when folding constant SCF):
+We also provide a compact elaboration pipeline that exposes compile-time constants and erases structural control (useful when folding constant SCF):
 
-- **cal-structural-elaboration** – Runs constant evaluation, resolves legacy `cal.instance_if`, lowers legacy `cal.instance_for`, and elaborates constant `scf.if`/`scf.for` under `cal.network`. This is useful before flattening networks or lowering to functions. Invoke it via the composite fixed-point pass:
+- **cal-structural-elaboration** – Runs constant evaluation and elaborates constant `scf.if`/`scf.for` under `cal.network`. This is useful before flattening networks or lowering to functions. Invoke it via the composite fixed-point pass:
 
 Optional command (useful when you have structural constructs to elaborate):
 

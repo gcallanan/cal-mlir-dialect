@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD032 MD033 MD007 MD029 -->
 # RFC: Array-first instance conditionals and comprehensions in CAL IR
 
+> Obsolete note: The experimental ops described here (`cal.instance_if`, `cal.instance_for`, and `cal.instance_yield`) have been removed from the dialect. Prefer SCF-first construction using `cal.instance.array.init` + `cal.instance.array.set`, ND indexing via `cal.instance_at`, and wiring with `cal.connect`. Early and late checks are provided by `--verify-instance-array-fills` and `--verify-connect-ports`.
+
 This RFC proposes two new high-level structural ops to model entity selection and replication directly in CAL IR without forcing frontend network flattening, with an array-first collection model that avoids MLIR tuples. It also specifies hierarchical network flattening semantics so that instances may be either actors or networks and the entire design can be fully elaborated into a flat network of actor instances and FIFO channels.
 
 - `cal.instance_if`: a structural conditional that selects between two instance-producing regions (scalar handle or array handle).

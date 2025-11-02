@@ -1,2 +1,1 @@
-add_subdirectory(LowerInstanceFor)
-add_subdirectory(ResolveInstanceIf)
+# Legacy pass test suites removed.

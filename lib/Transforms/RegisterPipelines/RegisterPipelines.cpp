@@ -12,8 +12,7 @@ namespace mlir {
 //  4) elaborate-scf-structures
 static void buildCalStructuralElabPipeline(OpPassManager &pm) {
   pm.addPass(createCalConstEvalPass());
-  pm.addPass(createResolveInstanceIfPass());
-  pm.addPass(createLowerInstanceForPass());
+  // Legacy passes (resolve-instance-if, lower-instance-for) removed.
   pm.addPass(createElaborateScfStructuresPass());
   // Bounds and basic completeness verification for instance arrays
   pm.addPass(createVerifyInstanceArrayFillsPass());

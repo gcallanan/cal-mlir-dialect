@@ -1,3 +1,4 @@
+// REQUIRES: legacy-ops
 // RUN: cal-opt -pass-pipeline='builtin.module(lower-instance-for, flatten-cal-networks)' -split-input-file %s | FileCheck %s
 
 // Define a simple actor with one in and one out
