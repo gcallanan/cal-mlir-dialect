@@ -15,6 +15,8 @@ static void buildCalStructuralElabPipeline(OpPassManager &pm) {
   pm.addPass(createResolveInstanceIfPass());
   pm.addPass(createLowerInstanceForPass());
   pm.addPass(createElaborateScfStructuresPass());
+  // Bounds and basic completeness verification for instance arrays
+  pm.addPass(createVerifyInstanceArrayFillsPass());
   // Late verification: ensure connect port names match entity/interface ports
   pm.addPass(createVerifyConnectPortsPass());
 }

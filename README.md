@@ -102,13 +102,22 @@ MLIR enables transformation through a series of passes that gradually lower high
 2. **lower-cal-to-llvm-with-static-schedule** - This pipeline attempts to generate a static schedule for actors, which can significantly improve performance. It requires that your actors conform to Synchronous Dataflow (SDF) or Cyclo-Static Dataflow (CSDF) models, where token production and consumption rates are predictable. Use this pipeline when your network fits these models and you want to optimize throughput.
 3. **lower-cal-to-llvm-with-gpu-tensors** - This specialized pipeline targets GPU acceleration by lowering tensor operations to NVIDIA GPU kernels. It's ideal for computationally intensive applications that manipulate tensors and perform linear algebra operations that can benefit from GPU parallelism.
 
-Additionally, for source that uses structural CAL constructs (e.g., cal.instance_if / cal.instance_for and SCF used structurally under cal.network), we provide a compact elaboration pipeline that exposes compile-time constants and erases structural control:
+Additionally, for structural source we recommend using standard MLIR control flow with CAL instance arrays:
 
-- **cal-structural-elaboration** – Runs constant evaluation, resolves cal.instance_if, lowers cal.instance_for, and elaborates constant scf.if/scf.for under cal.network. This is useful before flattening networks or lowering to functions. Invoke it via the composite fixed-point pass:
+- Prefer scf.for/if plus `cal.instance.array.init` and `cal.instance.array.set` to build arrays of instance handles. See docs/InstanceArrays-ND-and-SCF.md for the ND array types and recipes.
+- Legacy structural ops `cal.instance_for` and `cal.instance_if` remain supported for backwards compatibility, but are deprecated.
+
+We also provide a compact elaboration pipeline that exposes compile-time constants and erases structural control (useful when handling legacy structural ops or when folding constant SCF):
+
+- **cal-structural-elaboration** – Runs constant evaluation, resolves legacy `cal.instance_if`, lowers legacy `cal.instance_for`, and elaborates constant `scf.if`/`scf.for` under `cal.network`. This is useful before flattening networks or lowering to functions. Invoke it via the composite fixed-point pass:
 
 Optional command (useful when you have structural constructs to elaborate):
 
 - cal-opt --composite-fixed-point-pass="pipeline=cal-structural-elaboration" input.mlir
+
+Tip: To validate instance array construction early, run the verifier:
+
+- cal-opt --verify-instance-array-fills input.mlir
 
 Each pipeline applies a different sequence of transformation passes. The complete pipeline definitions can be found in [CalLoweringPipelines.h](include/Conversion/CalLoweringPipelines/CalLoweringPipelines.h) and [CalLoweringPipelines.cpp](lib/Conversion/CalLoweringPipelines/CalLoweringPipelines.cpp).
 
@@ -124,14 +133,16 @@ We have provided two frontends for generating this dialect (examples on how to u
 ## Getting Started
 
 ### 1. Installation Requirements
+
 Before installing, ensure you have:
+
 - A C++17 compatible compiler
 - CMake (version 3.13.4 or higher)
 - Ninja build system
 - Python 3.6 or higher
 - (eigen3) libeigen3-dev (for solving systems of linear equations)
 
-### 2. Installation Instructions:
+### 2. Installation Instructions
 
 1. Install the MLIR dialect by running the [install_mlir.sh](./install_mlir.sh) script with `bash install_mlir.sh`. It will pull and install the LLVM repo with MLIR into a new directory titled `llvm-project` in this repository. It will take many hours to install, but you should only need to install it once.
     - Optionally update your PATH with the `llvm-project/build/bin` directory

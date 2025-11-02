@@ -18,8 +18,18 @@ The examples in this directory cover both plain MLIR and the use of higher-level
 | `bounded-buffer-CAL`          | Implements the Savina "Bounded Buffer" benchmark in CAL. Demonstrates concurrent producer-consumer communication using bounded FIFOs, with scripts to compile and benchmark both C++ and MLIR backends. See [bounded-buffer/README.md](bounded-buffer/README.md) for details. |
 | `tensors`                | Demonstrates tensor processing in CAL-based MLIR, with all tensor operations executed on the CPU. Shows a dataflow network with actors operating on 2x2 tensors, including accumulation and pretty-printing using the CAL and FIFO dialects. See [tensors/README.md](tensors/README.md) for details. |
 | `thalassa-pde-solver`        | A tutorial demonstrating how to use the Thalassa Python package to define and solve PDEs, generate MLIR using the CAL dialect, and run high-performance numerical simulations. See [thalassa-pde-solver/README.md](thalassa-pde-solver/README.md) for details. |
+| `instance_for`           | Contains examples illustrating array construction patterns. See `instance_for/instance_for.mlir` for a 1D init/set pattern and `instance_for/nd_grid.mlir` for an ND (2D) pattern using nested `scf.for` loops. |
+| `gol`                    | Game of Life examples. `gol_nd_fixed.mlir` shows a constant-size 2D grid built with `scf.for` + `cal.instance.array.init/set`, linearized indices, and interface-typed instance arrays; validate with `--verify-instance-array-fills`. `gol_structural.mlir` contains a legacy structural variant retained for reference. |
 
+ 
 ## Usage
+
+Tip: When working with instance arrays, validate construction early:
+
+```sh
+cal-opt --verify-instance-array-fills <your-example>.mlir
+```
+
 
 Each example directory includes its own README or scripts for compiling and running the examples. Please refer to those for specific instructions.
 

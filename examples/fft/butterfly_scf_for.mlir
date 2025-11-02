@@ -19,6 +19,8 @@ module {
 
   // Split(N): in -> (out0, out1)
   cal.actor @Split(%N: index)
+    in_names ["in"]
+    out_names ["out0", "out1"]
     ports_in(%in: !fifo.output_port<i32>)
     ports_out(%out0: !fifo.input_port<i32>, %out1: !fifo.input_port<i32>) {
     cal.execution_body {
@@ -29,6 +31,8 @@ module {
 
   // Merge(): (in0, in1) -> out
   cal.actor @Merge()
+    in_names ["in0", "in1"]
+    out_names ["out"]
     ports_in(%in0: !fifo.output_port<i32>, %in1: !fifo.output_port<i32>)
     ports_out(%out: !fifo.input_port<i32>) {
     cal.execution_body {
@@ -39,6 +43,8 @@ module {
 
   // TwiddleGenerator(N): in -> out
   cal.actor @TwiddleGenerator(%N: index)
+    in_names ["in"]
+    out_names ["out"]
     ports_in(%in: !fifo.output_port<i32>)
     ports_out(%out: !fifo.input_port<i32>) {
     cal.execution_body {
@@ -49,6 +55,8 @@ module {
 
   // Radix2Cell: (in0, in1, in2) -> (out0, out1)
   cal.actor @Radix2Cell()
+    in_names ["in0", "in1", "in2"]
+    out_names ["out0", "out1"]
     ports_in(%in0: !fifo.output_port<i32>, %in1: !fifo.output_port<i32>, %in2: !fifo.output_port<i32>)
     ports_out(%out0: !fifo.input_port<i32>, %out1: !fifo.input_port<i32>) {
     cal.execution_body {
@@ -59,6 +67,8 @@ module {
 
   // BFChild is a placeholder for recursive Butterfly(NSTAGES-1)
   cal.actor @BFChild(%NSTAGES: index)
+    in_names ["in"]
+    out_names ["out"]
     ports_in(%in: !fifo.output_port<i32>)
     ports_out(%out: !fifo.input_port<i32>) {
     cal.execution_body {
@@ -69,6 +79,8 @@ module {
 
   // Butterfly with static NSTAGES (choose a constant for full elaboration): in ==> out
   cal.network @Butterfly()
+    in_names ["in"]
+    out_names ["out"]
     ports_in(%in: !fifo.output_port<i32>)
     ports_out(%out: !fifo.input_port<i32>) {
     %c0 = arith.constant 0 : index
@@ -85,8 +97,17 @@ module {
   %merge = cal.instantiate @Merge instance("merge") : !cal.instance<@Merge>
   %tw    = cal.instantiate @TwiddleGenerator(%N3 : index) instance("twiddles") : !cal.instance<@TwiddleGenerator>
   %r2    = cal.instantiate @Radix2Cell instance("r2cell") : !cal.instance<@Radix2Cell>
-  // Array of BFChild instances (size 2) for the recursive stage; parameters set to NSTAGES-1
-  %bf    = cal.instantiate_array @BFChild count(2) basename("bf") (%nstages_m1 : index) : !cal.instance.array<@BFChild, 2>
+  // Array of BFChild instances built with scf.for using init/set pattern.
+  // nBF = 2^(NSTAGES-1) = %N3. Build a fixed array of length 2.
+  %bf_init = cal.instance.array.init : !cal.instance.array<@BFChild, 2>
+  %bf = scf.for %i = %c0 to %N3 step %c1 iter_args(%acc = %bf_init)
+         -> !cal.instance.array<@BFChild, 2> {
+    %child = cal.instantiate @BFChild(%nstages_m1 : index) instance("bf") : !cal.instance<@BFChild>
+    %acc2 = cal.instance.array.set %acc[%i], %child
+             : !cal.instance.array<@BFChild, 2>, index, !cal.instance<@BFChild>
+               -> !cal.instance.array<@BFChild, 2>
+    scf.yield %acc2 : !cal.instance.array<@BFChild, 2>
+  }
 
   // Structure: fixed wires (use canonical port names: in/inN, out/outN)
   cal.connect %in : !fifo.output_port<i32> "in" -> %split : !cal.instance<@Split> "in"

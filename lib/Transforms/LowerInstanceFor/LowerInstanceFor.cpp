@@ -122,11 +122,16 @@ struct LowerInstanceForPass : public impl::LowerInstanceForPassBase<LowerInstanc
       SmallVector<Operation*, 8> toErase;
       for (OpOperand &use : llvm::make_early_inc_range(instFor->getUses())) {
         Operation *user = use.getOwner();
-        // case 1: instance_at %res[%c]
+        // case 1: instance_at %res[%c] (only handle 1D constant index here)
         if (auto at = dyn_cast<cal::InstanceAtOp>(user)) {
-          if (auto idx = getConstIdx(at.getIndex())) {
-            at.replaceAllUsesWith(yielded[*idx]);
-            toErase.push_back(at);
+          auto indices = at.getIndices();
+          if (indices.size() == 1) {
+            if (auto idx = getConstIdx(indices.front())) {
+              if (*idx < yielded.size()) {
+                at.replaceAllUsesWith(yielded[*idx]);
+                toErase.push_back(at);
+              }
+            }
           }
           continue;
         }
@@ -134,10 +139,12 @@ struct LowerInstanceForPass : public impl::LowerInstanceForPassBase<LowerInstanc
         if (auto conn = dyn_cast<cal::ConnectOp>(user)) {
           bool srcChanged = false, dstChanged = false;
           Value newSrc, newDst;
-          // If our result is used as src and the srcIndex is a constant within bounds, rewrite
+          SmallVector<Value, 1> newSrcIdxs, newDstIdxs;
+          // If our result is used as src and the srcIndices contain exactly one constant within bounds, rewrite
           if (conn.getSrc() == instFor.getResult()) {
-            if (Value idxV = conn.getSrcIndex()) {
-              if (auto idx = getConstIdx(idxV)) {
+            auto srcIdxs = conn.getSrcIndices();
+            if (srcIdxs.size() == 1) {
+              if (auto idx = getConstIdx(srcIdxs.front())) {
                 if (*idx < yielded.size()) {
                   newSrc = yielded[*idx];
                   srcChanged = true;
@@ -145,10 +152,11 @@ struct LowerInstanceForPass : public impl::LowerInstanceForPassBase<LowerInstanc
               }
             }
           }
-          // If our result is used as dst and the dstIndex is a constant within bounds, rewrite
+          // If our result is used as dst and the dstIndices contain exactly one constant within bounds, rewrite
           if (conn.getDst() == instFor.getResult()) {
-            if (Value idxV = conn.getDstIndex()) {
-              if (auto idx = getConstIdx(idxV)) {
+            auto dstIdxs = conn.getDstIndices();
+            if (dstIdxs.size() == 1) {
+              if (auto idx = getConstIdx(dstIdxs.front())) {
                 if (*idx < yielded.size()) {
                   newDst = yielded[*idx];
                   dstChanged = true;
@@ -159,18 +167,17 @@ struct LowerInstanceForPass : public impl::LowerInstanceForPassBase<LowerInstanc
           if (srcChanged || dstChanged) {
             OpBuilder::InsertionGuard g(b);
             b.setInsertionPoint(conn);
-            // Build a replacement connect with updated endpoints; drop index on rewritten side(s).
+            // Build a replacement connect with updated endpoints; drop indices on rewritten side(s).
             auto replacement = b.create<cal::ConnectOp>(
                 conn.getLoc(),
                 srcChanged ? newSrc : conn.getSrc(),
-                srcChanged ? Value() : conn.getSrcIndex(),
+                srcChanged ? ValueRange{} : ValueRange(conn.getSrcIndices()),
                 conn.getSrcPortAttr(),
                 dstChanged ? newDst : conn.getDst(),
-                dstChanged ? Value() : conn.getDstIndex(),
+                dstChanged ? ValueRange{} : ValueRange(conn.getDstIndices()),
                 conn.getDstPortAttr(),
                 conn.getCapacityAttr());
-            // No results to replace; just erase the old op.
-            (void)replacement; // silence unused warning in some builds
+            (void)replacement;
             toErase.push_back(conn);
           }
         }

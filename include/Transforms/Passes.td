@@ -391,4 +391,27 @@ def VerifyConnectPortsPass : Pass<"verify-connect-ports", "mlir::ModuleOp"> {
   ];
 }
 
+// Verify instance array construction: bounds and (basic) completeness.
+def VerifyInstanceArrayFillsPass : Pass<"verify-instance-array-fills", "mlir::ModuleOp"> {
+  let summary = "Verify bounds and basic completeness for cal.instance.array.* construction";
+  let description = [{
+    This verifier checks that indices used with `cal.instance.array.set` are within
+    bounds for the target array type (1D or multi-dimensional). When indices are
+    compile-time constants (arith.constant), it emits an error on out-of-bounds. For
+    dynamic indices, it emits a remark (optional warning) and assumes bounds may be
+    satisfied.
+
+    Additionally, it performs a basic completeness check for simple linear chains of
+    `cal.instance.array.set` starting from a single `cal.instance.array.init`, where all
+    indices are constants and no branching occurs. If the number of distinct assigned
+    indices is less than the array's total number of elements, a remark is emitted to
+    help catch partial fills.
+  }];
+  let constructor = "mlir::createVerifyInstanceArrayFillsPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 #endif // CAL_TRANSFORM_PASSES

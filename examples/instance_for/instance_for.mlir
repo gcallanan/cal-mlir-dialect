@@ -1,6 +1,7 @@
-// Example: Using cal.instance_for with lower-instance-for + flatten-cal-networks
+// Example: Building instance arrays without cal.instance_for
 // Try:
-//   cal-opt -pass-pipeline='builtin.module(lower-instance-for, flatten-cal-networks)' examples/instance_for/instance_for.mlir
+//   cal-opt --verify-instance-array-fills examples/instance_for/instance_for.mlir
+//   # Or run your usual structural pipeline; no cal.instance_for is used here.
 
 cal.actor @A()
     ports_in(%in0: !fifo.output_port<i32>)
@@ -37,15 +38,13 @@ cal.network @Example() {
 
   // Build a size-1 array for index 0 path.
   %hA0 = cal.instantiate @A : !cal.instance<@A>
-  %arr0 = cal.instance_for(%c0, %c1, %c1) {
-    cal.instance_yield %hA0 : !cal.instance<@A>
-  } : !cal.instance.array<@A, 1>
+  %arr0_init = cal.instance.array.init : !cal.instance.array<@A, 1>
+  %arr0 = cal.instance.array.set %arr0_init[%c0], %hA0 : !cal.instance.array<@A, 1>, !cal.instance<@A> -> !cal.instance.array<@A, 1>
 
   // Build a separate size-1 array and extract its element via instance_at.
   %hA1 = cal.instantiate @A : !cal.instance<@A>
-  %arr1 = cal.instance_for(%c0, %c1, %c1) {
-    cal.instance_yield %hA1 : !cal.instance<@A>
-  } : !cal.instance.array<@A, 1>
+  %arr1_init = cal.instance.array.init : !cal.instance.array<@A, 1>
+  %arr1 = cal.instance.array.set %arr1_init[%c0], %hA1 : !cal.instance.array<@A, 1>, !cal.instance<@A> -> !cal.instance.array<@A, 1>
   %h1 = cal.instance_at %arr1[%c0] : !cal.instance.array<@A, 1>, index -> !cal.instance<@A>
 
   // Two sources and two sinks.

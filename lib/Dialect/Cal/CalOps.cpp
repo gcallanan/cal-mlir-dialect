@@ -195,29 +195,45 @@ struct ConnectLowerArrayIndexToInstanceAt : ::mlir::OpRewritePattern<ConnectOp> 
     bool changed = false;
     Location loc = op.getLoc();
 
-    // Lower src side if it is an array with index.
-    if (isa<InstanceArrayType>(op.getSrc().getType()) && op.getSrcIndex()) {
-      auto arrTy = cast<InstanceArrayType>(op.getSrc().getType());
-      auto handleTy = InstanceType::get(op.getContext(), arrTy.getActorRef());
+    // Lower src side if it is an array with indices.
+    if ((isa<InstanceArrayType>(op.getSrc().getType()) ||
+         isa<InterfaceInstanceArrayType>(op.getSrc().getType())) &&
+        !op.getSrcIndices().empty()) {
       Value arr = op.getSrc();
-      Value idx = op.getSrcIndex();
+      Type arrTy = arr.getType();
+      Type handleTy;
+      if (auto entArr = dyn_cast<InstanceArrayType>(arrTy))
+        handleTy = InstanceType::get(op.getContext(), entArr.getActorRef());
+      else if (auto ifArr = dyn_cast<InterfaceInstanceArrayType>(arrTy))
+        handleTy = InterfaceInstanceType::get(op.getContext(), ifArr.getIfaceRef());
+      else
+        return failure();
+      SmallVector<Value, 4> idxs(op.getSrcIndices().begin(), op.getSrcIndices().end());
       rewriter.setInsertionPoint(op);
-      auto at = rewriter.create<InstanceAtOp>(loc, handleTy, arr, idx);
+      auto at = rewriter.create<InstanceAtOp>(loc, handleTy, arr, idxs);
       op.getSrcMutable().assign(at.getHandle());
-      op.getSrcIndexMutable().clear();
+      op.getSrcIndicesMutable().clear();
       changed = true;
     }
 
-    // Lower dst side if it is an array with index.
-    if (isa<InstanceArrayType>(op.getDst().getType()) && op.getDstIndex()) {
-      auto arrTy = cast<InstanceArrayType>(op.getDst().getType());
-      auto handleTy = InstanceType::get(op.getContext(), arrTy.getActorRef());
+    // Lower dst side if it is an array with indices.
+    if ((isa<InstanceArrayType>(op.getDst().getType()) ||
+         isa<InterfaceInstanceArrayType>(op.getDst().getType())) &&
+        !op.getDstIndices().empty()) {
       Value arr = op.getDst();
-      Value idx = op.getDstIndex();
+      Type arrTy = arr.getType();
+      Type handleTy;
+      if (auto entArr = dyn_cast<InstanceArrayType>(arrTy))
+        handleTy = InstanceType::get(op.getContext(), entArr.getActorRef());
+      else if (auto ifArr = dyn_cast<InterfaceInstanceArrayType>(arrTy))
+        handleTy = InterfaceInstanceType::get(op.getContext(), ifArr.getIfaceRef());
+      else
+        return failure();
+      SmallVector<Value, 4> idxs(op.getDstIndices().begin(), op.getDstIndices().end());
       rewriter.setInsertionPoint(op);
-      auto at = rewriter.create<InstanceAtOp>(loc, handleTy, arr, idx);
+      auto at = rewriter.create<InstanceAtOp>(loc, handleTy, arr, idxs);
       op.getDstMutable().assign(at.getHandle());
-      op.getDstIndexMutable().clear();
+      op.getDstIndicesMutable().clear();
       changed = true;
     }
 
@@ -235,26 +251,33 @@ void ConnectOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
 mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) {
   auto parseSide = [&](OpAsmParser::UnresolvedOperand &base,
                        Type &ty,
-                       llvm::SmallVectorImpl<OpAsmParser::UnresolvedOperand> &maybeIndex,
+                       llvm::SmallVectorImpl<OpAsmParser::UnresolvedOperand> &indices,
                        bool allowOutputPort, bool allowInputPort) -> ParseResult {
     if (parser.parseOperand(base))
       return failure();
     // Optional sugar: [%idx]
-    OpAsmParser::UnresolvedOperand idxOp;
     if (succeeded(parser.parseOptionalLSquare())) {
-      if (parser.parseOperand(idxOp) || parser.parseRSquare())
+      OpAsmParser::UnresolvedOperand idxOp;
+      if (parser.parseOperand(idxOp))
         return failure();
-      maybeIndex.push_back(idxOp);
+      indices.push_back(idxOp);
+      while (succeeded(parser.parseOptionalComma())) {
+        OpAsmParser::UnresolvedOperand nextIdx;
+        if (parser.parseOperand(nextIdx))
+          return failure();
+        indices.push_back(nextIdx);
+      }
+      if (parser.parseRSquare()) return failure();
     }
     if (parser.parseColon() || parser.parseType(ty))
       return failure();
     // If index was provided, require array type.
-    if (!maybeIndex.empty() &&
+    if (!indices.empty() &&
         !(mlir::isa<InstanceArrayType>(ty) || mlir::isa<InterfaceInstanceArrayType>(ty)))
       return parser.emitError(parser.getCurrentLocation(),
                               "index form requires !cal.instance.array<...> type");
     // If no index, require either a handle type or a permitted fifo port type.
-    if (maybeIndex.empty() &&
+    if (indices.empty() &&
         !(mlir::isa<InstanceType>(ty) || mlir::isa<InterfaceInstanceType>(ty))) {
       bool ok = false;
       if (allowOutputPort && mlir::isa<mlir::fifo::OutputPortType>(ty)) ok = true;
@@ -269,7 +292,7 @@ mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) 
 
   OpAsmParser::UnresolvedOperand srcBase, dstBase;
   Type srcTy, dstTy;
-  llvm::SmallVector<OpAsmParser::UnresolvedOperand,1> srcIdx, dstIdx;
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand,4> srcIdx, dstIdx;
   StringAttr srcPortAttr, dstPortAttr;
 
   if (failed(parseSide(srcBase, srcTy, srcIdx, /*allowOutputPort=*/true, /*allowInputPort=*/false)))
@@ -296,33 +319,36 @@ mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) 
   // Resolve src and optional index
   if (parser.resolveOperand(srcBase, srcTy, result.operands))
     return failure();
-  bool haveSrcIndex = false;
-  if (mlir::isa<InstanceArrayType>(srcTy)) {
+  int32_t numSrcIdx = 0;
+  if (mlir::isa<InstanceArrayType>(srcTy) || mlir::isa<InterfaceInstanceArrayType>(srcTy)) {
     if (srcIdx.empty())
       return parser.emitError(parser.getCurrentLocation(), "missing index for source array operand");
-    haveSrcIndex = true;
-    if (parser.resolveOperand(srcIdx.front(), parser.getBuilder().getIndexType(), result.operands))
-      return failure();
+    numSrcIdx = static_cast<int32_t>(srcIdx.size());
+    for (auto &opd : srcIdx) {
+      if (parser.resolveOperand(opd, parser.getBuilder().getIndexType(), result.operands))
+        return failure();
+    }
   }
 
   // Resolve dst and optional index
   if (parser.resolveOperand(dstBase, dstTy, result.operands))
     return failure();
-  bool haveDstIndex = false;
-  if (mlir::isa<InstanceArrayType>(dstTy)) {
+  int32_t numDstIdx = 0;
+  if (mlir::isa<InstanceArrayType>(dstTy) || mlir::isa<InterfaceInstanceArrayType>(dstTy)) {
     if (dstIdx.empty())
       return parser.emitError(parser.getCurrentLocation(), "missing index for destination array operand");
-    haveDstIndex = true;
-    if (parser.resolveOperand(dstIdx.front(), parser.getBuilder().getIndexType(), result.operands))
-      return failure();
+    numDstIdx = static_cast<int32_t>(dstIdx.size());
+    for (auto &opd : dstIdx) {
+      if (parser.resolveOperand(opd, parser.getBuilder().getIndexType(), result.operands))
+        return failure();
+    }
   }
 
   result.addAttribute("srcPort", srcPortAttr);
   result.addAttribute("dstPort", dstPortAttr);
 
-  // Record operand segment sizes for optional indices: [src, srcIndex, dst, dstIndex]
-  auto sizes = llvm::SmallVector<int32_t, 4>{1, static_cast<int32_t>(haveSrcIndex ? 1 : 0),
-                                             1, static_cast<int32_t>(haveDstIndex ? 1 : 0)};
+  // Record operand segment sizes for variadic indices: [src, srcIndices..., dst, dstIndices...]
+  auto sizes = llvm::SmallVector<int32_t, 4>{1, numSrcIdx, 1, numDstIdx};
   result.addAttribute("operand_segment_sizes",
                       parser.getBuilder().getDenseI32ArrayAttr(sizes));
   return success();
@@ -331,22 +357,14 @@ mlir::ParseResult ConnectOp::parse(OpAsmParser &parser, OperationState &result) 
 void ConnectOp::print(OpAsmPrinter &printer) {
   auto printHandleWithOptionalIndex = [&](Value handle) {
     if (auto at = handle.getDefiningOp<InstanceAtOp>()) {
-      // Print as %array[idx] : !cal.instance.array<...>
+      // Print as %array[idx0, idx1, ...] : !cal.instance.array<...>
       Value array = at.getArray();
-      Value index = at.getIndex();
       printer.printOperand(array);
       printer << '[';
-      // If it's an arith.constant index, try to print the integer literal; otherwise print SSA
-      if (Operation *def = index.getDefiningOp()) {
-        if (def->getName().getStringRef() == "arith.constant") {
-          if (auto attr = def->getAttrOfType<IntegerAttr>("value"))
-            printer << attr.getInt();
-          else
-            printer.printOperand(index);
-        } else {
-          printer.printOperand(index);
-        }
-      } else {
+      bool first = true;
+      for (Value index : at.getIndices()) {
+        if (!first) printer << ", ";
+        first = false;
         printer.printOperand(index);
       }
       printer << "] : ";
@@ -361,10 +379,11 @@ void ConnectOp::print(OpAsmPrinter &printer) {
 
   printer << ' ';
   // Print src in sugar if array+index provided; otherwise handle
-  if (getSrcIndex() != nullptr) {
+  if (!getSrcIndices().empty()) {
     printer.printOperand(getSrc());
     printer << '[';
-    printer.printOperand(getSrcIndex());
+    bool first = true;
+    for (Value v : getSrcIndices()) { if (!first) printer << ", "; first = false; printer.printOperand(v); }
     printer << "] : ";
     printer.printType(getSrc().getType());
   } else {
@@ -373,10 +392,11 @@ void ConnectOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer.printAttributeWithoutType(getSrcPortAttr());
   printer << " -> ";
-  if (getDstIndex() != nullptr) {
+  if (!getDstIndices().empty()) {
     printer.printOperand(getDst());
     printer << '[';
-    printer.printOperand(getDstIndex());
+    bool first = true;
+    for (Value v : getDstIndices()) { if (!first) printer << ", "; first = false; printer.printOperand(v); }
     printer << "] : ";
     printer.printType(getDst().getType());
   } else {
@@ -1005,14 +1025,7 @@ LogicalResult InstantiateArrayOp::verify() {
     return emitOpError() << "result actor '" << arrTy.getActorRef()
                          << "' does not match attribute '" << getActorRefAttr() << "'";
 
-  // Check count matches
-  if (static_cast<uint64_t>(arrTy.getCount()) != getCount())
-    return emitOpError() << "result count " << arrTy.getCount()
-                         << " does not match attribute count " << getCount();
-
-  // Count must be > 0.
-  if (getCount() <= 0)
-    return emitOpError() << "array count must be > 0";
+  // Note: array shape/count checks are relaxed for ND/dynamic shapes.
 
   // Base name, if present, must be non-empty
   if (auto bn = getBaseNameAttr(); bn && bn.getValue().empty())
@@ -1067,8 +1080,6 @@ LogicalResult InstanceArrayLiteralOp::verify() {
         return emitOpError() << "input actor '" << h.getActorRef().getValue()
                              << "' does not match result actor '" << actor.getValue() << "'";
     }
-    if (static_cast<uint64_t>(inputs.size()) != static_cast<uint64_t>(entArr.getCount()))
-      return emitOpError() << "input count " << inputs.size() << " does not match result count " << entArr.getCount();
     return success();
   }
 
@@ -1083,8 +1094,6 @@ LogicalResult InstanceArrayLiteralOp::verify() {
         return emitOpError() << "input interface '" << h.getIfaceRef().getValue()
                              << "' does not match result interface '" << iface.getValue() << "'";
     }
-    if (static_cast<uint64_t>(inputs.size()) != static_cast<uint64_t>(ifArr.getCount()))
-      return emitOpError() << "input count " << inputs.size() << " does not match result count " << ifArr.getCount();
     return success();
   }
 
@@ -1105,9 +1114,6 @@ LogicalResult InstanceArrayConcatOp::verify() {
       return emitOpError() << "both inputs and result must be !cal.instance.array<@Actor,N>";
     if (l.getActorRef() != r.getActorRef() || l.getActorRef() != o.getActorRef())
       return emitOpError() << "actor symbol mismatch across lhs/rhs/result";
-    if (static_cast<uint64_t>(o.getCount()) != static_cast<uint64_t>(l.getCount() + r.getCount()))
-      return emitOpError() << "result count " << o.getCount() << " must equal lhs+rhs ("
-                           << l.getCount() << "+" << r.getCount() << ")";
     return success();
   }
 
@@ -1118,9 +1124,6 @@ LogicalResult InstanceArrayConcatOp::verify() {
       return emitOpError() << "both inputs and result must be !cal.instance.array.iface<@Iface,N>";
     if (l.getIfaceRef() != r.getIfaceRef() || l.getIfaceRef() != o.getIfaceRef())
       return emitOpError() << "interface symbol mismatch across lhs/rhs/result";
-    if (static_cast<uint64_t>(o.getCount()) != static_cast<uint64_t>(l.getCount() + r.getCount()))
-      return emitOpError() << "result count " << o.getCount() << " must equal lhs+rhs ("
-                           << l.getCount() << "+" << r.getCount() << ")";
     return success();
   }
 
@@ -1146,12 +1149,7 @@ LogicalResult InstantiateArrayIfaceOp::verify() {
     return emitOpError() << "result interface '" << arrTy.getIfaceRef()
                          << "' does not match attribute '" << getIfaceRefAttr() << "'";
 
-  // Check count matches and is > 0
-  if (static_cast<uint64_t>(arrTy.getCount()) != getCount())
-    return emitOpError() << "result count " << arrTy.getCount()
-                         << " does not match attribute count " << getCount();
-  if (getCount() <= 0)
-    return emitOpError() << "array count must be > 0";
+  // Note: array shape/count checks are relaxed for ND/dynamic shapes.
 
   // Params are not currently supported for interface arrays (no concrete entity to validate against)
   if (!getParams().empty())
@@ -1180,16 +1178,10 @@ LogicalResult InstanceAtOp::verify() {
     if (entArr.getActorRef() != entHandle.getActorRef())
       return emitOpError() << "actor mismatch between array and result: "
                            << entArr.getActorRef() << " vs " << entHandle.getActorRef();
-
-    // Constant index bounds check
-    if (auto c = getIndex().getDefiningOp<arith::ConstantOp>()) {
-      Attribute val = c.getValueAttr();
-      if (auto intAttr = mlir::dyn_cast<IntegerAttr>(val)) {
-        int64_t idx = intAttr.getInt();
-        if (idx < 0 || static_cast<uint64_t>(idx) >= static_cast<uint64_t>(entArr.getCount()))
-          return emitOpError() << "constant index " << idx << " out of bounds [0,"
-                               << entArr.getCount() << ")";
-      }
+    // Verify index rank matches array rank (when shape rank is known).
+    if (auto shape = entArr.getShape()) {
+      if (getIndices().size() != shape.size())
+        return emitOpError() << "expected " << shape.size() << " indices for array rank";
     }
     return success();
   }
@@ -1202,20 +1194,14 @@ LogicalResult InstanceAtOp::verify() {
       return emitOpError() << "interface mismatch between array and result: "
                            << ifaceArr.getIfaceRef() << " vs " << ifaceHandle.getIfaceRef();
 
-    // Constant index bounds check
-    if (auto c = getIndex().getDefiningOp<arith::ConstantOp>()) {
-      Attribute val = c.getValueAttr();
-      if (auto intAttr = mlir::dyn_cast<IntegerAttr>(val)) {
-        int64_t idx = intAttr.getInt();
-        if (idx < 0 || static_cast<uint64_t>(idx) >= static_cast<uint64_t>(ifaceArr.getCount()))
-          return emitOpError() << "constant index " << idx << " out of bounds [0,"
-                               << ifaceArr.getCount() << ")";
-      }
+    if (auto shape = ifaceArr.getShape()) {
+      if (getIndices().size() != shape.size())
+        return emitOpError() << "expected " << shape.size() << " indices for array rank";
     }
     return success();
   }
 
-  return emitOpError() << "array must be !cal.instance.array<@Actor, N> or !cal.instance.array.iface<@Iface, N>";
+  return emitOpError() << "array must be !cal.instance.array<@Actor, [...]> or !cal.instance.array.iface<@Iface, [...]>";
 }
 
 LogicalResult ConnectOp::verify() {
@@ -1238,20 +1224,20 @@ LogicalResult ConnectOp::verify() {
   bool dstIsNetIn = mlir::isa<mlir::fifo::InputPortType>(dstTy);
 
   if (srcIsArray) {
-    if (getSrcIndex() == nullptr)
-      return emitOpError() << "source is array but index is missing (use 'handle[index]' or pass --allow-dynamic-indices to defer)";
+    if (getSrcIndices().empty())
+      return emitOpError() << "source is array but indices are missing (use 'handle[idx0,...]' or pass --allow-dynamic-indices to defer)";
   } else if (!srcIsHandle && !srcIsNetOut) {
     return emitOpError() << "source must be !cal.instance, !cal.instance.array[index], or !fifo.output_port<...>";
-  } else if (getSrcIndex() != nullptr && !srcIsArray) {
+  } else if (!getSrcIndices().empty() && !srcIsArray) {
     return emitOpError() << "source index provided but source is not an array";
   }
 
   if (dstIsArray) {
-    if (getDstIndex() == nullptr)
-      return emitOpError() << "destination is array but index is missing (use 'handle[index]' or pass --allow-dynamic-indices to defer)";
+    if (getDstIndices().empty())
+      return emitOpError() << "destination is array but indices are missing (use 'handle[idx0,...]' or pass --allow-dynamic-indices to defer)";
   } else if (!dstIsHandle && !dstIsNetIn) {
     return emitOpError() << "destination must be !cal.instance, !cal.instance.array[index], or !fifo.input_port<...>";
-  } else if (getDstIndex() != nullptr && !dstIsArray) {
+  } else if (!getDstIndices().empty() && !dstIsArray) {
     return emitOpError() << "destination index provided but destination is not an array";
   }
 

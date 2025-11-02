@@ -59,17 +59,19 @@ def Cal_Instance : Cal_Type<"Instance", "instance", []> {
 //   !cal.instance.array<@MyActor, 8>
 // This mirrors the single handle but enables concise replication patterns
 // and indexed extraction via `cal.instance_at`.
+// Unified ND array of symbolic instance handles (dynamic-friendly).
+// Printed form: !cal.instance.array<@Actor, [d0, d1, ..., dk]>
+// Each di may be an integer or the dynamic marker '?'. The parser/printer
+// map '?' to a sentinel (e.g., -1) internally.
 def Cal_InstanceArray : Cal_Type<"InstanceArray", "instance.array", []> {
-  let summary = "Array of symbolic actor instance handles";
+  let summary = "ND array of symbolic actor instance handles (supports dynamic dims)";
   let description = [{
-    Represents N symbolic instances of a given actor @Actor. Produced by
-    `cal.instantiate_array @Actor count(<N>)` and consumed by
-    `cal.instance_at` (or syntactic sugar %arr[<i>] in `cal.connect`). The
-    elaboration pass expands this structure into N concrete
-    `cal.create_instance` ops and corresponding FIFO creations.
+    Represents an ND array of symbolic instances of @Actor. The shape list may
+    contain dynamic dimensions denoted by '?'. Structural passes may keep shapes
+    symbolic until elaboration or specialize when constants are available.
   }];
-  let parameters = (ins "mlir::FlatSymbolRefAttr":$actorRef, "int":$count);
-  let assemblyFormat = "`<` $actorRef `,` $count `>`";
+  let parameters = (ins "mlir::FlatSymbolRefAttr":$actorRef, "mlir::ArrayAttr":$shape);
+  let hasCustomAssemblyFormat = 1;
 }
 
 // -------------------------------------------------------------------------- //
@@ -88,15 +90,17 @@ def Cal_InterfaceInstance : Cal_Type<"InterfaceInstance", "instance.iface", []> 
 
 // Fixed-length array of interface-typed instance handles.
 //   !cal.instance.array.iface<@MyIface, N>
+// Unified ND array of interface-typed instance handles.
+// Printed form: !cal.instance.array.iface<@Iface, [d0, ..., dk]>
 def Cal_InterfaceInstanceArray : Cal_Type<"InterfaceInstanceArray", "instance.array.iface", []> {
-  let summary = "Array of interface-typed instance handles";
+  let summary = "ND array of interface-typed instance handles (supports dynamic dims)";
   let description = [{
-    Represents N instances whose concrete entities implement the given
-    interface symbol. Elements may be different concrete entities as long as
-    they conform to the interface.
+    Represents an ND array whose elements are handles typed by an interface. The
+    shape list may include dynamic dimensions denoted by '?'. Elements may refer
+    to different concrete entities that implement the interface.
   }];
-  let parameters = (ins "mlir::FlatSymbolRefAttr":$ifaceRef, "int":$count);
-  let assemblyFormat = "`<` $ifaceRef `,` $count `>`";
+  let parameters = (ins "mlir::FlatSymbolRefAttr":$ifaceRef, "mlir::ArrayAttr":$shape);
+  let hasCustomAssemblyFormat = 1;
 }
 
 // Unknown-length homogeneous collections (entity or interface).

@@ -7,5 +7,6 @@ target_link_libraries(CalGenericTransformsPipelines
   MLIROptLib
   MLIRCal
   MLIRFifo
+  MLIRVerifyInstanceArrayFills
   VerifyConnectPortsPass
 )

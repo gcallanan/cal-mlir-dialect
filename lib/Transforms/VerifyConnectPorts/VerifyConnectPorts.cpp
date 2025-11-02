@@ -36,12 +36,20 @@ static std::string describeInstance(Value handle) {
       return std::string("arr[]");
     }
     if (auto at = dyn_cast_or_null<cal::InstanceAtOp>(def)) {
-      // Recurse to array and append index if constant.
+      // Recurse to array and append indices (use '?' for non-constants).
       std::string arr = describeInstance(at.getArray());
-      std::string idxStr = "?";
-      if (auto cstIdx = at.getIndex().getDefiningOp<mlir::arith::ConstantOp>()) {
-        if (auto ia = dyn_cast_or_null<IntegerAttr>(cstIdx.getValue()))
-          idxStr = std::to_string(ia.getInt());
+      std::string idxStr;
+      bool first = true;
+      for (Value iv : at.getIndices()) {
+        if (!first) idxStr += ", ";
+        first = false;
+        if (auto cstIdx = iv.getDefiningOp<mlir::arith::ConstantOp>()) {
+          if (auto ia = dyn_cast_or_null<IntegerAttr>(cstIdx.getValue())) {
+            idxStr += std::to_string(ia.getInt());
+            continue;
+          }
+        }
+        idxStr += "?";
       }
       return arr + "[" + idxStr + "]";
     }

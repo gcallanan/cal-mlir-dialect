@@ -606,16 +606,20 @@ def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", []> {
 }
 
 def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {
-  let summary = "Extract a single instance handle from an instance array";
+  let summary = "Extract a single instance handle from an instance array (ND indices)";
   let description = [{
-    Given an instance array value and an index operand, produce the specific
-    element instance handle. If the index is a constant, the verifier ensures
-    it is within [0, count). Dynamic indices are allowed but may inhibit some
-    elaboration-time optimizations.
+    Given an instance array value and one or more index operands, produce the
+    specific element instance handle. Indices support k-D access into
+    multidimensional instance arrays. If all indices are constant, the verifier
+    ensures they are within bounds. Dynamic indices are allowed but may inhibit
+    some elaboration-time optimizations.
   }];
-  let arguments = (ins AnyType:$array, Index:$index); // array expected: !cal.instance.array<...> or !cal.instance.array.iface<...>
-  let results = (outs AnyType:$handle); // result: !cal.instance<@Actor> or !cal.instance.iface<@Iface>
-  let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array) `,` type($index) `->` type($handle)";
+  // array expected: !cal.instance.array<...> or !cal.instance.array.iface<...>
+  // indices: zero or more index-typed operands for ND indexing
+  let arguments = (ins AnyType:$array, Variadic<Index>:$indices);
+  // result: !cal.instance<@Actor> or !cal.instance.iface<@Iface>
+  let results = (outs AnyType:$handle);
+  let assemblyFormat = "$array `[` $indices `]` attr-dict `:` type($array) `->` type($handle)";
   let hasVerifier = 1;
 }
 
@@ -664,12 +668,12 @@ def Cal_ConnectOp : Cal_Op<"connect", [AttrSizedOperandSegments]> {
     The explicit form (without sugar) matches the assemblyFormat below.
   }];
   let arguments = (ins
-    AnyType:$src,                  // !cal.instance/array or !fifo.output_port<...>
-    Optional<Index>:$srcIndex,     // Present when src is array sugar
-    StrAttr:$srcPort,              // Source output port name (ignored when src is a network port)
-    AnyType:$dst,                  // !cal.instance/array or !fifo.input_port<...>
-    Optional<Index>:$dstIndex,     // Present when dst is array sugar
-    StrAttr:$dstPort,              // Destination input port name (ignored when dst is a network port)
+    AnyType:$src,                    // !cal.instance/array or !fifo.output_port<...>
+    Variadic<Index>:$srcIndices,     // Optional ND indices when src is an array handle
+    StrAttr:$srcPort,                // Source output port name (ignored when src is a network port)
+    AnyType:$dst,                    // !cal.instance/array or !fifo.input_port<...>
+    Variadic<Index>:$dstIndices,     // Optional ND indices when dst is an array handle
+    StrAttr:$dstPort,                // Destination input port name (ignored when dst is a network port)
     OptionalAttr<I64Attr>:$capacity  // Optional FIFO capacity / depth (used only when creating an intermediate fifo)
   );
   let hasCustomAssemblyFormat = 1;
@@ -828,13 +832,18 @@ def Cal_InstanceYieldOp : Cal_Op<"instance_yield", [Terminator]> {
 // NOTE: cal.instance_if is temporarily omitted until custom multi-region
 // parsing is added. We'll add it alongside a custom parser/printer.
 
+// Keep for backward-compatibility during migration; prefer scf.for + init/set.
 def Cal_InstanceForOp : Cal_Op<"instance_for", [NoTerminator]> {
-  let summary = "Structural comprehension over a static range";
+  let summary = "Structural comprehension over a static range (deprecated)";
   let description = [{
     Builds a collection of instances by iterating a static range. The body
-    must `cal.instance_yield` one handle per iteration. Result may be a tuple
-    of handles or an instance array; custom parsing/printing of loop bounds
-    and induction variable may be added later.
+    must `cal.instance_yield` one handle per iteration. Prefer using
+    `scf.for` with `cal.instance.array.init`/`cal.instance.array.set`.
+
+    Deprecated: Use standard MLIR control flow instead.
+    - Replace with `scf.for` and array construction using
+      `cal.instance.array.init` + `cal.instance.array.set`.
+    - See docs/InstanceArrays-ND-and-SCF.md for recipes and verifier guidance.
   }];
 
   let arguments = (ins Index:$lb, Index:$ub, Index:$step);
@@ -883,23 +892,19 @@ def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", []> {
 // Structural conditional for instance handles/arrays
 //===----------------------------------------------------------------------===//
 
+// Keep for backward-compatibility during migration; prefer scf.if.
 def Cal_InstanceIfOp : Cal_Op<"instance_if", [NoTerminator]> {
-  let summary = "Conditional selection between two instance-producing regions";
+  let summary = "Conditional selection between two instance-producing regions (deprecated)";
   let description = [{
     Structural conditional that selects between two regions producing either a
     single instance handle or an instance array handle. Both regions must
     terminate with `cal.instance_yield` of exactly one value, and the yielded
-    types must match the result type of this op.
+    types must match the result type of this op. Prefer `scf.if` instead.
 
-    Example:
-      %h = cal.instance_if %cond {
-        %a = cal.instantiate @A : !cal.instance<@A>
-        cal.instance_yield %a : !cal.instance<@A>
-      } else {
-        %b = cal.instantiate @B : !cal.instance<@B>
-        %ib = cal.instance.cast %b : !cal.instance<@B> -> !cal.instance<@A>
-        cal.instance_yield %ib : !cal.instance<@A>
-      } : !cal.instance<@A>
+    Deprecated: Use `scf.if` that yields a `!cal.instance<...>` or
+    `!cal.instance.iface<...>` handle. For arrays, construct with
+    `cal.instance.array.init` + `cal.instance.array.set` in the selected branch
+    or yield a common array value from both branches.
   }];
 
   let arguments = (ins I1:$cond);
@@ -909,6 +914,50 @@ def Cal_InstanceIfOp : Cal_Op<"instance_if", [NoTerminator]> {
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Array construction helpers for scf-based comprehensions
+//===----------------------------------------------------------------------===//
+
+// cal.instance.array.init : create a fixed-shape array value (uninitialized)
+// Example:
+//   %arr = cal.instance.array.init : !cal.instance.array<@Actor, 4>
+def Cal_InstanceArrayInitOp : Cal_Op<"instance.array.init", []> {
+  let summary = "Create an uninitialized instance array value (optional dynamic dims)";
+  let description = [{
+    Produces a structural array value with the specified array type. Intended
+    to be used as the initial iter_args value in scf.for when filling arrays
+    using `cal.instance.array.set`.
+
+    If the array type has dynamic dimensions, provide matching SSA index
+    operands for its extents in order (e.g., (h, w) for a [h, w] array). For
+    fully static shapes, the dims operands are optional.
+  }];
+  let arguments = (ins Variadic<Index>:$dims);
+  let results = (outs AnyType:$array);
+  let assemblyFormat = "(`(` $dims `:` type($dims)^ `)`) ? attr-dict `:` type($array)";
+  // No custom verifier; structural checks are performed in dedicated passes.
+}
+
+// cal.instance.array.set : write one element and return a new array value
+// Example (1D):
+//   %arr2 = cal.instance.array.set %arr[%i], %h :
+//            !cal.instance.array<@A, 4>, index, !cal.instance<@A>
+// Example (kD):
+//   %arr2 = cal.instance.array.set %arr[%i,%j], %h :
+//            !cal.instance.array<@A, [2,2]>, index, index, !cal.instance<@A>
+def Cal_InstanceArraySetOp : Cal_Op<"instance.array.set", []> {
+  let summary = "Set one element in an instance array (returns new array value)";
+  let description = [{
+    Returns a new array value with the element at the provided index/indices
+    set to the given instance handle. Type remains identical to the input
+    array type, making it suitable for scf.for iter_args patterns.
+  }];
+  let arguments = (ins AnyType:$array, Variadic<Index>:$indices, AnyType:$value);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$array `[` $indices `]` `,` $value attr-dict `:` type($array) `,` type($value) `->` type($result)";
+  // No custom verifier/canonicalizer here; bounds/type checks are pass-driven.
 }
 
 #endif // CAL_OPS

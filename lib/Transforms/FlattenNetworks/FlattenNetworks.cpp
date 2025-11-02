@@ -227,7 +227,14 @@ public:
       // Also collect instance_at for index resolution checks.
       SmallVector<InstanceAtOp> instanceAtOps;
 
-      for (Operation &op : llvm::make_early_inc_range(body.getOperations())) {
+  // Track arrays constructed via cal.instance.array.init/set for ND support.
+  // We keep a lightweight map from array SSA to element plans (non-owning),
+  // derived from existing singlePlans created for cal.instantiate handles.
+  // Map arrays (built via instance.array.init/set) to element plans indexed by
+  // a serialized ND index key "i0,i1,...". This avoids requiring static shapes.
+  DenseMap<Value, llvm::StringMap<InstPlan*>> arrayElemPlans;
+
+  for (Operation &op : llvm::make_early_inc_range(body.getOperations())) {
         if (auto inst = dyn_cast<InstantiateOp>(&op)) {
           ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(&op, inst.getActorRefAttr());
           if (!actor)
@@ -247,10 +254,8 @@ public:
           if (!actor)
             return op.emitOpError("instantiate_array references unknown cal.actor");
           unsigned count = 0;
-          if (auto arrTy = dyn_cast_if_present<InstanceArrayType>(arr.getHandlesArray().getType()))
-            count = static_cast<unsigned>(arrTy.getCount());
-          else
-            count = static_cast<unsigned>(arr.getCount());
+          // Prefer the op attribute 'count' for instantiate_array (1D arrays).
+          count = static_cast<unsigned>(arr.getCount());
           SmallVector<std::unique_ptr<InstPlan>> plans;
           plans.reserve(count);
           for (unsigned i = 0; i < count; ++i) {
@@ -306,6 +311,62 @@ public:
           instanceAtOps.push_back(at);
           continue;
         }
+        // ND array construction: cal.instance.array.init
+        if (auto arrInit = dyn_cast<InstanceArrayInitOp>(&op)) {
+          Value arrVal = arrInit.getArray();
+          arrayElemPlans[arrVal] = llvm::StringMap<InstPlan*>();
+          continue;
+        }
+        // ND array element set: cal.instance.array.set %arr[idxs], %h
+        if (auto arrSet = dyn_cast<InstanceArraySetOp>(&op)) {
+          Value inArr = arrSet.getArray();
+          // Propagate existing vector to result by value, then assign element when possible.
+          llvm::StringMap<InstPlan*> mapCopy;
+          if (auto it = arrayElemPlans.find(inArr); it != arrayElemPlans.end())
+            mapCopy = it->second;
+
+          // Compute linearized index only when indices are a single constant or when we can derive strides from static shape.
+          SmallVector<Value> idxVals(arrSet.getIndices().begin(), arrSet.getIndices().end());
+          std::optional<std::string> key;
+          // Helper to extract constant index value
+          auto constIndex = [&](Value v) -> std::optional<int64_t> {
+            if (auto c = v.getDefiningOp<arith::ConstantOp>())
+              if (auto a = dyn_cast<IntegerAttr>(c.getValue())) return a.getInt();
+            return std::nullopt;
+          };
+
+          if (!idxVals.empty()) {
+            SmallVector<int64_t, 4> idxs; idxs.reserve(idxVals.size());
+            bool allConst = true;
+            for (Value v : idxVals) {
+              auto c = constIndex(v);
+              if (!c) { allConst = false; break; }
+              idxs.push_back(*c);
+            }
+            if (allConst) {
+              std::string s;
+              for (size_t i = 0; i < idxs.size(); ++i) {
+                if (i) s += ",";
+                s += Twine(idxs[i]).str();
+              }
+              key = std::move(s);
+            }
+          }
+
+          // If we can compute a key and we have a plan for the value, assign.
+          if (key) {
+            Value h = arrSet.getValue();
+            // Chase interface cast to its concrete handle, if present.
+            if (auto castOp = h.getDefiningOp<cal::InstanceCastOp>())
+              h = castOp.getInput();
+            if (auto itPlan = singlePlans.find(h); itPlan != singlePlans.end()) {
+              mapCopy[*key] = itPlan->second.get();
+            }
+          }
+          // Map the result array value to the updated vector state (may be empty when unknown).
+          arrayElemPlans[arrSet.getResult()] = std::move(mapCopy);
+          continue;
+        }
         if (isa<ConnectOp>(&op)) {
           connectOps.push_back(&op);
           continue;
@@ -321,7 +382,17 @@ public:
         auto &vec = kv.second;
         for (Operation *user : arrVal.getUsers()) {
           if (auto at = dyn_cast<InstanceAtOp>(user)) {
-            auto c = at.getIndex().getDefiningOp<arith::ConstantOp>();
+            auto indices = at.getIndices();
+            if (indices.size() != 1) {
+                if (!allowDynamicIndices) {
+                  at.emitOpError("only a single constant index is supported for instance_at during elaboration");
+                  return failure();
+                } else {
+                  at.emitRemark("skipping instance_at with non-1D indices during elaboration");
+                  continue;
+                }
+              }
+              auto c = indices.front().getDefiningOp<arith::ConstantOp>();
             if (!c) {
               if (!allowDynamicIndices) {
                 at.emitOpError("dynamic index not supported in elaboration; pass --allow-dynamic-indices to skip materialization and defer to later passes");
@@ -342,6 +413,37 @@ public:
               return failure();
             }
             handleToPlan[at.getHandle()] = vec[static_cast<unsigned>(idx)].get();
+          }
+        }
+      }
+
+      // Also resolve instance_at uses for arrays built via array.init/set when indices are constant and vector populated.
+      for (auto &kv : arrayElemPlans) {
+        Value arrVal = kv.first; auto &ptrs = kv.second;
+        if (ptrs.empty()) continue; // unknown or no entries recorded yet
+        for (Operation *user : arrVal.getUsers()) {
+          if (auto at = dyn_cast<InstanceAtOp>(user)) {
+            auto indices = at.getIndices();
+            // Build key "i0,i1,..." from constant indices
+            std::string s; bool allConst = true;
+            for (size_t i = 0; i < indices.size(); ++i) {
+              if (auto c = indices[i].getDefiningOp<arith::ConstantOp>()) {
+                if (auto ia = dyn_cast<IntegerAttr>(c.getValueAttr())) {
+                  if (i) s += ",";
+                  s += Twine(ia.getInt()).str();
+                  continue;
+                }
+              }
+              allConst = false; break;
+            }
+            if (!allConst) {
+              if (!allowDynamicIndices) { at.emitOpError("dynamic ND index not supported during elaboration"); return failure(); }
+              at.emitRemark("skipping instance_at with dynamic ND index during elaboration");
+              continue;
+            }
+            if (auto it = ptrs.find(s); it != ptrs.end())
+              if (InstPlan *p = it->second)
+                handleToPlan[at.getHandle()] = p;
           }
         }
       }
@@ -404,56 +506,69 @@ public:
         Value rawDst = conn.getDst();
 
         // Handle array-index sugar directly if present on connect.
-        auto resolveArrayEndpoint = [&](Value &rawVal, Value idxVal, bool isDst) -> FailureOr<InstPlan*> {
-          if (!idxVal)
+        auto resolveArrayEndpoint = [&](Value &rawVal, OperandRange idxVals, bool isDst) -> FailureOr<InstPlan*> {
+          if (idxVals.empty())
             return FailureOr<InstPlan*>(nullptr);
           // Expect the raw value to be an instance array (concrete or iface-typed).
           if (!isa<InstanceArrayType, InterfaceInstanceArrayType>(rawVal.getType())) {
             return conn.emitOpError(isDst ? "destination index provided but destination is not an array"
                                           : "source index provided but source is not an array");
           }
-          // Constant index required unless dynamic indices are allowed.
-          if (auto c = idxVal.getDefiningOp<arith::ConstantOp>()) {
-            auto intAttr = dyn_cast<IntegerAttr>(c.getValueAttr());
-            if (!intAttr)
-              return conn.emitOpError("unsupported index attribute on array-index connect");
-            int64_t idx = intAttr.getInt();
-            // Look up the plans for this array value; bounds-check against plan count.
-            auto it = arrayPlans.find(rawVal);
-            if (it == arrayPlans.end()) {
-              return conn.emitOpError("internal error: array endpoint has no instantiated plan");
+          // Gather indices; require constants unless allowDynamicIndices is set.
+          SmallVector<int64_t, 4> idxs;
+          idxs.reserve(idxVals.size());
+          for (Value v : idxVals) {
+            if (auto c = v.getDefiningOp<arith::ConstantOp>()) {
+              if (auto ia = dyn_cast<IntegerAttr>(c.getValueAttr())) { idxs.push_back(ia.getInt()); continue; }
             }
-            auto &vec = it->second;
-            if (idx < 0 || static_cast<unsigned>(idx) >= vec.size()) {
-              return conn.emitOpError("index out of bounds for instance array on connect");
-            }
-            return vec[static_cast<unsigned>(idx)].get();
-          } else {
-            if (!allowDynamicIndices) {
-              return conn.emitOpError("dynamic index not supported in elaboration; pass --allow-dynamic-indices to skip materialization and defer to later passes");
-            }
-            conn.emitRemark("skipping connect with dynamic array index during elaboration");
+            if (!allowDynamicIndices)
+              return conn.emitOpError("dynamic ND index not supported during elaboration");
+            conn.emitRemark("skipping connect with dynamic ND array index during elaboration");
             return FailureOr<InstPlan*>(nullptr);
           }
+          // If this came from a 1D instantiate_array, we only support a single index here.
+          if (auto it = arrayPlans.find(rawVal); it != arrayPlans.end()) {
+            auto &vec = it->second;
+            if (idxs.size() != 1)
+              return conn.emitOpError(isDst ? "destination has multiple indices; only single index supported for 1D instance arrays"
+                                            : "source has multiple indices; only single index supported for 1D instance arrays");
+            int64_t idx = idxs.front();
+            if (idx < 0 || static_cast<unsigned>(idx) >= vec.size())
+              return conn.emitOpError("index out of bounds for instance array on connect");
+            return vec[static_cast<unsigned>(idx)].get();
+          }
+          // Otherwise, use ND key lookup for arrays built via init/set.
+          if (auto it2 = arrayElemPlans.find(rawVal); it2 != arrayElemPlans.end()) {
+            auto &ptrs = it2->second;
+            std::string keyStr;
+            for (size_t i = 0; i < idxs.size(); ++i) {
+              if (i) keyStr += ",";
+              keyStr += Twine(idxs[i]).str();
+            }
+            if (auto itp = ptrs.find(keyStr); itp != ptrs.end())
+              return itp->second;
+            return conn.emitOpError("no element recorded at ND index for array on connect");
+          }
+          return conn.emitOpError("internal error: array endpoint has no plan table");
         };
 
         // If indices exist on the connect, resolve to plans before chasing casts below.
         InstPlan *srcPlanIdx = nullptr;
-        if (conn.getSrcIndex()) {
-          auto res = resolveArrayEndpoint(rawSrc, conn.getSrcIndex(), /*isDst=*/false);
+        if (!conn.getSrcIndices().empty()) {
+          auto res = resolveArrayEndpoint(rawSrc, conn.getSrcIndices(), /*isDst=*/false);
           if (failed(res)) return failure();
           srcPlanIdx = *res;
-          if (!srcPlanIdx && conn.getSrcIndex()) {
+          if (!srcPlanIdx && !conn.getSrcIndices().empty()) {
             // Dynamic case with allowDynamicIndices: skip this connect entirely.
             continue;
           }
         }
         InstPlan *dstPlanIdx = nullptr;
-        if (conn.getDstIndex()) {
-          auto res = resolveArrayEndpoint(rawDst, conn.getDstIndex(), /*isDst=*/true);
+        if (!conn.getDstIndices().empty()) {
+          auto res = resolveArrayEndpoint(rawDst, conn.getDstIndices(), /*isDst=*/true);
           if (failed(res)) return failure();
           dstPlanIdx = *res;
-          if (!dstPlanIdx && conn.getDstIndex()) {
+          if (!dstPlanIdx && !conn.getDstIndices().empty()) {
             // Dynamic case with allowDynamicIndices: skip this connect entirely.
             continue;
           }
