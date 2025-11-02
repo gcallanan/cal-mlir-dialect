@@ -23,11 +23,11 @@ cal.actor @B()
 // Two connects on the same array-indexed channel with differing capacities
 cal.network @ArrayCap() {
   %c0 = arith.constant 0 : index
-  %as = cal.instantiate_array @A count(2) : !cal.instance.array<@A, 2>
-  %bs = cal.instantiate_array @B count(2) : !cal.instance.array<@B, 2>
+  %as = cal.instantiate_array @A count(2) : !cal.instance.array<@A, [2]>
+  %bs = cal.instantiate_array @B count(2) : !cal.instance.array<@B, [2]>
 
   // expected-remark @+1 {{first capacity specified here}}
-  cal.connect %as[%c0] : !cal.instance.array<@A, 2> "out" -> %bs[%c0] : !cal.instance.array<@B, 2> "in" capacity(4)
+  cal.connect %as[%c0] : !cal.instance.array<@A, [2]> "out" -> %bs[%c0] : !cal.instance.array<@B, [2]> "in" capacity(4)
   // expected-error@+1 {{conflicting capacity for channel: existing=4, new=8}}
-  cal.connect %as[%c0] : !cal.instance.array<@A, 2> "out" -> %bs[%c0] : !cal.instance.array<@B, 2> "in" capacity(8)
+  cal.connect %as[%c0] : !cal.instance.array<@A, [2]> "out" -> %bs[%c0] : !cal.instance.array<@B, [2]> "in" capacity(8)
 }

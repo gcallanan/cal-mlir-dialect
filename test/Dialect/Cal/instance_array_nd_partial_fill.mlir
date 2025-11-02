@@ -12,13 +12,13 @@ module {
     %a0 = cal.instantiate @A : <@A>
     %a1 = cal.instantiate @A : <@A>
     %a2 = cal.instantiate @A : <@A>
-    %arr0 = cal.instance.array.init : !cal.instance.array.nd<@A, [2, 2]>
+  %arr0 = cal.instance.array.init : !cal.instance.array<@A, [2, 2]>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     // Fill three of four elements
-    %arr1 = cal.instance.array.set %arr0[%c0, %c0], %a0 : !cal.instance.array.nd<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array.nd<@A, [2, 2]>
-    %arr2 = cal.instance.array.set %arr1[%c1, %c0], %a1 : !cal.instance.array.nd<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array.nd<@A, [2, 2]>
-    %arr3 = cal.instance.array.set %arr2[%c0, %c1], %a2 : !cal.instance.array.nd<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array.nd<@A, [2, 2]>
+  %arr1 = cal.instance.array.set %arr0[%c0, %c0], %a0 : !cal.instance.array<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array<@A, [2, 2]>
+  %arr2 = cal.instance.array.set %arr1[%c1, %c0], %a1 : !cal.instance.array<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array<@A, [2, 2]>
+  %arr3 = cal.instance.array.set %arr2[%c0, %c1], %a2 : !cal.instance.array<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array<@A, [2, 2]>
   }
 }
 

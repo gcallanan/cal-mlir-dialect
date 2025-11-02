@@ -12,11 +12,11 @@ module {
     %c0 = arith.constant 0 : index
 
     %h = cal.instantiate @A : !cal.instance<@A>
-    %arr0 = cal.instance.array.init : !cal.instance.array<@A, 1>
-    %arr1 = cal.instance.array.set %arr0[%c0], %h : !cal.instance.array<@A, 1>, !cal.instance<@A> -> !cal.instance.array<@A, 1>
+  %arr0 = cal.instance.array.init : !cal.instance.array<@A, [1]>
+  %arr1 = cal.instance.array.set %arr0[%c0], %h : !cal.instance.array<@A, [1]>, !cal.instance<@A> -> !cal.instance.array<@A, [1]>
 
     // Access element to ensure type/usage is correct
-    %e0 = cal.instance_at %arr1[%c0] : !cal.instance.array<@A, 1>, index -> !cal.instance<@A>
+  %e0 = cal.instance_at %arr1[%c0] : !cal.instance.array<@A, [1]> -> !cal.instance<@A>
   }
 }
 

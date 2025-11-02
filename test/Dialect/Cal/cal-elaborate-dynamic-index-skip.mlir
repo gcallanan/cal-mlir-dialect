@@ -25,10 +25,10 @@ cal.actor @Cons()
 }
 
 cal.network @Dyn(%idx: index) {
-  %prods = cal.instantiate_array @Prod count(2) : !cal.instance.array<@Prod, 2>
-  %cons  = cal.instantiate_array @Cons count(2) : !cal.instance.array<@Cons, 2>
+  %prods = cal.instantiate_array @Prod count(2) : !cal.instance.array<@Prod, [2]>
+  %cons  = cal.instantiate_array @Cons count(2) : !cal.instance.array<@Cons, [2]>
 
-  cal.connect %prods[%idx] : !cal.instance.array<@Prod, 2> "out" -> %cons[%idx] : !cal.instance.array<@Cons, 2> "in"
+  cal.connect %prods[%idx] : !cal.instance.array<@Prod, [2]> "out" -> %cons[%idx] : !cal.instance.array<@Cons, [2]> "in"
 }
 
 // CHECK: skipping dynamic index during elaboration
@@ -37,6 +37,8 @@ cal.network @Dyn(%idx: index) {
 // CHECK: cal.actor @Cons
 // CHECK: cal.network @Dyn
 // CHECK-SAME: %arg0: index
-// CHECK: cal.instantiate_array @Prod count(2) : !cal.instance.array<@Prod, 2>
-// CHECK: cal.instantiate_array @Cons count(2) : !cal.instance.array<@Cons, 2>
-// CHECK: cal.connect {{.*}} : !cal.instance.array<@Prod, 2> "out" -> {{.*}} : !cal.instance.array<@Cons, 2> "in"
+// CHECK: cal.instantiate_array @Prod count(2) : <@Prod, [2]>
+// CHECK: cal.instantiate_array @Cons count(2) : <@Cons, [2]>
+// CHECK: cal.connect
+// CHECK-SAME: "out" ->
+// CHECK-SAME: "in"

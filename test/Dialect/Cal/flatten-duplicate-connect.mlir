@@ -15,6 +15,7 @@ cal.network @DupSrc() {
 
   %h = cal.instantiate @A : !cal.instance<@A>
   // First connection OK
+  // expected-remark @+1 {{first connection to this port was here}}
   cal.connect %out0 : !fifo.output_port<i32> "out" -> %h : !cal.instance<@A> "in"
   // Second connection to same source port should error
   // expected-error @+1 {{destination port already connected}}
@@ -37,6 +38,7 @@ cal.network @DupDst() {
 
   %h = cal.instantiate @A : !cal.instance<@A>
   // First connection OK
+  // expected-remark @+1 {{first connection to this port was here}}
   cal.connect %h : !cal.instance<@A> "out" -> %in0 : !fifo.input_port<i32> "in"
   // Second connection to same source port should error
   // expected-error @+1 {{source port already connected}}

@@ -32,6 +32,8 @@ cal.network @Top()
 // After elaboration, the connect ops should be erased and create_instance should
 // receive the network ports directly, with NO fifo.create materialized for these edges.
 // CHECK: cal.create_instance @Wire
-// CHECK-SAME: ports_in(%net_in : !fifo.output_port<i32>)
-// CHECK-SAME: ports_out(%net_out : !fifo.input_port<i32>)
+// CHECK: ports_in (
+// CHECK-SAME: !fifo.output_port<i32>
+// CHECK: ports_out (
+// CHECK-SAME: !fifo.input_port<i32>
 // CHECK-NOT: fifo.create

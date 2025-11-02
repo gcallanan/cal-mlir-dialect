@@ -21,9 +21,9 @@ cal.network @SrcCastBad() {
   %in0, %out0 = fifo.create<i32>(2) : !fifo.input_port<i32>, !fifo.output_port<i32>
 
   %h = cal.instantiate @A : !cal.instance<@A>
+  // expected-error@+1 {{'cal.instance.cast' op entity 'A' does not implement interface 'PipeLike'}}
   %ih = cal.instance.cast %h : !cal.instance<@A> -> !cal.instance.iface<@PipeLike>
 
-  // expected-error@+1 {{invalid instance.cast on source: entity 'A' does not implement interface 'PipeLike'}}
   cal.connect %ih : !cal.instance.iface<@PipeLike> "out" -> %in0 : !fifo.input_port<i32> "out"
 }
 
@@ -31,7 +31,7 @@ cal.network @SrcCastBad() {
 // Case 2: Destination-side cast to an interface not implemented by the actor
 // Expect an error when elaborating connect to interface-typed destination handle.
 //===----------------------------------------------------------------------===//
-// ---
+// -----
 cal.interface @PipeLike { inPortNames = ["in"], inPortTypes = [!fifo.output_port<i32>],
                           outPortNames = ["out"], outPortTypes = [!fifo.input_port<i32>] }
 
@@ -48,8 +48,8 @@ cal.network @DstCastBad() {
   %in0, %out0 = fifo.create<i32>(2) : !fifo.input_port<i32>, !fifo.output_port<i32>
 
   %h = cal.instantiate @A : !cal.instance<@A>
+  // expected-error@+1 {{'cal.instance.cast' op entity 'A' does not implement interface 'PipeLike'}}
   %ih = cal.instance.cast %h : !cal.instance<@A> -> !cal.instance.iface<@PipeLike>
 
-  // expected-error@+1 {{invalid instance.cast on destination: entity 'A' does not implement interface 'PipeLike'}}
   cal.connect %out0 : !fifo.output_port<i32> "in" -> %ih : !cal.instance.iface<@PipeLike> "in"
 }

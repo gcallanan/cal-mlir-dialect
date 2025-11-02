@@ -58,9 +58,9 @@ cal.network @GoL2x2() {
 }
 
 // Expect four concrete instances with the given names.
-// CHECK: cal.create_instance @Cell "c00"
-// CHECK: cal.create_instance @Cell "c01"
-// CHECK: cal.create_instance @Cell "c10"
-// CHECK: cal.create_instance @Cell "c11"
+// CHECK-DAG: cal.create_instance @Cell "c00"
+// CHECK-DAG: cal.create_instance @Cell "c01"
+// CHECK-DAG: cal.create_instance @Cell "c10"
+// CHECK-DAG: cal.create_instance @Cell "c11"
 
 // Note: Additional fifo.create ops appear for the explicit network-side FIFOs above.

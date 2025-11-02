@@ -16,13 +16,14 @@ cal.network @ArrayDupDst() {
   %in0, %out0 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>
   %in1, %out1 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>
 
-  %arr = cal.instantiate_array @A count (2) : !cal.instance.array<@A, 2>
+  %arr = cal.instantiate_array @A count (2) : <@A, [2]>
 
   // First connection OK
-  cal.connect %out0 : !fifo.output_port<i32> "out" -> %arr[%c0] : !cal.instance.array<@A, 2> "in"
+  // expected-remark @+1 {{first connection to this port was here}}
+  cal.connect %out0 : !fifo.output_port<i32> "out" -> %arr[%c0] : !cal.instance.array<@A, [2]> "in"
   // Second connection to same destination port should error
   // expected-error @+1 {{destination port already connected}}
-  cal.connect %out1 : !fifo.output_port<i32> "out" -> %arr[%c0] : !cal.instance.array<@A, 2> "in"
+  cal.connect %out1 : !fifo.output_port<i32> "out" -> %arr[%c0] : !cal.instance.array<@A, [2]> "in"
 }
 
 // -----
@@ -43,11 +44,12 @@ cal.network @ArrayDupSrc() {
   %in0, %out0 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>
   %in1, %out1 = fifo.create<i32>(1) : !fifo.input_port<i32>, !fifo.output_port<i32>
 
-  %arr = cal.instantiate_array @A count (2) : !cal.instance.array<@A, 2>
+  %arr = cal.instantiate_array @A count (2) : <@A, [2]>
 
   // First connection OK
-  cal.connect %arr[%c1] : !cal.instance.array<@A, 2> "out" -> %in0 : !fifo.input_port<i32> "in"
+  // expected-remark @+1 {{first connection to this port was here}}
+  cal.connect %arr[%c1] : !cal.instance.array<@A, [2]> "out" -> %in0 : !fifo.input_port<i32> "in"
   // Second connection from same source port should error
   // expected-error @+1 {{source port already connected}}
-  cal.connect %arr[%c1] : !cal.instance.array<@A, 2> "out" -> %in1 : !fifo.input_port<i32> "in"
+  cal.connect %arr[%c1] : !cal.instance.array<@A, [2]> "out" -> %in1 : !fifo.input_port<i32> "in"
 }

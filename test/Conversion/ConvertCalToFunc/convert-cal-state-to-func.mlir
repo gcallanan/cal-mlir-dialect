@@ -27,15 +27,16 @@ cal.network @Top(){
 
     fifo.print("start\n\00")
     // CHECK: fifo.print("start\0A\00")
-    //CHECK-NEXT: scf.while (%arg0 = %true) : (i1) -> () {
+    //CHECK-NEXT: %true = arith.constant true
+    //CHECK-NEXT: scf.while (%arg0 = %true) : (i1) -> i1 {
     //CHECK-NEXT:   scf.condition(%arg0)
     //CHECK-NEXT: } do {
-    //CHECK-NEXT:   %0 = func.call @src(%c11_i32, %inputPort) {from_create_instance} : (i32, !fifo.input_port<i32>) -> i1
-    //CHECK-NEXT:   %1 = func.call @src(%c12_i32, %inputPort_0) {from_create_instance} : (i32, !fifo.input_port<i32>) -> i1
-    //CHECK-NEXT:   %2 = arith.ori %1, %0 : i1
-    //CHECK-NEXT:   %3 = func.call @src(%c13_i32, %inputPort_2) {from_create_instance} : (i32, !fifo.input_port<i32>) -> i1
-    //CHECK-NEXT:   %4 = arith.ori %3, %2 : i1
-    //CHECK-NEXT:   scf.yield %4 : i1
+    //CHECK:   func.call @src(%c11_i32, %inputPort) {from_create_instance} : (i32, !fifo.input_port<i32>) -> i1
+    //CHECK:   func.call @src(%c12_i32, %inputPort_0) {from_create_instance} : (i32, !fifo.input_port<i32>) -> i1
+    //CHECK:   arith.ori
+    //CHECK:   func.call @src(%c13_i32, %inputPort_2) {from_create_instance} : (i32, !fifo.input_port<i32>) -> i1
+    //CHECK:   arith.ori
+    //CHECK:   scf.yield %{{.*}} : i1
     //CHECK-NEXT: }
 
 

@@ -53,7 +53,7 @@ cal.network @IfaceNDConnect() {
 }
 
 // CHECK: cal.network @IfaceNDConnect()
-// CHECK: cal.create_instance @Prod
-// CHECK: cal.create_instance @Prod
-// CHECK: cal.create_instance @Cons
-// CHECK: cal.create_instance @Cons
+// CHECK-DAG: cal.create_instance @Prod
+// CHECK-DAG: cal.create_instance @Prod
+// CHECK-DAG: cal.create_instance @Cons
+// CHECK-DAG: cal.create_instance @Cons

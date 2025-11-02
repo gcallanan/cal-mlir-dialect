@@ -39,14 +39,14 @@ cal.actor @Cons()
 
 // Symbolic network uses instantiate_array and connect sugar.
 cal.network @N() {
-  %prods = cal.instantiate_array @Prod count(2) : !cal.instance.array<@Prod, 2>
-  %cons  = cal.instantiate_array @Cons count(2) : !cal.instance.array<@Cons, 2>
+  %prods = cal.instantiate_array @Prod count(2) : !cal.instance.array<@Prod, [2]>
+  %cons  = cal.instantiate_array @Cons count(2) : !cal.instance.array<@Cons, [2]>
 
   %i0 = arith.constant 0 : index
   %i1 = arith.constant 1 : index
 
-  cal.connect %prods[%i0] : !cal.instance.array<@Prod, 2> "out" -> %cons[%i0] : !cal.instance.array<@Cons, 2> "i"
-  cal.connect %prods[%i1] : !cal.instance.array<@Prod, 2> "out" -> %cons[%i1] : !cal.instance.array<@Cons, 2> "i"
+  cal.connect %prods[%i0] : !cal.instance.array<@Prod, [2]> "out" -> %cons[%i0] : !cal.instance.array<@Cons, [2]> "i"
+  cal.connect %prods[%i1] : !cal.instance.array<@Prod, [2]> "out" -> %cons[%i1] : !cal.instance.array<@Cons, [2]> "i"
 }
 
 // CHECK-LABEL: cal.network @N()

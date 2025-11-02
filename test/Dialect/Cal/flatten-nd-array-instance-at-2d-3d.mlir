@@ -13,6 +13,16 @@ cal.actor @A()
 // -----
 
 // 2D ND instance array: use explicit cal.instance_at with constant indices
+// Re-declare actor @A in this split so it's in scope
+cal.actor @A()
+  ports_in(%i: !fifo.output_port<i32>)
+  ports_out(%o: !fifo.input_port<i32>) {
+  cal.execution_body {
+    %t = arith.constant true
+    cal.action_done %t : i1
+  }
+}
+
 cal.network @Net2D() {
   %i0 = arith.constant 0 : index
   %i1 = arith.constant 1 : index
@@ -45,6 +55,16 @@ cal.network @Net2D() {
 // -----
 
 // 3D ND instance array: explicit cal.instance_at with constant 3-tuple indices
+// Re-declare actor @A in this split so it's in scope
+cal.actor @A()
+  ports_in(%i: !fifo.output_port<i32>)
+  ports_out(%o: !fifo.input_port<i32>) {
+  cal.execution_body {
+    %t = arith.constant true
+    cal.action_done %t : i1
+  }
+}
+
 cal.network @Net3D() {
   %i0 = arith.constant 0 : index
   %i1 = arith.constant 1 : index

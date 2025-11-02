@@ -30,7 +30,7 @@ cal.network @Top() {
 // CHECK: cal.instantiate @Q
 // Then FIFO creation and materialized instances:
 // CHECK: %[[IN:.*]], %[[OUT:.*]] = fifo.create<i32>
-// CHECK: cal.create_instance @Q()
+// CHECK: cal.create_instance @Q
 // CHECK-NEXT: ports_in (%[[OUT]] : !fifo.output_port<i32>)
-// CHECK: cal.create_instance @P()
+// CHECK: cal.create_instance @P
 // CHECK-NEXT: ports_out (%[[IN]] : !fifo.input_port<i32>)

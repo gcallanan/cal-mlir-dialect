@@ -15,12 +15,12 @@ module {
     %a = cal.instantiate @A : <@A>
     %ia = cal.instance.cast %a : !cal.instance<@A> -> !cal.instance.iface<@IF>
 
-    %arr = cal.instance.array.init : !cal.instance.array.iface.nd<@IF, [2, 2]>
+  %arr = cal.instance.array.init : !cal.instance.array.iface<@IF, [2, 2]>
 
     %c2 = arith.constant 2 : index
     %c0 = arith.constant 0 : index
     // OOB on dim 0
-    %arr1 = cal.instance.array.set %arr[%c2, %c0], %ia : !cal.instance.array.iface.nd<@IF, [2, 2]>, !cal.instance.iface<@IF> -> !cal.instance.array.iface.nd<@IF, [2, 2]>
+  %arr1 = cal.instance.array.set %arr[%c2, %c0], %ia : !cal.instance.array.iface<@IF, [2, 2]>, !cal.instance.iface<@IF> -> !cal.instance.array.iface<@IF, [2, 2]>
   }
 }
 

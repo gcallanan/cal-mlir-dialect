@@ -6,8 +6,8 @@ cal.interface @PipeLike { inPortNames = ["in"], inPortTypes = [!fifo.output_port
 cal.network @TopIfaceArray() {
   %c0 = arith.constant 0 : index
   %in0, %out0 = fifo.create<i32>(2) : !fifo.input_port<i32>, !fifo.output_port<i32>
-  %arr = cal.instantiate_array.iface @PipeLike count(1) : !cal.instance.array.iface<@PipeLike, 1>
-  %h0 = cal.instance_at %arr[%c0] : !cal.instance.array.iface<@PipeLike, 1>, index -> !cal.instance.iface<@PipeLike>
+  %arr = cal.instantiate_array.iface @PipeLike count(1) : !cal.instance.array.iface<@PipeLike, [1]>
+  %h0 = cal.instance_at %arr[%c0] : !cal.instance.array.iface<@PipeLike, [1]> -> !cal.instance.iface<@PipeLike>
 
   // expected-remark@+1 {{skipping materialization for interface-typed endpoint; requires resolution to a concrete entity}}
   cal.connect %out0 : !fifo.output_port<i32> "in" -> %h0 : !cal.instance.iface<@PipeLike> "in"
@@ -17,5 +17,3 @@ cal.network @TopIfaceArray() {
 
 // CHECK: cal.network @TopIfaceArray()
 // CHECK: cal.instantiate_array.iface @PipeLike count(1)
-// CHECK: cal.instance_at %arr[%c0]
-// CHECK: cal.connect

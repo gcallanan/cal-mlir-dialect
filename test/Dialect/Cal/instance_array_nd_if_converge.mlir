@@ -9,18 +9,18 @@ module {
   }
 
   cal.network @if_conv() {
-    %arr = cal.instance.array.init : !cal.instance.array.nd<@A, [2, 2]>
+  %arr = cal.instance.array.init : !cal.instance.array<@A, [2, 2]>
     %a0 = cal.instantiate @A : <@A>
     %a1 = cal.instantiate @A : <@A>
 
     %cond = arith.constant 0 : i1
     scf.if %cond {
       %c0 = arith.constant 0 : index
-      %arr1 = cal.instance.array.set %arr[%c0, %c0], %a0 : !cal.instance.array.nd<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array.nd<@A, [2, 2]>
+  %arr1 = cal.instance.array.set %arr[%c0, %c0], %a0 : !cal.instance.array<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array<@A, [2, 2]>
       scf.yield
     } else {
       %c1 = arith.constant 1 : index
-      %arr2 = cal.instance.array.set %arr[%c1, %c1], %a1 : !cal.instance.array.nd<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array.nd<@A, [2, 2]>
+  %arr2 = cal.instance.array.set %arr[%c1, %c1], %a1 : !cal.instance.array<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array<@A, [2, 2]>
       scf.yield
     }
   }

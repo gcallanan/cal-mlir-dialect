@@ -10,11 +10,11 @@ module {
 
   cal.network @oob() {
     %a0 = cal.instantiate @A : <@A>
-    %arr = cal.instance.array.init : !cal.instance.array.nd<@A, [2, 2]>
+  %arr = cal.instance.array.init : !cal.instance.array<@A, [2, 2]>
     %c2 = arith.constant 2 : index
     %c0 = arith.constant 0 : index
     // Out-of-bounds on dim 0 (extent 2), index 2
-    %arr1 = cal.instance.array.set %arr[%c2, %c0], %a0 : !cal.instance.array.nd<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array.nd<@A, [2, 2]>
+  %arr1 = cal.instance.array.set %arr[%c2, %c0], %a0 : !cal.instance.array<@A, [2, 2]>, !cal.instance<@A> -> !cal.instance.array<@A, [2, 2]>
   }
 }
 

@@ -9,11 +9,11 @@ cal.actor @A()
 }
 
 cal.network @N() {
-  %arr = cal.instantiate_array @A count(2) : !cal.instance.array<@A, 2>
+  %arr = cal.instantiate_array @A count(2) : !cal.instance.array<@A, [2]>
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  %h0 = cal.instance_at %arr[%c0] : !cal.instance.array<@A, 2>, index -> !cal.instance<@A>
-  %h1 = cal.instance_at %arr[%c1] : !cal.instance.array<@A, 2>, index -> !cal.instance<@A>
+  %h0 = cal.instance_at %arr[%c0] : !cal.instance.array<@A, [2]> -> !cal.instance<@A>
+  %h1 = cal.instance_at %arr[%c1] : !cal.instance.array<@A, [2]> -> !cal.instance<@A>
 
   // Invalid destination port name 'inX' (valid are in0/out0)
   cal.connect %h0 : !cal.instance<@A> "out0" -> %h1 : !cal.instance<@A> "inX"

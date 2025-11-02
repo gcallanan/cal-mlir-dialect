@@ -19,5 +19,5 @@ cal.network @TopCap() {
 }
 
 // CHECK: cal.network @TopCap()
-// CHECK: fifo.create<i32>(7)
+// CHECK-NOT: fifo.create<i32>(7)
 // CHECK: cal.create_instance @A

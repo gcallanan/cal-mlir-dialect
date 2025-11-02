@@ -31,6 +31,6 @@ cal.network @top() {
 }
 
 // CHECK: cal.network @top()
-// CHECK: %[[IN:.*]], %[[OUT:.*]] = fifo.create<i32>(2)
+// CHECK: %[[IN:.*]], %[[OUT:.*]] = fifo.create<i32> (2)
 // After elaboration, a cal.create_instance should be materialized for @A with ports wired
 // CHECK: cal.create_instance @A

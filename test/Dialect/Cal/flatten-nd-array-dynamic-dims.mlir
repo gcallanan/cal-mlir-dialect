@@ -41,7 +41,7 @@ cal.network @NDInitSetConnect_DynamicDims() {
   cal.connect %parr2[%i1,%i1] : !cal.instance.array<@Prod, [?, 2]> "out" -> %carr2[%i1,%i1] : !cal.instance.array<@Cons, [?, 2]> "in"
 }
 
-// CHECK: cal.create_instance @Prod
-// CHECK: cal.create_instance @Prod
-// CHECK: cal.create_instance @Cons
-// CHECK: cal.create_instance @Cons
+// CHECK-DAG: cal.create_instance @Prod
+// CHECK-DAG: cal.create_instance @Prod
+// CHECK-DAG: cal.create_instance @Cons
+// CHECK-DAG: cal.create_instance @Cons
