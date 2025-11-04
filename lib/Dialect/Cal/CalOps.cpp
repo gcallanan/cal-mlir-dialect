@@ -12,6 +12,7 @@
 #include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/PatternMatch.h"
@@ -1059,6 +1060,55 @@ struct SpecializeInstantiateArrayExtent : OpRewritePattern<InstantiateArrayOp> {
 void InstantiateArrayOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                      MLIRContext *context) {
   patterns.add<SpecializeInstantiateArrayExtent>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// cal.instance.array.init canonicalizations
+//  - Specialize result type from dynamic ['?'] to static [dim] when the
+//    provided extent operand is a constant index (1-D case).
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct SpecializeInstanceArrayInitExtent : OpRewritePattern<InstanceArrayInitOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(InstanceArrayInitOp op, PatternRewriter &rewriter) const override {
+    auto resTy = dyn_cast<InstanceArrayType>(op.getArray().getType());
+    if (!resTy)
+      return failure();
+    ArrayAttr shape = resTy.getShape();
+    if (!shape || shape.size() != 1)
+      return failure();
+    auto dimAttr = dyn_cast<IntegerAttr>(shape[0]);
+    if (!dimAttr || dimAttr.getInt() != -1)
+      return failure(); // already static or not dynamic marker
+
+    // Expect exactly one extent operand and it to be a constant index.
+    auto dims = op.getDims();
+    if (dims.size() != 1)
+      return failure();
+    auto cst = dims[0].getDefiningOp<arith::ConstantOp>();
+    if (!cst)
+      return failure();
+    auto idx = dyn_cast_or_null<IntegerAttr>(cst.getValue());
+    if (!idx)
+      return failure();
+
+    MLIRContext *ctx = rewriter.getContext();
+    auto i64Ty = IntegerType::get(ctx, 64);
+    auto newDim = IntegerAttr::get(i64Ty, idx.getInt());
+    auto newShape = ArrayAttr::get(ctx, ArrayRef<Attribute>{newDim});
+    auto newArrTy = InstanceArrayType::get(ctx, resTy.getActorRef(), newShape);
+
+    auto newOp = rewriter.create<InstanceArrayInitOp>(op.getLoc(), newArrTy, op.getDims());
+    rewriter.replaceOp(op, newOp.getArray());
+    return success();
+  }
+};
+} // namespace
+
+void InstanceArrayInitOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                                      MLIRContext *context) {
+  patterns.add<SpecializeInstanceArrayInitExtent>(context);
 }
 
 // Verify that a list of inputs are all instance handles of the same element

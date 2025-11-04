@@ -866,6 +866,7 @@ def Cal_InstanceArrayInitOp : Cal_Op<"instance.array.init", []> {
   let results = (outs AnyType:$array);
   let assemblyFormat = "(`(` $dims `:` type($dims)^ `)`) ? attr-dict `:` type($array)";
   // No custom verifier; structural checks are performed in dedicated passes.
+  let hasCanonicalizer = 1;
 }
 
 // cal.instance.array.set : write one element and return a new array value
