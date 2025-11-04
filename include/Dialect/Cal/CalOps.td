@@ -603,6 +603,7 @@ def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", []> {
   let results = (outs Cal_InstanceArray:$handlesArray);
   let assemblyFormat = "$actorRef `count` `(` $count `)` (`basename` `(` $baseName^ `)`)? (`(` $params `:` type($params)^ `)`) ? attr-dict `:` type($handlesArray)";
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {

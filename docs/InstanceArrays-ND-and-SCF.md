@@ -15,6 +15,21 @@ Notes:
 - 1D syntax remains supported as sugar alongside the ND form.
 - Use `?` to denote dynamic extents (e.g., `!cal.instance.array<@A, [?, 4]>`).
 
+## Extent inference and canonicalization
+
+- When creating 1D arrays via `cal.instantiate_array`, if the result type uses a dynamic extent (`[?]`) and the op has a constant `count(N)`, the canonicalizer specializes the result type to a static extent `[N]`.
+  - Example (before): `%arr = cal.instantiate_array @A count(2) : !cal.instance.array<@A, [?]>`
+  - After `-canonicalize`: `%arr = cal.instantiate_array @A count(2) : !cal.instance.array<@A, [2]>`
+
+- Verifier rule (1D): If the result type already encodes a static 1D extent `[M]`, it must match the op’s `count(K)`; otherwise verification fails with a diagnostic similar to:
+  - `static result type extent [M] does not match count(K)`
+
+Notes:
+
+- The specialization currently targets 1D arrays; ND shapes remain unchanged by this canonicalization.
+- Parameter arity/type checks still apply independently of extent inference.
+
+
 ## Ops for array construction
 
 - Initialize an uninitialized array value (used as an `scf.for` iter_arg):

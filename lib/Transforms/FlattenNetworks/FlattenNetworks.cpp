@@ -209,6 +209,7 @@ public:
       struct InstPlan {
         // Always initialize wrapper ops to null to avoid accidental deref of garbage.
         ActorOp actor = nullptr;
+        NetworkOp network = nullptr;
         cal::InterfaceOp iface = nullptr;       // Optional: interface symbol when plan is interface-typed
         SmallVector<Value> params;
         SmallVector<Value> inPorts;  // fifo.output_port<elem>
@@ -237,22 +238,30 @@ public:
   for (Operation &op : llvm::make_early_inc_range(body.getOperations())) {
         if (auto inst = dyn_cast<InstantiateOp>(&op)) {
           ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(&op, inst.getActorRefAttr());
-          if (!actor)
-            return op.emitOpError("instantiate references unknown cal.actor");
+          NetworkOp net  = symbolTable.lookupNearestSymbolFrom<NetworkOp>(&op, inst.getActorRefAttr());
+          if (!actor && !net)
+            return op.emitOpError("instantiate references unknown cal.actor or cal.network");
           auto plan = std::make_unique<InstPlan>();
           plan->actor = actor;
+          plan->network = net;
           plan->defOp = &op;
           plan->name = inst.getInstanceNameAttr();
           plan->params.assign(inst.getParams().begin(), inst.getParams().end());
-          plan->inPorts.resize(actor.inDegree());
-          plan->outPorts.resize(actor.outDegree());
+          if (actor) {
+            plan->inPorts.resize(actor.inDegree());
+            plan->outPorts.resize(actor.outDegree());
+          } else if (net) {
+            plan->inPorts.resize(net.inDegree());
+            plan->outPorts.resize(net.outDegree());
+          }
           singlePlans[inst.getHandle()] = std::move(plan);
           continue;
         }
         if (auto arr = dyn_cast<InstantiateArrayOp>(&op)) {
           ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(&op, arr.getActorRefAttr());
-          if (!actor)
-            return op.emitOpError("instantiate_array references unknown cal.actor");
+          NetworkOp net  = symbolTable.lookupNearestSymbolFrom<NetworkOp>(&op, arr.getActorRefAttr());
+          if (!actor && !net)
+            return op.emitOpError("instantiate_array references unknown cal.actor or cal.network");
           unsigned count = 0;
           // Prefer the op attribute 'count' for instantiate_array (1D arrays).
           count = static_cast<unsigned>(arr.getCount());
@@ -261,14 +270,20 @@ public:
           for (unsigned i = 0; i < count; ++i) {
             auto plan = std::make_unique<InstPlan>();
             plan->actor = actor;
+            plan->network = net;
             plan->defOp = &op;
             if (auto base = arr.getBaseNameAttr()) {
               std::string n = (base.getValue() + StringRef("[") + Twine(i).str() + "]").str();
               plan->name = StringAttr::get(ctx, n);
             }
             plan->params.assign(arr.getParams().begin(), arr.getParams().end());
-            plan->inPorts.resize(actor.inDegree());
-            plan->outPorts.resize(actor.outDegree());
+            if (actor) {
+              plan->inPorts.resize(actor.inDegree());
+              plan->outPorts.resize(actor.outDegree());
+            } else if (net) {
+              plan->inPorts.resize(net.inDegree());
+              plan->outPorts.resize(net.outDegree());
+            }
             plans.push_back(std::move(plan));
           }
           arrayPlans[arr.getHandlesArray()] = std::move(plans);
@@ -614,7 +629,7 @@ public:
 
         // Now that plans are known, validate that any instance.cast conforms to the declared interface.
         if (srcPlan && srcHadCast && srcIfaceSym) {
-          StringRef entName = srcPlan->actor ? srcPlan->actor.getSymName() : (srcPlan->iface ? srcPlan->iface.getSymName() : StringRef("<unknown>"));
+          StringRef entName = srcPlan->actor ? srcPlan->actor.getSymName() : (srcPlan->network ? srcPlan->network.getSymName() : (srcPlan->iface ? srcPlan->iface.getSymName() : StringRef("<unknown>")));
           StringRef ifaceName = srcIfaceSym.getSymName();
           bool ok = false;
           if (auto it = entityImplements.find(entName); it != entityImplements.end())
@@ -625,7 +640,7 @@ public:
           }
         }
         if (dstPlan && dstHadCast && dstIfaceSym) {
-          StringRef entName = dstPlan->actor ? dstPlan->actor.getSymName() : (dstPlan->iface ? dstPlan->iface.getSymName() : StringRef("<unknown>"));
+          StringRef entName = dstPlan->actor ? dstPlan->actor.getSymName() : (dstPlan->network ? dstPlan->network.getSymName() : (dstPlan->iface ? dstPlan->iface.getSymName() : StringRef("<unknown>")));
           StringRef ifaceName = dstIfaceSym.getSymName();
           bool ok = false;
           if (auto it = entityImplements.find(entName); it != entityImplements.end())
@@ -638,14 +653,19 @@ public:
 
         FailureOr<unsigned> srcOutIdx; FailureOr<unsigned> dstInIdx;
         ActorOp srcActor = nullptr, dstActor = nullptr;
+        NetworkOp srcNetwork = nullptr, dstNetwork = nullptr;
         unsigned outCount = 0, inCount = 0;
         ArrayAttr srcDeclared, dstDeclared;
         ArrayAttr srcIfaceDeclared, dstIfaceDeclared;
         if (srcPlan) {
           srcActor = srcPlan->actor;
+          srcNetwork = srcPlan->network;
           if (srcActor) {
             outCount = static_cast<unsigned>(srcActor.outDegree());
             srcDeclared = srcActor->getAttrOfType<ArrayAttr>("outPortNames");
+          } else if (srcNetwork) {
+            outCount = static_cast<unsigned>(srcNetwork.outDegree());
+            srcDeclared = srcNetwork->getAttrOfType<ArrayAttr>("outPortNames");
           } else if (srcPlan->iface) {
             auto outTypes = srcPlan->iface.getOutPortTypesAttr();
             auto outNames = srcPlan->iface.getOutPortNamesAttr();
@@ -665,9 +685,13 @@ public:
         }
         if (dstPlan) {
           dstActor = dstPlan->actor;
+          dstNetwork = dstPlan->network;
           if (dstActor) {
             inCount = static_cast<unsigned>(dstActor.inDegree());
             dstDeclared = dstActor->getAttrOfType<ArrayAttr>("inPortNames");
+          } else if (dstNetwork) {
+            inCount = static_cast<unsigned>(dstNetwork.inDegree());
+            dstDeclared = dstNetwork->getAttrOfType<ArrayAttr>("inPortNames");
           } else if (dstPlan->iface) {
             auto inTypes = dstPlan->iface.getInPortTypesAttr();
             auto inNames = dstPlan->iface.getInPortNamesAttr();
@@ -770,6 +794,20 @@ public:
             if (!fifoInTy)
               return conn.emitOpError("internal error resolving source port type");
             elemTy = fifoInTy.getElementType();
+          } else if (srcNetwork) {
+            Block &nbody = srcNetwork.getBody().front();
+            SmallVector<Type> formals; for (Value a : nbody.getArguments()) formals.push_back(a.getType());
+            unsigned numParamsSrc = 0, numInSrcCount = 0;
+            for (Type t : formals) {
+              if (isa<fifo::OutputPortType>(t)) ++numInSrcCount; // ports_in
+              else if (isa<fifo::InputPortType>(t)) {/* ports_out */}
+              else ++numParamsSrc; // params
+            }
+            unsigned portsOutStart = numParamsSrc + numInSrcCount; // start of ports_out
+            auto fifoInTy = dyn_cast<fifo::InputPortType>(formals[portsOutStart + *srcOutIdx]);
+            if (!fifoInTy)
+              return conn.emitOpError("internal error resolving source network port type");
+            elemTy = fifoInTy.getElementType();
           } else if (srcPlan->iface) {
             auto outTypes = srcPlan->iface.getOutPortTypesAttr();
             if (outTypes && *srcOutIdx < outTypes.size()) {
@@ -821,6 +859,7 @@ public:
             std::string entityLabel;
             std::string entityName;
             if (srcPlan->actor) { entityLabel = "actor"; entityName = srcPlan->actor.getSymName().str(); }
+            else if (srcPlan->network) { entityLabel = "network"; entityName = srcPlan->network.getSymName().str(); }
             else if (srcPlan->iface) { entityLabel = "interface"; entityName = srcPlan->iface.getSymName().str(); }
             else { entityLabel = "entity"; entityName = "<unknown>"; }
             std::string ctxMsg = " (" + entityLabel + "=@" + entityName + ", instance=";
@@ -847,6 +886,7 @@ public:
             std::string entityLabel2;
             std::string entityName2;
             if (dstPlan->actor) { entityLabel2 = "actor"; entityName2 = dstPlan->actor.getSymName().str(); }
+            else if (dstPlan->network) { entityLabel2 = "network"; entityName2 = dstPlan->network.getSymName().str(); }
             else if (dstPlan->iface) { entityLabel2 = "interface"; entityName2 = dstPlan->iface.getSymName().str(); }
             else { entityLabel2 = "entity"; entityName2 = "<unknown>"; }
             std::string ctxMsg = " (" + entityLabel2 + "=@" + entityName2 + ", instance=";
@@ -924,7 +964,8 @@ public:
         planSeq[po.plan] = seqCounter++;
         if (!po.plan->name) {
           Twine entityName = po.plan->actor ? Twine(po.plan->actor.getSymName())
-                                            : (po.plan->iface ? Twine(po.plan->iface.getSymName()) : Twine("unknown"));
+                                            : (po.plan->network ? Twine(po.plan->network.getSymName())
+                                                                : (po.plan->iface ? Twine(po.plan->iface.getSymName()) : Twine("unknown")));
           std::string autoName = (Twine(net.getSymName()) + "." + entityName + "." + Twine(planSeq[po.plan])).str();
           po.plan->name = StringAttr::get(ctx, autoName);
         }
@@ -990,7 +1031,7 @@ public:
 
       // Create cal.create_instance ops for each plan (optionally partial-only when flagged).
   auto materializeInstance = [&](InstPlan &plan) -> FailureOr<CreateInstanceOp> {
-        if (!plan.actor && plan.iface) {
+        if (!plan.actor && !plan.network && plan.iface) {
           // Do not materialize interface-typed instances at this stage; defer with no remark.
           return failure();
         }
@@ -1009,7 +1050,9 @@ public:
         all.append(plan.outPorts);
   // Insert after all fifo.create ops to ensure dominance of operands.
   builder.setInsertionPointToEnd(&body);
-  auto inst = builder.create<CreateInstanceOp>(plan.defOp->getLoc(), plan.actor.getSymNameAttr(), plan.name, all);
+  StringRef sym = plan.actor ? plan.actor.getSymName() : plan.network.getSymName();
+  FlatSymbolRefAttr targetSym = FlatSymbolRefAttr::get(builder.getContext(), sym);
+  auto inst = builder.create<CreateInstanceOp>(plan.defOp->getLoc(), targetSym, plan.name, all);
         // Also mirror the chosen instance name into a generic attribute for convenience.
         if (plan.name)
           inst->setAttr("cal.name", plan.name);

@@ -960,34 +960,55 @@ LogicalResult InstantiateArrayOp::verify() {
   Type resTy = getHandlesArray().getType();
   auto arrTy = mlir::dyn_cast<InstanceArrayType>(resTy);
   if (!arrTy)
-    return emitOpError() << "result must be !cal.instance.array<@Actor, N>, got " << resTy;
+    return emitOpError() << "result must be !cal.instance.array<@Entity, [...]>, got " << resTy;
 
   // Check actor symbol matches
   if (arrTy.getActorRef() != getActorRefAttr())
-    return emitOpError() << "result actor '" << arrTy.getActorRef()
+    return emitOpError() << "result entity '" << arrTy.getActorRef()
                          << "' does not match attribute '" << getActorRefAttr() << "'";
 
-  // Note: array shape/count checks are relaxed for ND/dynamic shapes.
+  // If the result type encodes a static 1-D extent, ensure it matches the count attribute.
+  if (auto shapeAttr = arrTy.getShape()) {
+    if (shapeAttr.size() == 1) {
+      if (auto dimAttr = dyn_cast<IntegerAttr>(shapeAttr[0])) {
+        int64_t dim = dimAttr.getInt();
+        if (dim >= 0) {
+          uint64_t cnt = getCount();
+          if (static_cast<int64_t>(cnt) != dim)
+            return emitOpError() << "static result type extent [" << dim
+                                 << "] does not match count(" << cnt << ")";
+        }
+      }
+    }
+  }
 
   // Base name, if present, must be non-empty
   if (auto bn = getBaseNameAttr(); bn && bn.getValue().empty())
     return emitOpError() << "basename, if provided, must be non-empty";
 
-  // Validate parameter arity/types match the actor's leading non-port parameters.
+  // Validate parameter arity/types match the entity's (actor or network) leading non-port parameters.
   SymbolTableCollection symbolTable;
-  auto actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, getActorRefAttr());
-  if (!actor)
-    return emitOpError() << "actor symbol '" << getActorRefAttr().getValue() << "' not found";
   SmallVector<Type> formalParams;
-  for (Value a : actor.getBody().getArguments()) {
-    Type t = a.getType();
-    if (isa<mlir::fifo::OutputPortType>(t) || isa<mlir::fifo::InputPortType>(t))
-      break;
-    formalParams.push_back(t);
+  if (auto actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(*this, getActorRefAttr())) {
+    for (Value a : actor.getBody().getArguments()) {
+      Type t = a.getType();
+      if (isa<mlir::fifo::OutputPortType>(t) || isa<mlir::fifo::InputPortType>(t))
+        break;
+      formalParams.push_back(t);
+    }
+  } else if (auto net = symbolTable.lookupNearestSymbolFrom<NetworkOp>(*this, getActorRefAttr())) {
+    for (Value a : net.getBody().getArguments()) {
+      Type t = a.getType();
+      if (isa<mlir::fifo::OutputPortType>(t) || isa<mlir::fifo::InputPortType>(t))
+        break;
+      formalParams.push_back(t);
+    }
+  } else {
+    return emitOpError() << "entity symbol '" << getActorRefAttr().getValue() << "' not found";
   }
   auto actuals = getParams();
   if (actuals.size() != formalParams.size()) {
-    return emitOpError() << "parameter count mismatch for actor '" << actor.getSymName()
+    return emitOpError() << "parameter count mismatch for entity '" << getActorRefAttr().getValue()
                          << "': expected " << formalParams.size() << ", got " << actuals.size();
   }
   for (size_t i = 0; i < actuals.size(); ++i) {
@@ -998,6 +1019,46 @@ LogicalResult InstantiateArrayOp::verify() {
   }
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// cal.instantiate_array canonicalizations
+//  - Specialize result type from dynamic ['?'] to static [count] when possible.
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct SpecializeInstantiateArrayExtent : OpRewritePattern<InstantiateArrayOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(InstantiateArrayOp op, PatternRewriter &rewriter) const override {
+    auto arrTy = dyn_cast<InstanceArrayType>(op.getHandlesArray().getType());
+    if (!arrTy)
+      return failure();
+    ArrayAttr shapeAttr = arrTy.getShape();
+    if (!shapeAttr || shapeAttr.size() != 1)
+      return failure();
+    auto dimAttr = dyn_cast<IntegerAttr>(shapeAttr[0]);
+    if (!dimAttr || dimAttr.getInt() != -1)
+      return failure(); // already static or not the dynamic marker
+
+    uint64_t cnt = op.getCount();
+    MLIRContext *ctx = rewriter.getContext();
+    auto i64Ty = IntegerType::get(ctx, 64);
+    auto newDim = IntegerAttr::get(i64Ty, static_cast<int64_t>(cnt));
+    auto newShape = ArrayAttr::get(ctx, ArrayRef<Attribute>{newDim});
+    auto newArrTy = InstanceArrayType::get(ctx, arrTy.getActorRef(), newShape);
+
+    auto newOp = rewriter.create<InstantiateArrayOp>(
+        op.getLoc(), newArrTy, op.getActorRefAttr(), op.getCountAttr(),
+        op.getBaseNameAttr(), op.getParams());
+    rewriter.replaceOp(op, newOp.getHandlesArray());
+    return success();
+  }
+};
+} // namespace
+
+void InstantiateArrayOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                                     MLIRContext *context) {
+  patterns.add<SpecializeInstantiateArrayExtent>(context);
 }
 
 // Verify that a list of inputs are all instance handles of the same element
