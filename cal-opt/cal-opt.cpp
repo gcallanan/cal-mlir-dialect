@@ -21,6 +21,7 @@
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
 
 // MLIR Dialects
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
@@ -81,6 +82,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   registry.insert<
       mlir::cal::CalDialect, mlir::fifo::FifoDialect, mlir::arith::ArithDialect,
+    mlir::complex::ComplexDialect,
       mlir::func::FuncDialect, mlir::memref::MemRefDialect,
       mlir::index::IndexDialect, mlir::LLVM::LLVMDialect,
       mlir::cf::ControlFlowDialect, mlir::scf::SCFDialect,
