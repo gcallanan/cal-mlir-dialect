@@ -7,6 +7,10 @@
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
+#include "Dialect/Fifo/FifoOps.h"
+#include "Dialect/Fifo/FifoTypes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "Dialect/Cal/CalTypes.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
@@ -894,28 +898,33 @@ public:
         PendingEdge e; e.conn = conn; e.elemTy = elemTy;
         if (srcPlan) {
           ensureTrackers(srcPlan);
+          // Multiple connections from the same source port are permitted when
+          // auto-fanout insertion is enabled. Otherwise, emit a duplicate-source
+          // diagnostic (legacy behavior).
           if (seenOut[srcPlan][*srcOutIdx]) {
-            auto diag = conn.emitOpError("source port already connected");
-            // Provide context: entity symbol (actor or interface), optional instance name, and port index.
-            std::string entityLabel;
-            std::string entityName;
-            if (srcPlan->actor) { entityLabel = "actor"; entityName = srcPlan->actor.getSymName().str(); }
-            else if (srcPlan->network) { entityLabel = "network"; entityName = srcPlan->network.getSymName().str(); }
-            else if (srcPlan->iface) { entityLabel = "interface"; entityName = srcPlan->iface.getSymName().str(); }
-            else { entityLabel = "entity"; entityName = "<unknown>"; }
-            std::string ctxMsg = " (" + entityLabel + "=@" + entityName + ", instance=";
-            if (srcPlan->name && !srcPlan->name.getValue().empty())
-              ctxMsg += '"' + srcPlan->name.getValue().str() + '"';
-            else
-              ctxMsg += "<unnamed>";
-            ctxMsg += ", port=out" + Twine(*srcOutIdx).str() + ")";
-            diag << ctxMsg;
-            if (Operation *first = firstOutConn[srcPlan][*srcOutIdx])
-              first->emitRemark("first connection to this port was here");
-            return failure();
+            if (!this->insertFanoutOnMultiSink) {
+              auto diag = conn.emitOpError("source port already connected");
+              std::string entityLabel;
+              std::string entityName;
+              if (srcPlan->actor) { entityLabel = "actor"; entityName = srcPlan->actor.getSymName().str(); }
+              else if (srcPlan->network) { entityLabel = "network"; entityName = srcPlan->network.getSymName().str(); }
+              else if (srcPlan->iface) { entityLabel = "interface"; entityName = srcPlan->iface.getSymName().str(); }
+              else { entityLabel = "entity"; entityName = "<unknown>"; }
+              std::string ctxMsg = " (" + entityLabel + "=@" + entityName + ", instance=";
+              if (srcPlan->name && !srcPlan->name.getValue().empty())
+                ctxMsg += '"' + srcPlan->name.getValue().str() + '"';
+              else
+                ctxMsg += "<unnamed>";
+              ctxMsg += ", port=out" + Twine(*srcOutIdx).str() + ")";
+              diag << ctxMsg;
+              if (Operation *first = firstOutConn[srcPlan][*srcOutIdx])
+                first->emitRemark("first connection to this port was here");
+              return failure();
+            }
+          } else {
+            seenOut[srcPlan][*srcOutIdx] = true;
+            firstOutConn[srcPlan][*srcOutIdx] = conn;
           }
-          seenOut[srcPlan][*srcOutIdx] = true;
-          firstOutConn[srcPlan][*srcOutIdx] = conn;
           e.srcPlan = srcPlan; e.srcOutIdx = *srcOutIdx;
         } else {
           e.srcNetPort = conn.getSrc();
@@ -950,7 +959,162 @@ public:
         edges.push_back(std::move(e));
       }
 
-      // Determine fully-wired plans.
+    // If a source out port is connected to multiple destinations, insert a
+    // synthetic fanout actor to split the token to N sinks (if enabled).
+    // We perform this rewrite before computing fully-wired plans so completeness
+    // and materialization see the updated topology.
+    SmallVector<std::unique_ptr<InstPlan>> extraPlans; // synthesized fanouts to materialize later
+
+    // Helper: create or fetch a module-level fanout actor symbol with 1 input
+    // port of elemTy and N output ports of elemTy.
+  auto getOrCreateFanoutActor = [&](Type elemTy, unsigned N) -> cal::ActorOp {
+        // Build a deterministic, compact symbol name based on type + N.
+        std::string tyStr;
+        {
+          llvm::raw_string_ostream os(tyStr);
+          elemTy.print(os);
+        }
+        // Hash the type string for brevity.
+        auto h = llvm::hash_value(tyStr);
+        std::string symName = (Twine("__cal_fanout_") + Twine(N) + "_" + Twine(h)).str();
+        if (auto existing = module.lookupSymbol<cal::ActorOp>(symName))
+          return existing;
+
+  OpBuilder mb(module.getContext());
+  mb.setInsertionPointToEnd(module.getBody());
+  auto nameAttr = StringAttr::get(module.getContext(), symName);
+  // Create the actor op with just the name; optional attrs are left null.
+  auto actor = mb.create<cal::ActorOp>(module.getLoc(), nameAttr, ArrayAttr(), ArrayAttr(), mlir::UnitAttr());
+
+        // Build entry block args: 1x !fifo.output_port<T>, Nx !fifo.input_port<T>
+        Region &areg = actor.getBody();
+        auto *entry = new Block();
+        areg.push_back(entry);
+        auto outPortTy = fifo::OutputPortType::get(module.getContext(), elemTy);
+        auto inPortTy  = fifo::InputPortType::get(module.getContext(), elemTy);
+        // No params; first the single input (ports_in), then the N outputs (ports_out)
+        entry->addArgument(outPortTy, module.getLoc());
+        for (unsigned i = 0; i < N; ++i)
+          entry->addArgument(inPortTy, module.getLoc());
+
+        // Build action-based fanout: perform a single pop, then push to all outputs.
+  OpBuilder ab(entry, entry->end());
+  auto action = ab.create<cal::ActionOp>(module.getLoc(), mlir::StringAttr(), mlir::IntegerAttr());
+        // Create action body block
+        Region &actReg = action.getBody();
+        auto *actBlock = new Block();
+        actReg.push_back(actBlock);
+        OpBuilder actB(actBlock, actBlock->end());
+        Value inArg = entry->getArgument(0);
+        SmallVector<Value> outs;
+        outs.reserve(N);
+        for (unsigned i = 0; i < N; ++i)
+          outs.push_back(entry->getArgument(1 + i));
+
+        auto tok = actB.create<mlir::fifo::Pop>(module.getLoc(), elemTy, inArg);
+        for (Value outp : outs)
+          actB.create<mlir::fifo::Push>(module.getLoc(), tok.getResult(), outp);
+
+        return actor;
+      };
+
+      // Group plan→plan edges by (srcPlan, srcOutIdx)
+      llvm::DenseMap<std::pair<InstPlan*, unsigned>, SmallVector<unsigned>> multiOutGroups;
+      for (unsigned ei = 0; ei < edges.size(); ++ei) {
+        auto &e = edges[ei];
+        if (e.srcPlan && e.dstPlan)
+          multiOutGroups[{e.srcPlan, e.srcOutIdx}].push_back(ei);
+      }
+
+      // Rewrite groups with fanout when > 1 sinks (only if enabled)
+      SmallVector<unsigned> indicesToRemove;
+      SmallVector<PendingEdge> edgesToAdd;
+      for (auto &kv : multiOutGroups) {
+        auto &idxs = kv.second;
+        if (idxs.size() <= 1) continue;
+        if (!this->insertFanoutOnMultiSink)
+          continue; // leave multiple edges as-is; duplicate already handled above if disallowed
+        // Skip if interface typed endpoints present (we already filtered plan→plan only).
+        // Determine element type and create/reuse fanout actor symbol.
+        auto &firstE = edges[idxs.front()];
+        Type elemTy = firstE.elemTy;
+        unsigned N = static_cast<unsigned>(idxs.size());
+        auto fanActor = getOrCreateFanoutActor(elemTy, N);
+
+        // Create a synthesized plan for this fanout instance.
+        auto fanPlan = std::make_unique<InstPlan>();
+        fanPlan->actor = fanActor;
+        fanPlan->inPorts.resize(1);
+        fanPlan->outPorts.resize(N);
+        // Anchor location/order to the first original connect in the group.
+        if (firstE.conn)
+          fanPlan->defOp = firstE.conn.getOperation();
+        // Name: <srcName>.fanout.out<idx>
+        std::string baseName = "fanout";
+        if (auto n = kv.first.first->name)
+          baseName = (n.getValue().str() + std::string(".fanout.out") + Twine(kv.first.second).str());
+  fanPlan->name = StringAttr::get(module.getContext(), baseName);
+
+        // Trackers for fanPlan
+        ensureTrackers(fanPlan.get());
+        seenIn[fanPlan.get()][0] = true;
+        for (unsigned i = 0; i < N; ++i) seenOut[fanPlan.get()][i] = true;
+
+        // Build edges: src -> fan (single)
+        PendingEdge eSrcFan; eSrcFan.srcPlan = kv.first.first; eSrcFan.srcOutIdx = kv.first.second; eSrcFan.dstPlan = fanPlan.get(); eSrcFan.dstInIdx = 0; eSrcFan.elemTy = elemTy;
+        edgesToAdd.push_back(eSrcFan);
+
+        // Transfer capacities: copy per-dst capacity to channelCaps for fan->dst; compute a single cap for src->fan
+        std::optional<uint64_t> srcFanCap;
+        Operation *firstConnSite = nullptr;
+        for (unsigned i = 0; i < N; ++i) {
+          auto &orig = edges[idxs[i]];
+          // Remember original connect for erasure
+          if (orig.conn) toErase.push_back(orig.conn);
+          // fan -> dst edge
+          PendingEdge ef; ef.srcPlan = fanPlan.get(); ef.srcOutIdx = i; ef.dstPlan = orig.dstPlan; ef.dstInIdx = orig.dstInIdx; ef.elemTy = elemTy;
+          edgesToAdd.push_back(ef);
+          // Per-edge capacity for fan->dst from original connect attribute
+          if (auto capAttr = orig.conn ? orig.conn.getCapacityAttr() : nullptr) {
+            uint64_t v = static_cast<uint64_t>(capAttr.getInt());
+            ChannelKey ck{fanPlan.get(), i, orig.dstPlan, orig.dstInIdx};
+            channelCaps.insert({ck, {v, orig.conn}});
+            if (!srcFanCap) { srcFanCap = v; firstConnSite = orig.conn; }
+            else if (*srcFanCap != v) {
+              auto err = orig.conn.emitOpError("conflicting capacities for shared source; cannot infer fan-in capacity: existing=") << *srcFanCap << ", new=" << v;
+              if (firstConnSite)
+                firstConnSite->emitRemark("first capacity specified here");
+              return failure();
+            }
+          }
+        }
+        if (srcFanCap) {
+          ChannelKey ck{kv.first.first, kv.first.second, fanPlan.get(), 0u};
+          channelCaps.insert({ck, {*srcFanCap, firstConnSite}});
+        }
+
+        // Mark originals for removal from the edges list
+        indicesToRemove.append(idxs.begin(), idxs.end());
+
+        // Register synthesized plan to be materialized later
+        extraPlans.push_back(std::move(fanPlan));
+      }
+
+      if (!indicesToRemove.empty()) {
+        llvm::sort(indicesToRemove);
+        indicesToRemove.erase(std::unique(indicesToRemove.begin(), indicesToRemove.end()), indicesToRemove.end());
+        SmallVector<PendingEdge> kept;
+        kept.reserve(edges.size() - indicesToRemove.size() + edgesToAdd.size());
+        size_t ri = 0;
+        for (size_t i = 0; i < edges.size(); ++i) {
+          if (ri < indicesToRemove.size() && indicesToRemove[ri] == i) { ++ri; continue; }
+          kept.push_back(edges[i]);
+        }
+        kept.append(edgesToAdd.begin(), edgesToAdd.end());
+        edges.swap(kept);
+      }
+
+  // Determine fully-wired plans.
       DenseSet<InstPlan*> fullyWired;
       // We'll also assign deterministic sequence numbers within this network
       // to enable stable instance and fifo naming independent of hash maps.
@@ -987,6 +1151,16 @@ public:
           allPlansForOrder.push_back(PlanOrder{p, p->defOp, idx});
           ++idx;
         }
+      }
+
+      // Include synthesized fanout plans as fully wired (we ensured trackers earlier).
+      for (auto &ptr : extraPlans) {
+        InstPlan *p = ptr.get();
+        // Ensure trackers exist for safety
+        ensureTrackers(p);
+        fullyWired.insert(p);
+        Operation *anchor = p->defOp ? p->defOp : body.getTerminator();
+        allPlansForOrder.push_back(PlanOrder{p, anchor, std::numeric_limits<unsigned>::max()});
       }
 
       // Sort plans deterministically: by defining op position in block, then by array index.
@@ -1034,15 +1208,22 @@ public:
           }
           bool useEdge = fullyWired.contains(e.srcPlan) && fullyWired.contains(e.dstPlan);
           if (!useEdge) continue;
-          builder.setInsertionPoint(e.conn);
+          // Insert near the original connect when available; otherwise append to the network body.
+          if (e.conn)
+            builder.setInsertionPoint(e.conn);
+          else
+            builder.setInsertionPointToEnd(&body);
           // Determine capacity with propagation:
           // Priority: explicit on this connect > per-port hints (src/dst) > channel-level record > default 1.
           uint64_t capVal = 1u;
           bool haveCap = false;
-          if (auto capAttr = e.conn.getCapacityAttr()) {
-            capVal = static_cast<uint64_t>(capAttr.getInt());
-            haveCap = true;
-          } else {
+          if (e.conn) {
+            if (auto capAttr = e.conn.getCapacityAttr()) {
+              capVal = static_cast<uint64_t>(capAttr.getInt());
+              haveCap = true;
+            }
+          }
+          if (!haveCap) {
             // Per-port hints
             if (auto itS = srcPortHints.find(PortKey{e.srcPlan, e.srcOutIdx}); itS != srcPortHints.end()) {
               capVal = itS->second.first; haveCap = true;
@@ -1050,8 +1231,9 @@ public:
             if (auto itD = dstPortHints.find(PortKey{e.dstPlan, e.dstInIdx}); itD != dstPortHints.end()) {
               if (!haveCap) { capVal = itD->second.first; haveCap = true; }
               else if (capVal != itD->second.first) {
-                auto err = e.conn.emitOpError("conflicting propagated capacities from endpoints: src=")
-                           << capVal << ", dst=" << itD->second.first;
+                auto err = (e.conn ? e.conn.emitOpError("") : net.emitOpError(""));
+                err << "conflicting propagated capacities from endpoints: src="
+                    << capVal << ", dst=" << itD->second.first;
                 if (srcPortHints.count(PortKey{e.srcPlan, e.srcOutIdx}))
                   srcPortHints[PortKey{e.srcPlan, e.srcOutIdx}].second->emitRemark("source capacity hint specified here");
                 if (dstPortHints.count(PortKey{e.dstPlan, e.dstInIdx}))
@@ -1068,7 +1250,7 @@ public:
           }
           Type inPortTy = fifo::InputPortType::get(ctx, e.elemTy);
           Type outPortTy = fifo::OutputPortType::get(ctx, e.elemTy);
-          auto create = builder.create<fifo::CreateOp>(e.conn.getLoc(), TypeRange{inPortTy, outPortTy}, e.elemTy, capVal);
+          auto create = builder.create<fifo::CreateOp>(e.conn ? e.conn.getLoc() : net.getLoc(), TypeRange{inPortTy, outPortTy}, e.elemTy, capVal);
           // Attach a deterministic name attribute to this fifo for stable testing/logging.
           if (planSeq.count(e.srcPlan) && planSeq.count(e.dstPlan)) {
             std::string fifoName = (Twine(net.getSymName()) + "." +
@@ -1078,24 +1260,29 @@ public:
           }
           e.srcPlan->outPorts[e.srcOutIdx] = create.getInputPort();
           e.dstPlan->inPorts[e.dstInIdx] = create.getOutputPort();
-          toErase.push_back(e.conn);
+          if (e.conn)
+            toErase.push_back(e.conn);
           continue;
         }
         // Network-to-plan: wire directly and erase connect.
         if (e.srcNetPort && e.dstPlan) {
           // If destination is interface-typed, surface a remark and still thread the SSA value.
           if (!e.dstPlan->actor && e.dstPlan->iface)
-            e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
+            if (e.conn)
+              e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
           e.dstPlan->inPorts[e.dstInIdx] = e.srcNetPort;
-          toErase.push_back(e.conn);
+          if (e.conn)
+            toErase.push_back(e.conn);
           continue;
         }
         if (e.srcPlan && e.dstNetPort) {
           // If source is interface-typed, surface a remark and still thread the SSA value.
           if (!e.srcPlan->actor && e.srcPlan->iface)
-            e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
+            if (e.conn)
+              e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
           e.srcPlan->outPorts[e.srcOutIdx] = e.dstNetPort;
-          toErase.push_back(e.conn);
+          if (e.conn)
+            toErase.push_back(e.conn);
           continue;
         }
       }
@@ -1161,6 +1348,11 @@ public:
         }
         if (allMat)
           defsToErase.push_back(kv.first.getDefiningOp());
+      }
+
+      // Also materialize synthesized fanout instances (if any).
+      for (auto &ptr : extraPlans) {
+        (void)materializeInstance(*ptr);
       }
 
       // Erase symbolic ops: remove only connects we elaborated and defs we replaced.
