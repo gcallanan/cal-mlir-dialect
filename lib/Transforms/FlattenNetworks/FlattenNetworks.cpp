@@ -501,6 +501,19 @@ public:
       };
       llvm::DenseMap<ChannelKey, std::pair<uint64_t, Operation*>, ChannelKeyInfo> channelCaps;
 
+      // Additionally, record capacity hints attached to connects that involve
+      // a network boundary port on one side. These will be consulted when the
+      // channel is ultimately materialized between two concrete instance ports.
+      struct PortKey { InstPlan *p; unsigned idx; };
+      struct PortKeyInfo {
+        static inline PortKey getEmptyKey() { return PortKey{nullptr, 0u}; }
+        static inline PortKey getTombstoneKey() { return PortKey{reinterpret_cast<InstPlan*>(1), 0u}; }
+        static unsigned getHashValue(const PortKey &k) { return llvm::hash_combine(k.p, k.idx); }
+        static bool isEqual(const PortKey &a, const PortKey &b) { return a.p == b.p && a.idx == b.idx; }
+      };
+      llvm::DenseMap<PortKey, std::pair<uint64_t, Operation*>, PortKeyInfo> srcPortHints;
+      llvm::DenseMap<PortKey, std::pair<uint64_t, Operation*>, PortKeyInfo> dstPortHints;
+
       auto ensureTrackers = [&](InstPlan *p) {
         if (!seenOut.count(p)) seenOut[p] = SmallVector<bool>(p->outPorts.size(), false);
         if (!seenIn.count(p))  seenIn[p]  = SmallVector<bool>(p->inPorts.size(),  false);
@@ -844,9 +857,37 @@ public:
             }
           }
         } else {
-          // If one endpoint is a network port and a capacity is specified, it will be ignored.
-          if (conn.getCapacityAttr())
-            conn.emitRemark("capacity on network-port connect is ignored; specify capacity where FIFO is materialized");
+          // If one endpoint is a network port and a capacity is specified, record it
+          // as a hint on the concrete instance port side so it can be propagated to
+          // the eventual fifo.create when the channel is materialized.
+          if (auto capAttr = conn.getCapacityAttr()) {
+            uint64_t capVal = static_cast<uint64_t>(capAttr.getInt());
+            if (srcPlan && !dstPlan) {
+              PortKey pk{srcPlan, *srcOutIdx};
+              auto it = srcPortHints.find(pk);
+              if (it == srcPortHints.end()) {
+                srcPortHints.insert({pk, {capVal, conn}});
+              } else if (it->second.first != capVal) {
+                auto diag = conn.emitOpError("conflicting capacity hints on source port: existing=")
+                            << it->second.first << ", new=" << capVal;
+                if (it->second.second)
+                  it->second.second->emitRemark("first capacity specified here");
+                return failure();
+              }
+            } else if (!srcPlan && dstPlan) {
+              PortKey pk{dstPlan, *dstInIdx};
+              auto it = dstPortHints.find(pk);
+              if (it == dstPortHints.end()) {
+                dstPortHints.insert({pk, {capVal, conn}});
+              } else if (it->second.first != capVal) {
+                auto diag = conn.emitOpError("conflicting capacity hints on destination port: existing=")
+                            << it->second.first << ", new=" << capVal;
+                if (it->second.second)
+                  it->second.second->emitRemark("first capacity specified here");
+                return failure();
+              }
+            }
+          }
         }
 
         // Track duplicate port connections early.
@@ -994,7 +1035,37 @@ public:
           bool useEdge = fullyWired.contains(e.srcPlan) && fullyWired.contains(e.dstPlan);
           if (!useEdge) continue;
           builder.setInsertionPoint(e.conn);
-          uint64_t capVal = e.conn.getCapacityAttr() ? static_cast<uint64_t>(e.conn.getCapacityAttr().getInt()) : 1u;
+          // Determine capacity with propagation:
+          // Priority: explicit on this connect > per-port hints (src/dst) > channel-level record > default 1.
+          uint64_t capVal = 1u;
+          bool haveCap = false;
+          if (auto capAttr = e.conn.getCapacityAttr()) {
+            capVal = static_cast<uint64_t>(capAttr.getInt());
+            haveCap = true;
+          } else {
+            // Per-port hints
+            if (auto itS = srcPortHints.find(PortKey{e.srcPlan, e.srcOutIdx}); itS != srcPortHints.end()) {
+              capVal = itS->second.first; haveCap = true;
+            }
+            if (auto itD = dstPortHints.find(PortKey{e.dstPlan, e.dstInIdx}); itD != dstPortHints.end()) {
+              if (!haveCap) { capVal = itD->second.first; haveCap = true; }
+              else if (capVal != itD->second.first) {
+                auto err = e.conn.emitOpError("conflicting propagated capacities from endpoints: src=")
+                           << capVal << ", dst=" << itD->second.first;
+                if (srcPortHints.count(PortKey{e.srcPlan, e.srcOutIdx}))
+                  srcPortHints[PortKey{e.srcPlan, e.srcOutIdx}].second->emitRemark("source capacity hint specified here");
+                if (dstPortHints.count(PortKey{e.dstPlan, e.dstInIdx}))
+                  dstPortHints[PortKey{e.dstPlan, e.dstInIdx}].second->emitRemark("destination capacity hint specified here");
+                return failure();
+              }
+            }
+            // Channel-level record (from another explicit plan-plan connect of the same channel)
+            if (!haveCap) {
+              if (auto itC = channelCaps.find(ChannelKey{e.srcPlan, e.srcOutIdx, e.dstPlan, e.dstInIdx}); itC != channelCaps.end()) {
+                capVal = itC->second.first; haveCap = true;
+              }
+            }
+          }
           Type inPortTy = fifo::InputPortType::get(ctx, e.elemTy);
           Type outPortTy = fifo::OutputPortType::get(ctx, e.elemTy);
           auto create = builder.create<fifo::CreateOp>(e.conn.getLoc(), TypeRange{inPortTy, outPortTy}, e.elemTy, capVal);
