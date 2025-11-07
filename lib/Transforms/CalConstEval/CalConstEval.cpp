@@ -9,19 +9,20 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/Complex/IR/Complex.h"
 // LLVM dialect for lowering target
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-// The canonicalizer/inliner may reference UB ops; ensure the dialect is registered.
+// UB dialect header is needed because the generated pass registration
+// refers to mlir::ub::UBDialect. Note: we do NOT load UB into the JIT
+// scratch context to sidestep ConvertToLLVM extension requirements.
 #include "mlir/Dialect/UB/IR/UBOps.h"
 // ExecutionEngine and lowering scaffolding (JIT const-eval prep)
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
-#include "mlir/Conversion/Passes.h" // Needed for createConvertToLLVMPass
+#include "mlir/Conversion/Passes.h" // createConvertToLLVMPass indirect dep (keep guarded)
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Builders.h"
@@ -383,6 +384,32 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
             // ensures name uniqueness if a collision occurs.
             SymbolTable(module).insert(clone);
 
+            // Port signature verification: ensure the specialized clone is
+            // substitutable for the original target (same in/out degree).
+            bool signatureMismatch = false;
+            if (auto baseActor = dyn_cast<cal::ActorOp>(target)) {
+              if (auto specActor = dyn_cast<cal::ActorOp>(clone)) {
+                if (baseActor.inDegree() != specActor.inDegree() ||
+                    baseActor.outDegree() != specActor.outDegree()) {
+                  signatureMismatch = true;
+                }
+              }
+            } else if (auto baseNet = dyn_cast<cal::NetworkOp>(target)) {
+              if (auto specNet = dyn_cast<cal::NetworkOp>(clone)) {
+                if (baseNet.inDegree() != specNet.inDegree() ||
+                    baseNet.outDegree() != specNet.outDegree()) {
+                  signatureMismatch = true;
+                }
+              }
+            }
+            if (signatureMismatch) {
+              // Mark instantiate so downstream passes know specialization was skipped.
+              inst->setAttr("cal.specialization.port_mismatch", UnitAttr::get(module.getContext()));
+              // Remove the clone – not referenced.
+              clone->erase();
+              continue; // Skip specialization for this instantiate.
+            }
+
             // Inline constants into the cloned region body for param indices.
             auto inlineConstantsIntoRegion = [&](Region &region) {
               if (region.empty()) return;
@@ -416,6 +443,11 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
             inst->setAttr("actorRef", specializedRef);
             // Debug marker to verify retargeting occurred in dumps.
             inst->setAttr("cal.specialization.retargeted", UnitAttr::get(module.getContext()));
+            // Refine instance handle result type to point at specialized symbol.
+            if (auto hTy = dyn_cast<cal::InstanceType>(inst.getHandle().getType())) {
+              auto newHTy = cal::InstanceType::get(module.getContext(), specializedRef);
+              inst.getHandle().setType(newHTy);
+            }
             changed = true;
           }
         }
@@ -475,6 +507,29 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
             std::string newName = baseName + std::string("_") + std::to_string(llvm::hash_value(key));
             clone->setAttr(SymbolTable::getSymbolAttrName(), StringAttr::get(module.getContext(), newName));
             SymbolTable(module).insert(clone);
+
+            // Verify port signature equivalence before accepting clone.
+            bool lateSignatureMismatch = false;
+            if (auto baseActor = dyn_cast<cal::ActorOp>(target)) {
+              if (auto specActor = dyn_cast<cal::ActorOp>(clone)) {
+                if (baseActor.inDegree() != specActor.inDegree() ||
+                    baseActor.outDegree() != specActor.outDegree()) {
+                  lateSignatureMismatch = true;
+                }
+              }
+            } else if (auto baseNet = dyn_cast<cal::NetworkOp>(target)) {
+              if (auto specNet = dyn_cast<cal::NetworkOp>(clone)) {
+                if (baseNet.inDegree() != specNet.inDegree() ||
+                    baseNet.outDegree() != specNet.outDegree()) {
+                  lateSignatureMismatch = true;
+                }
+              }
+            }
+            if (lateSignatureMismatch) {
+              inst->setAttr("cal.specialization.port_mismatch", UnitAttr::get(module.getContext()));
+              clone->erase();
+              continue;
+            }
             clone->setAttr("cal.specialized", UnitAttr::get(module.getContext()));
             auto inlineRegion = [&](Region &r){
               if (r.empty()) return;
@@ -492,6 +547,10 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
             auto newRef = FlatSymbolRefAttr::get(StringAttr::get(module.getContext(), newName));
             inst->setAttr("actorRef", newRef);
             inst->setAttr("cal.specialization.retargeted", UnitAttr::get(module.getContext()));
+            // Refine instance handle type after late specialization.
+            if (auto hTy = dyn_cast<cal::InstanceType>(inst.getHandle().getType())) {
+              inst.getHandle().setType(cal::InstanceType::get(module.getContext(), newRef));
+            }
             lateChanged = true;
           }
           if (lateChanged) {
@@ -838,289 +897,18 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
       }
     }
 
-    // Phase 3b (experimental): JIT-const-eval hook. In Phase 1 we conservatively
-    // try to fold pure helper calls by interpreting a restricted subset of
-    // arith/func/scf with constant operands. This avoids requiring the
-    // ExecutionEngine in phase 1, while providing identical behavior for
-    // the targeted helpers (e.g., small recurrences like pow2).
-    bool useJitConstEval = this->enableJitConstEval ||
-                           (std::getenv("CAL_ENABLE_JIT_CONST_EVAL") != nullptr);
-    if (useJitConstEval) {
+    // Phase 3b: JIT-only const-eval. Replace the prior interpreter with a
+    // single, guarded JIT attempt for helper calls with constant operands.
+    // Memoized per (callee, signed args) to avoid duplicate work.
+    {
       if (auto module = dyn_cast<ModuleOp>(op)) {
         SymbolTable symTable(module);
-
-        struct FnKey {
-          StringAttr callee;
-          SmallVector<int64_t, 4> args;
-          bool operator==(const FnKey &o) const {
-            if (callee != o.callee) return false;
-            if (args.size() != o.args.size()) return false;
-            for (size_t i = 0; i < args.size(); ++i)
-              if (args[i] != o.args[i]) return false;
-            return true;
-          }
-        };
-        struct FnKeyInfo {
-          static inline FnKey getEmptyKey() { return FnKey{StringAttr(), {}}; }
-          static inline FnKey getTombstoneKey() { return FnKey{StringAttr::get(nullptr, "<tomb>"), {}}; }
-          static unsigned getHashValue(const FnKey &k) {
-            llvm::SmallString<64> s;
-            if (k.callee)
-              s += k.callee.getValue();
-            s += '#';
-            for (auto v : k.args) {
-              s += llvm::Twine(v).str();
-              s += ',';
-            }
-            return llvm::hash_value(s.str());
-          }
-          static bool isEqual(const FnKey &a, const FnKey &b) { return a == b; }
-        };
-
-        llvm::DenseMap<FnKey, llvm::APInt, FnKeyInfo> memo;
-
-        // Evaluate a Value to APInt if known in the map.
         auto getBitWidth = [&](Type ty) -> unsigned {
           if (auto it = dyn_cast<IntegerType>(ty)) return it.getWidth();
           if (auto idx = dyn_cast<IndexType>(ty)) return 64; // default to host index width
           return 64;
         };
-
-        std::function<std::optional<llvm::APInt>(Value, llvm::DenseMap<Value, llvm::APInt> &)> evalV;
-
-        // Environment-configurable recursion limit for interpreter recursion.
-        auto getMaxDepth = [&]() -> unsigned {
-          if (const char *env = std::getenv("CAL_EVAL_MAX_DEPTH")) {
-            char *end = nullptr; long v = std::strtol(env, &end, 10);
-            if (end != env && v > 0) return static_cast<unsigned>(v);
-          }
-          return 64u; // default recursion cap
-        };
-        const unsigned kMaxDepth = getMaxDepth();
-
-        // Track current call stack to break direct/indirect cycles.
-        llvm::SmallVector<StringAttr, 16> callStack;
-
-        std::function<std::optional<llvm::APInt>(func::FuncOp, ArrayRef<llvm::APInt>, unsigned)> evalFunc;
-
-        evalFunc = [&](func::FuncOp f, ArrayRef<llvm::APInt> constArgs, unsigned depth) -> std::optional<llvm::APInt> {
-          if (depth > kMaxDepth) return std::nullopt;
-          // Only support single-block, single-result integer return functions.
-          if (!f || !f.getBody().hasOneBlock()) return std::nullopt;
-          auto fType = f.getFunctionType();
-          if (fType.getNumResults() != 1) return std::nullopt;
-          auto resTy = dyn_cast<IntegerType>(fType.getResult(0));
-          if (!resTy) return std::nullopt;
-          if (fType.getNumInputs() != constArgs.size()) return std::nullopt;
-
-          // Whitelist: ops in arith dialect, scf.if with constant condition, scf.for with
-          // constant small trip count and no iter args, nested func.call to similarly whitelisted fns.
-          Block &body = f.getBody().front();
-          llvm::DenseMap<Value, llvm::APInt> env;
-          // Seed arguments.
-          for (auto it : llvm::zip(body.getArguments(), constArgs)) {
-            Value arg = std::get<0>(it);
-            const llvm::APInt &v = std::get<1>(it);
-            unsigned bw = getBitWidth(arg.getType());
-            env[arg] = v.sextOrTrunc(bw);
-          }
-
-          evalV = [&](Value v, llvm::DenseMap<Value, llvm::APInt> &envRef) -> std::optional<llvm::APInt> {
-            if (auto it = envRef.find(v); it != envRef.end()) return it->second;
-            if (auto c = v.getDefiningOp<arith::ConstantOp>()) {
-              if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getValue();
-            }
-            if (auto ic = v.getDefiningOp<arith::IndexCastOp>()) {
-              auto iv = evalV(ic.getIn(), envRef);
-              if (!iv) return std::nullopt;
-              unsigned bw = getBitWidth(v.getType());
-              return iv->sextOrTrunc(bw);
-            }
-            if (auto addi = v.getDefiningOp<arith::AddIOp>()) {
-              auto a = evalV(addi.getLhs(), envRef); auto b = evalV(addi.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) + b->sextOrTrunc(getBitWidth(v.getType()));
-            }
-            if (auto subi = v.getDefiningOp<arith::SubIOp>()) {
-              auto a = evalV(subi.getLhs(), envRef); auto b = evalV(subi.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) - b->sextOrTrunc(getBitWidth(v.getType()));
-            }
-            if (auto muli = v.getDefiningOp<arith::MulIOp>()) {
-              auto a = evalV(muli.getLhs(), envRef); auto b = evalV(muli.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) * b->sextOrTrunc(getBitWidth(v.getType()));
-            }
-            if (auto andi = v.getDefiningOp<arith::AndIOp>()) {
-              auto a = evalV(andi.getLhs(), envRef); auto b = evalV(andi.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) & b->sextOrTrunc(getBitWidth(v.getType()));
-            }
-            if (auto ori = v.getDefiningOp<arith::OrIOp>()) {
-              auto a = evalV(ori.getLhs(), envRef); auto b = evalV(ori.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) | b->sextOrTrunc(getBitWidth(v.getType()));
-            }
-            if (auto xori = v.getDefiningOp<arith::XOrIOp>()) {
-              auto a = evalV(xori.getLhs(), envRef); auto b = evalV(xori.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) ^ b->sextOrTrunc(getBitWidth(v.getType()));
-            }
-            if (auto shli = v.getDefiningOp<arith::ShLIOp>()) {
-              auto a = evalV(shli.getLhs(), envRef); auto b = evalV(shli.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->zextOrTrunc(getBitWidth(v.getType())).shl(b->getLimitedValue());
-            }
-            if (auto shrs = v.getDefiningOp<arith::ShRSIOp>()) {
-              auto a = evalV(shrs.getLhs(), envRef); auto b = evalV(shrs.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())).ashr(b->getLimitedValue());
-            }
-            if (auto shru = v.getDefiningOp<arith::ShRUIOp>()) {
-              auto a = evalV(shru.getLhs(), envRef); auto b = evalV(shru.getRhs(), envRef);
-              if (!a || !b) return std::nullopt; return a->zextOrTrunc(getBitWidth(v.getType())).lshr(b->getLimitedValue());
-            }
-            if (auto cmp = v.getDefiningOp<arith::CmpIOp>()) {
-              auto A = evalV(cmp.getLhs(), envRef); auto B = evalV(cmp.getRhs(), envRef);
-              if (!A || !B) return std::nullopt;
-              bool res = false;
-              using P = arith::CmpIPredicate;
-              switch (cmp.getPredicate()) {
-                case P::eq:  res = (*A == *B); break;
-                case P::ne:  res = (*A != *B); break;
-                case P::slt: res = A->slt(*B); break;
-                case P::sle: res = A->sle(*B); break;
-                case P::sgt: res = A->sgt(*B); break;
-                case P::sge: res = A->sge(*B); break;
-                case P::ult: res = A->ult(*B); break;
-                case P::ule: res = A->ule(*B); break;
-                case P::ugt: res = A->ugt(*B); break;
-                case P::uge: res = A->uge(*B); break;
-              }
-              return llvm::APInt(1, res ? 1 : 0);
-            }
-            if (auto sel = v.getDefiningOp<arith::SelectOp>()) {
-              auto c = evalV(sel.getCondition(), envRef);
-              if (!c) return std::nullopt;
-              bool cond = !c->isZero();
-              auto chosen = cond ? sel.getTrueValue() : sel.getFalseValue();
-              return evalV(chosen, envRef);
-            }
-            return std::nullopt;
-          };
-
-          // Walk ops in order and interpret side-effect-free fragments.
-          for (Operation &opIt : body) {
-            if (auto ifOp = dyn_cast<scf::IfOp>(&opIt)) {
-              // Extend support for scf.if with either 0 or 1 result when the
-              // condition is constant. For 1-result if, evaluate the chosen
-              // region and bind the yielded value to the ifOp result in env.
-              auto c = evalV(ifOp.getCondition(), env);
-              if (!c) return std::nullopt;
-              bool cond = !c->isZero();
-              Region &chosen = cond ? ifOp.getThenRegion() : ifOp.getElseRegion();
-              if (!chosen.empty()) {
-                for (Operation &inner : chosen.front()) {
-                  if (isa<scf::YieldOp>(&inner)) continue;
-                  // Evaluate any results of inner op that we know how to fold.
-                  for (auto res : inner.getResults()) {
-                    if (auto v = evalV(res, env)) env[res] = *v;
-                  }
-                }
-              }
-              if (ifOp.getNumResults() == 0) {
-                // Nothing to bind in env for 0-result if.
-                continue;
-              }
-              if (ifOp.getNumResults() == 1) {
-                // Read the yielded value from the chosen region and bind it to
-                // the single result of the ifOp.
-                if (!chosen.empty()) {
-                  auto *term = chosen.front().getTerminator();
-                  if (auto y = dyn_cast<scf::YieldOp>(term)) {
-                    if (y.getNumOperands() != 1) return std::nullopt;
-                    auto v = evalV(y.getOperand(0), env);
-                    if (!v) return std::nullopt;
-                    env[ifOp.getResult(0)] = *v;
-                    continue;
-                  }
-                }
-                return std::nullopt;
-              }
-              // More than 1 result is not supported.
-              return std::nullopt;
-            }
-            if (auto forOp = dyn_cast<scf::ForOp>(&opIt)) {
-              // Only structural: no results, no iter args, constant bounds, small trip.
-              if (forOp.getNumResults() != 0 || !forOp.getInitArgs().empty()) return std::nullopt;
-              auto lb = evalV(forOp.getLowerBound(), env);
-              auto ub = evalV(forOp.getUpperBound(), env);
-              auto st = evalV(forOp.getStep(), env);
-              if (!lb || !ub || !st) return std::nullopt;
-              int64_t L = lb->getSExtValue();
-              int64_t U = ub->getSExtValue();
-              int64_t S = st->getSExtValue();
-              if (S <= 0) return std::nullopt;
-              int64_t trip = (U <= L) ? 0 : ((U - L + S - 1) / S);
-              if (trip < 0 || trip > 1024) return std::nullopt;
-              for (int64_t t = 0; t < trip; ++t) {
-                // Bind induction var for this iteration.
-                int64_t iv = L + t * S;
-                env[forOp.getInductionVar()] = llvm::APInt(64, iv, true);
-                for (Operation &inner : forOp.getBody()->getOperations()) {
-                  if (isa<scf::YieldOp>(&inner)) continue;
-                  for (auto res : inner.getResults()) {
-                    if (auto v = evalV(res, env)) env[res] = *v;
-                  }
-                }
-              }
-              continue;
-            }
-            if (auto call = dyn_cast<func::CallOp>(&opIt)) {
-              // Recursively evaluate calls with constant operands.
-              SmallVector<llvm::APInt, 4> cargs;
-              cargs.reserve(call.getNumOperands());
-              for (Value a : call.getArgOperands()) {
-                auto av = evalV(a, env);
-                if (!av) { cargs.clear(); break; }
-                cargs.push_back(*av);
-              }
-              if (cargs.empty() && call.getNumOperands() != 0) return std::nullopt;
-              func::FuncOp callee = symTable.lookup<func::FuncOp>(call.getCallee());
-              if (!callee) return std::nullopt;
-              // Detect recursion cycles on the current path.
-              if (llvm::any_of(callStack, [&](StringAttr s){ return s == callee.getSymNameAttr(); }))
-                return std::nullopt;
-              // Memoize by callee symbol + signed args.
-              FnKey key{callee.getSymNameAttr(), {}};
-              key.args.reserve(cargs.size());
-              for (auto &x : cargs) key.args.push_back(x.getSExtValue());
-              auto itM = memo.find(key);
-              std::optional<llvm::APInt> r;
-              if (itM != memo.end()) {
-                r = itM->second;
-              } else {
-                callStack.push_back(callee.getSymNameAttr());
-                r = evalFunc(callee, cargs, depth + 1);
-                callStack.pop_back();
-                if (r) memo.try_emplace(key, *r);
-              }
-              if (!r) return std::nullopt;
-              // Propagate result into env for the call's SSA result.
-              if (call.getNumResults() == 1) env[call.getResult(0)] = *r;
-              continue;
-            }
-            if (auto ret = dyn_cast<func::ReturnOp>(&opIt)) {
-              if (ret.getNumOperands() != 1) return std::nullopt;
-              auto v = evalV(ret.getOperand(0), env);
-              return v;
-            }
-            // For any other op, best-effort fold its results using evalV; if any
-            // result is unknown, continue (it may be dead). If it has side effects,
-            // we conservatively bail by returning null.
-            if (!opIt.hasTrait<OpTrait::ZeroRegions>() || !opIt.hasTrait<OpTrait::ZeroSuccessors>())
-              return std::nullopt;
-            for (auto res : opIt.getResults()) {
-              auto v = evalV(res, env);
-              if (v) env[res] = *v; else return std::nullopt;
-            }
-          }
-          return std::nullopt; // no explicit return encountered
-        };
-
-  // Scan for calls anywhere in the module with all constant operands; fold when possible.
+        // Scan for calls anywhere in the module with all constant operands; fold via JIT when possible.
   SmallVector<func::CallOp, 16> calls;
   module.walk([&](func::CallOp call){ calls.push_back(call); });
         for (func::CallOp call : calls) {
@@ -1166,20 +954,17 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
 
           func::FuncOp callee = symTable.lookup<func::FuncOp>(call.getCallee());
           if (!callee) continue;
-          auto res = evalFunc(callee, cargs, /*depth*/0);
-          // Optional JIT fallback (scaffold): gated by env var, memoized by caller.
-          if (!res && std::getenv("CAL_ENABLE_JIT_CONSTEVAL") != nullptr) {
-            // Memoization key: callee name + signed args
-            llvm::SmallString<128> key;
-            key += callee.getSymName(); key += '#';
-            for (auto &a : cargs) { key += llvm::Twine(a.getSExtValue()).str(); key += ','; }
-            auto itMemo = this->jitConstMemo.find(key.str());
-            if (itMemo != this->jitConstMemo.end()) {
-              res = itMemo->second;
-            } else {
-              auto j = this->tryJitConstEval(callee, cargs, /*budget*/ 1000);
-              if (j) { this->jitConstMemo.try_emplace(key.str(), *j); res = j; }
-            }
+          // JIT evaluate always (memoized), replacing the prior interpreter.
+          std::optional<llvm::APInt> res;
+          llvm::SmallString<128> key;
+          key += callee.getSymName(); key += '#';
+          for (auto &a : cargs) { key += llvm::Twine(a.getSExtValue()).str(); key += ','; }
+          auto itMemo = this->jitConstMemo.find(key.str());
+          if (itMemo != this->jitConstMemo.end()) {
+            res = itMemo->second;
+          } else {
+            auto j = this->tryJitConstEval(callee, cargs, /*budget*/ 1000);
+            if (j) { this->jitConstMemo.try_emplace(key.str(), *j); res = j; }
           }
           if (!res) continue;
 
@@ -1469,11 +1254,11 @@ std::optional<llvm::APInt> CalConstEvalPass::tryJitConstEval(
   callee.walk([&](func::CallOp c){ if (c.getCallee() == callee.getSymName()) { selfRecursive = true; return WalkResult::interrupt(); } return WalkResult::advance(); });
   if (selfRecursive && std::getenv("CAL_JIT_ALLOW_RECURSION") == nullptr) return std::nullopt;
 
-  // Dialect whitelist: only arith, func, scf, cf, math, complex, builtin.
+  // Dialect whitelist: only arith, func, scf, cf, builtin.
   {
   // Use a SmallVector of StringRef for whitelist; simple linear search is fine (tiny set).
   llvm::SmallVector<StringRef, 8> allowed = {
-    "arith", "func", "scf", "cf", "math", "complex", "builtin"};
+    "arith", "func", "scf", "cf", "builtin"};
     bool bad = false;
     callee.walk([&](Operation *op) {
       Dialect *d = op->getDialect();
@@ -1489,19 +1274,20 @@ std::optional<llvm::APInt> CalConstEvalPass::tryJitConstEval(
       return std::nullopt;
   }
 
-  // Build a dedicated single-threaded context with a pre-filled registry to
-  // avoid mutating the main context's registry during multi-threaded execution.
+  // Build a separate single-threaded context with a minimal registry of
+  // required dialects to avoid loading during the pass pipeline.
   DialectRegistry reg;
-  // ControlFlow dialect is registered as mlir::cf::ControlFlowDialect in older snapshots;
-  // if not available, we fall back to adding only required dialects.
   reg.insert<arith::ArithDialect, func::FuncDialect, scf::SCFDialect,
-             math::MathDialect, complex::ComplexDialect,
-             mlir::LLVM::LLVMDialect>();
-  // UB dialect may be referenced post-lowering depending on pipeline utilities.
-  reg.insert<mlir::ub::UBDialect>();
+             cf::ControlFlowDialect, mlir::LLVM::LLVMDialect>();
   auto jitCtx = std::make_unique<MLIRContext>(reg);
   jitCtx->disableMultithreading();
   MLIRContext *ctx = jitCtx.get();
+  // Eagerly load the required dialects into this context.
+  (void)ctx->loadDialect<func::FuncDialect>();
+  (void)ctx->loadDialect<arith::ArithDialect>();
+  (void)ctx->loadDialect<scf::SCFDialect>();
+  (void)ctx->loadDialect<cf::ControlFlowDialect>();
+  (void)ctx->loadDialect<mlir::LLVM::LLVMDialect>();
   OpBuilder ob(ctx);
   auto scratch = ModuleOp::create(UnknownLoc::get(ctx));
 
@@ -1572,8 +1358,9 @@ std::optional<llvm::APInt> CalConstEvalPass::tryJitConstEval(
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(createConvertControlFlowToLLVMPass());
   pm.addPass(createArithToLLVMConversionPass());
-  // Convert remaining high-level to LLVM.
-  pm.addPass(createConvertToLLVMPass());
+  // Convert Func to LLVM (explicit instead of generic ConvertToLLVM to avoid
+  // relying on dialect extension interfaces).
+  pm.addPass(createConvertFuncToLLVMPass());
   if (failed(pm.run(scratch))) return std::nullopt;
 
   // Post-lowering size watchdog; LLVM form may expand IR.
