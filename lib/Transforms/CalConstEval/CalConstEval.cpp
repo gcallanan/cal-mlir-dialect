@@ -9,8 +9,19 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
+// LLVM dialect for lowering target
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 // The canonicalizer/inliner may reference UB ops; ensure the dialect is registered.
 #include "mlir/Dialect/UB/IR/UBOps.h"
+// ExecutionEngine and lowering scaffolding (JIT const-eval prep)
+#include "mlir/ExecutionEngine/ExecutionEngine.h"
+#include "mlir/Conversion/Passes.h" // Needed for createConvertToLLVMPass
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Builders.h"
@@ -23,6 +34,10 @@
 #include "mlir/IR/Matchers.h"
 // Env var check
 #include <cstdlib>
+// Time watchdog
+#include <chrono>
+// Bit utilities for float bitcasts
+#include <cstring>
 // APInt for safe constant evaluation
 #include "llvm/ADT/APInt.h"
 // DenseMap / SmallVector / String
@@ -49,6 +64,19 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
   // Cache to deduplicate specializations in one pass run.
   // Key format: symName + '|' + per-param ("-" for dynamic or attribute dump).
   llvm::StringMap<FlatSymbolRefAttr> specCache;
+
+  // Experimental: cache for JIT const-eval results (callee+args).
+  // Keyed by callee symbol plus comma-joined signed argument values.
+  llvm::StringMap<llvm::APInt> jitConstMemo;
+
+  // Stub for upcoming JIT-based const evaluation. Returns nullopt until
+  // fully implemented. The interface is stable: takes a pure helper callee
+  // and its constant integer/index arguments, and returns a folded APInt
+  // or nullopt if not supported/fails. Budget limits compile/exec effort.
+  std::optional<llvm::APInt>
+  tryJitConstEval(func::FuncOp callee,
+                  ArrayRef<llvm::APInt> args,
+                  unsigned budget);
 
   void runOnOperation() override {
     // Run a tiny inner pipeline: prefer MLIR's inliner when available,
@@ -500,46 +528,56 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
             Block &body = fn.getBody().front();
             auto ret = dyn_cast_or_null<func::ReturnOp>(body.getTerminator());
             if (!ret || ret.getNumOperands() != 1) return false;
-            auto sel = ret.getOperand(0).getDefiningOp<arith::SelectOp>();
-            if (!sel) return false;
-            auto cmp = sel.getCondition().getDefiningOp<arith::CmpIOp>();
-            if (!cmp || cmp.getPredicate() != arith::CmpIPredicate::eq) return false;
-            Value lhs = cmp.getLhs(); Value rhs = cmp.getRhs();
-            auto arg0 = fn.getArgument(0);
-            auto isZero = [](Value v){
-              if (auto c = v.getDefiningOp<arith::ConstantOp>())
-                if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getValue().isZero();
-              return false;
-            };
-            if (!((lhs == arg0 && isZero(rhs)) || (rhs == arg0 && isZero(lhs)))) return false;
-            auto mul = sel.getFalseValue().getDefiningOp<arith::MulIOp>();
-            if (!mul) return false;
-            func::CallOp recCall = nullptr; IntegerAttr mulCst;
-            auto pick = [&](Value A, Value B){
-              if (auto c = A.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
-              if (auto c = B.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
-              if (auto cc = A.getDefiningOp<func::CallOp>()) recCall = cc;
-              if (auto cc = B.getDefiningOp<func::CallOp>()) recCall = cc;
-              return recCall && mulCst && mulCst.getValue() == 2;
-            };
-            if (!pick(mul.getLhs(), mul.getRhs())) return false;
-            if (recCall.getCallee() != fn.getSymName()) return false;
-            if (recCall.getNumOperands() != 1) return false;
-            auto sub = recCall.getOperand(0).getDefiningOp<arith::SubIOp>();
-            if (!sub) return false;
-            auto isOne = [](Value v){
-              if (auto c = v.getDefiningOp<arith::ConstantOp>())
-                if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getInt() == 1;
-              return false;
-            };
-            if (!((sub.getLhs() == arg0 && isOne(sub.getRhs())) || (sub.getRhs() == arg0 && isOne(sub.getLhs())))) return false;
-            auto thenC = sel.getTrueValue().getDefiningOp<arith::ConstantOp>();
-            if (!thenC) return false;
-            if (auto ia = dyn_cast<IntegerAttr>(thenC.getValue())) {
-              auto bw = ia.getValue().getBitWidth();
-              if (!(ia.getValue() == llvm::APInt(bw, 1))) return false;
-            } else return false;
-            return true;
+            Value retVal = ret.getOperand(0);
+            // Pattern A: Recursive select-based recurrence:
+            if (auto sel = retVal.getDefiningOp<arith::SelectOp>()) {
+              auto cmp = sel.getCondition().getDefiningOp<arith::CmpIOp>();
+              if (!cmp || cmp.getPredicate() != arith::CmpIPredicate::eq) return false;
+              Value lhs = cmp.getLhs(); Value rhs = cmp.getRhs();
+              Value arg0 = fn.getArgument(0);
+              auto isZero = [](Value v){ if (auto c = v.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getValue().isZero(); return false; };
+              if (!((lhs == arg0 && isZero(rhs)) || (rhs == arg0 && isZero(lhs)))) return false;
+              auto mul = sel.getFalseValue().getDefiningOp<arith::MulIOp>(); if (!mul) return false;
+              func::CallOp recCall = nullptr; IntegerAttr mulCst;
+              auto pick = [&](Value A, Value B){
+                if (auto c = A.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
+                if (auto c = B.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
+                if (auto cc = A.getDefiningOp<func::CallOp>()) recCall = cc;
+                if (auto cc = B.getDefiningOp<func::CallOp>()) recCall = cc;
+                return recCall && mulCst && mulCst.getValue() == 2;
+              };
+              if (!pick(mul.getLhs(), mul.getRhs())) return false;
+              if (recCall.getCallee() != fn.getSymName() || recCall.getNumOperands() != 1) return false;
+              auto sub = recCall.getOperand(0).getDefiningOp<arith::SubIOp>(); if (!sub) return false;
+              auto isOne = [](Value v){ if (auto c = v.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getInt() == 1; return false; };
+              if (!((sub.getLhs() == arg0 && isOne(sub.getRhs())) || (sub.getRhs() == arg0 && isOne(sub.getLhs())))) return false;
+              auto thenC = sel.getTrueValue().getDefiningOp<arith::ConstantOp>(); if (!thenC) return false;
+              if (auto ia = dyn_cast<IntegerAttr>(thenC.getValue())) { auto bw = ia.getValue().getBitWidth(); if (!(ia.getValue() == llvm::APInt(bw, 1))) return false; } else return false;
+              return true;
+            }
+            // Pattern B: Iterative scf.for accumulator form:
+            if (auto forOp = retVal.getDefiningOp<scf::ForOp>()) {
+              // Expect single iter_arg initialized to 1, lb=0, step=1, ub=arg0 (possibly index_cast), body multiplies accumulator by 2.
+              if (forOp.getInitArgs().size() != 1) return false;
+              auto initC = forOp.getInitArgs()[0].getDefiningOp<arith::ConstantOp>(); if (!initC) return false;
+              auto initIA = dyn_cast<IntegerAttr>(initC.getValue()); if (!initIA || initIA.getInt() != 1) return false;
+              auto cLb = forOp.getLowerBound().getDefiningOp<arith::ConstantOp>(); auto cSt = forOp.getStep().getDefiningOp<arith::ConstantOp>();
+              if (!cLb || !cSt) return false;
+              auto lbIA = dyn_cast<IntegerAttr>(cLb.getValue()); auto stIA = dyn_cast<IntegerAttr>(cSt.getValue());
+              if (!lbIA || !lbIA.getValue().isZero() || !stIA || stIA.getInt() != 1) return false;
+              auto unwrapUB = [](Value v){ if (auto ic = v.getDefiningOp<arith::IndexCastOp>()) return ic.getIn(); return v; };
+              if (unwrapUB(forOp.getUpperBound()) != fn.getArgument(0)) return false;
+              Block *fb = forOp.getBody(); if (!fb) return false;
+              // scf.for region args: %iv, %acc. We want yield muli(%acc, 2).
+              if (fb->getArguments().size() != 2) return false;
+              auto yield = dyn_cast<scf::YieldOp>(fb->getTerminator()); if (!yield || yield.getNumOperands() != 1) return false;
+              auto mul = yield.getOperand(0).getDefiningOp<arith::MulIOp>(); if (!mul) return false;
+              Value acc = fb->getArgument(1);
+              auto isTwo = [](Value v){ if (auto c = v.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getInt() == 2; return false; };
+              if (!((mul.getLhs() == acc && isTwo(mul.getRhs())) || (mul.getRhs() == acc && isTwo(mul.getLhs())))) return false;
+              return true;
+            }
+            return false;
           };
           if (nameHit || matchesPow2(callee)) pow2Calls.push_back(call);
         });
@@ -702,72 +740,58 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
       };
 
       auto matchesPow2Recurrence = [](func::FuncOp callee) -> bool {
-        // Heuristic: returns select(cmp eq %arg0, 0, muli(call @callee(subi %arg0, 1), 2))
         if (!callee || !callee.getBody().hasOneBlock()) return false;
         Block &body = callee.getBody().front();
         auto ret = dyn_cast_or_null<func::ReturnOp>(body.getTerminator());
         if (!ret || ret.getNumOperands() != 1) return false;
-        auto sel = ret.getOperand(0).getDefiningOp<arith::SelectOp>();
-        if (!sel) return false;
-        auto cmp = sel.getCondition().getDefiningOp<arith::CmpIOp>();
-        if (!cmp || cmp.getPredicate() != arith::CmpIPredicate::eq) return false;
-        // cmp(%arg0, 0)
-        auto arg0 = callee.getArgument(0);
-        Value lhs = cmp.getLhs();
-        Value rhs = cmp.getRhs();
-        auto isZero = [&](Value v){
-          if (auto kc = v.getDefiningOp<arith::ConstantOp>())
-            if (auto ka = dyn_cast<IntegerAttr>(kc.getValue()))
-              return ka.getValue().isZero();
-          return false;
-        };
-        if (!((lhs == arg0 && isZero(rhs)) || (rhs == arg0 && isZero(lhs))))
-          return false;
-        // else-value should be muli(call @callee(subi %arg0, 1), 2)
-        auto mul = sel.getFalseValue().getDefiningOp<arith::MulIOp>();
-        if (!mul) return false;
-        // Identify the recursive call and the constant multiplier (2)
-        func::CallOp recCall = nullptr;
-        IntegerAttr mulCst;
-        auto pickCallAndConst = [&](Value a, Value b) -> bool {
-          if (auto c = a.getDefiningOp<arith::ConstantOp>()) {
-            if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) { mulCst = ia; }
-          }
-          if (auto c = b.getDefiningOp<arith::ConstantOp>()) {
-            if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) { mulCst = ia; }
-          }
-          if (auto inner = a.getDefiningOp<func::CallOp>()) recCall = inner;
-          if (auto inner = b.getDefiningOp<func::CallOp>()) recCall = inner;
-          return recCall && mulCst && mulCst.getValue() == 2;
-        };
-        if (!pickCallAndConst(mul.getLhs(), mul.getRhs())) return false;
-        if (recCall.getCallee() != callee.getSymName()) return false;
-        // The recursive call arg should be subi(%arg0, 1)
-        if (recCall.getNumOperands() != 1) return false;
-        auto sub = recCall.getArgOperands()[0].getDefiningOp<arith::SubIOp>();
-        if (!sub) return false;
-        auto isOne = [&](Value v){
-          if (auto kc = v.getDefiningOp<arith::ConstantOp>()) {
-            if (auto ka = dyn_cast<IntegerAttr>(kc.getValue())) {
-              auto bw = ka.getValue().getBitWidth();
-              return ka.getValue() == llvm::APInt(bw, 1);
-            }
-          }
-          return false;
-        };
-        if (!((sub.getLhs() == arg0 && isOne(sub.getRhs())) ||
-              (sub.getRhs() == arg0 && isOne(sub.getLhs()))))
-          return false;
-        // then-value in select should be constant 1
-        auto thenC = sel.getTrueValue().getDefiningOp<arith::ConstantOp>();
-        if (!thenC) return false;
-        auto thenIA = dyn_cast<IntegerAttr>(thenC.getValue());
-        if (!thenIA) return false;
-        {
-          auto bw = thenIA.getValue().getBitWidth();
-          if (!(thenIA.getValue() == llvm::APInt(bw, 1))) return false;
+        Value retVal = ret.getOperand(0);
+        // Pattern A: recursive select-based form.
+        if (auto sel = retVal.getDefiningOp<arith::SelectOp>()) {
+          auto cmp = sel.getCondition().getDefiningOp<arith::CmpIOp>();
+          if (!cmp || cmp.getPredicate() != arith::CmpIPredicate::eq) return false;
+          auto arg0 = callee.getArgument(0);
+          auto isZero = [&](Value v){ if (auto kc = v.getDefiningOp<arith::ConstantOp>()) if (auto ka = dyn_cast<IntegerAttr>(kc.getValue())) return ka.getValue().isZero(); return false; };
+          if (!((cmp.getLhs() == arg0 && isZero(cmp.getRhs())) || (cmp.getRhs() == arg0 && isZero(cmp.getLhs())))) return false;
+          auto mul = sel.getFalseValue().getDefiningOp<arith::MulIOp>(); if (!mul) return false;
+          func::CallOp recCall = nullptr; IntegerAttr mulCst;
+          auto pick = [&](Value a, Value b){
+            if (auto c = a.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
+            if (auto c = b.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
+            if (auto inner = a.getDefiningOp<func::CallOp>()) recCall = inner;
+            if (auto inner = b.getDefiningOp<func::CallOp>()) recCall = inner;
+            return recCall && mulCst && mulCst.getValue() == 2;
+          };
+          if (!pick(mul.getLhs(), mul.getRhs())) return false;
+          if (recCall.getCallee() != callee.getSymName() || recCall.getNumOperands() != 1) return false;
+          auto sub = recCall.getArgOperands()[0].getDefiningOp<arith::SubIOp>(); if (!sub) return false;
+          auto isOne = [&](Value v){ if (auto kc = v.getDefiningOp<arith::ConstantOp>()) if (auto ka = dyn_cast<IntegerAttr>(kc.getValue())) { auto bw = ka.getValue().getBitWidth(); return ka.getValue() == llvm::APInt(bw, 1);} return false; };
+          if (!((sub.getLhs() == arg0 && isOne(sub.getRhs())) || (sub.getRhs() == arg0 && isOne(sub.getLhs())))) return false;
+          auto thenC = sel.getTrueValue().getDefiningOp<arith::ConstantOp>(); if (!thenC) return false;
+          auto thenIA = dyn_cast<IntegerAttr>(thenC.getValue()); if (!thenIA) return false;
+          { auto bw = thenIA.getValue().getBitWidth(); if (!(thenIA.getValue() == llvm::APInt(bw, 1))) return false; }
+          return true;
         }
-        return true;
+        // Pattern B: iterative scf.for accumulator form (lb=0, step=1, ub=%arg0, init=1, yield acc*2)
+        if (auto forOp = retVal.getDefiningOp<scf::ForOp>()) {
+          if (forOp.getInitArgs().size() != 1) return false;
+          auto initC = forOp.getInitArgs()[0].getDefiningOp<arith::ConstantOp>(); if (!initC) return false;
+          auto initIA = dyn_cast<IntegerAttr>(initC.getValue()); if (!initIA || initIA.getInt() != 1) return false;
+          auto cLb = forOp.getLowerBound().getDefiningOp<arith::ConstantOp>(); auto cSt = forOp.getStep().getDefiningOp<arith::ConstantOp>();
+          if (!cLb || !cSt) return false;
+          auto lbIA = dyn_cast<IntegerAttr>(cLb.getValue()); auto stIA = dyn_cast<IntegerAttr>(cSt.getValue());
+          if (!lbIA || !lbIA.getValue().isZero() || !stIA || stIA.getInt() != 1) return false;
+          auto unwrapUB = [](Value v){ if (auto ic = v.getDefiningOp<arith::IndexCastOp>()) return ic.getIn(); return v; };
+          if (unwrapUB(forOp.getUpperBound()) != callee.getArgument(0)) return false;
+          Block *fb = forOp.getBody(); if (!fb) return false;
+          if (fb->getArguments().size() != 2) return false;
+          auto y = dyn_cast<scf::YieldOp>(fb->getTerminator()); if (!y || y.getNumOperands() != 1) return false;
+          auto mul = y.getOperand(0).getDefiningOp<arith::MulIOp>(); if (!mul) return false;
+          Value acc = fb->getArgument(1);
+          auto isTwo = [](Value v){ if (auto c = v.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getInt() == 2; return false; };
+          if (!((mul.getLhs() == acc && isTwo(mul.getRhs())) || (mul.getRhs() == acc && isTwo(mul.getLhs())))) return false;
+          return true;
+        }
+        return false;
       };
 
       for (func::CallOp call : calls) {
@@ -864,9 +888,23 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
 
         std::function<std::optional<llvm::APInt>(Value, llvm::DenseMap<Value, llvm::APInt> &)> evalV;
 
-        std::function<std::optional<llvm::APInt>(func::FuncOp, ArrayRef<llvm::APInt>)> evalFunc;
+        // Environment-configurable recursion limit for interpreter recursion.
+        auto getMaxDepth = [&]() -> unsigned {
+          if (const char *env = std::getenv("CAL_EVAL_MAX_DEPTH")) {
+            char *end = nullptr; long v = std::strtol(env, &end, 10);
+            if (end != env && v > 0) return static_cast<unsigned>(v);
+          }
+          return 64u; // default recursion cap
+        };
+        const unsigned kMaxDepth = getMaxDepth();
 
-        evalFunc = [&](func::FuncOp f, ArrayRef<llvm::APInt> constArgs) -> std::optional<llvm::APInt> {
+        // Track current call stack to break direct/indirect cycles.
+        llvm::SmallVector<StringAttr, 16> callStack;
+
+        std::function<std::optional<llvm::APInt>(func::FuncOp, ArrayRef<llvm::APInt>, unsigned)> evalFunc;
+
+        evalFunc = [&](func::FuncOp f, ArrayRef<llvm::APInt> constArgs, unsigned depth) -> std::optional<llvm::APInt> {
+          if (depth > kMaxDepth) return std::nullopt;
           // Only support single-block, single-result integer return functions.
           if (!f || !f.getBody().hasOneBlock()) return std::nullopt;
           auto fType = f.getFunctionType();
@@ -1042,6 +1080,9 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
               if (cargs.empty() && call.getNumOperands() != 0) return std::nullopt;
               func::FuncOp callee = symTable.lookup<func::FuncOp>(call.getCallee());
               if (!callee) return std::nullopt;
+              // Detect recursion cycles on the current path.
+              if (llvm::any_of(callStack, [&](StringAttr s){ return s == callee.getSymNameAttr(); }))
+                return std::nullopt;
               // Memoize by callee symbol + signed args.
               FnKey key{callee.getSymNameAttr(), {}};
               key.args.reserve(cargs.size());
@@ -1051,7 +1092,9 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
               if (itM != memo.end()) {
                 r = itM->second;
               } else {
-                r = evalFunc(callee, cargs);
+                callStack.push_back(callee.getSymNameAttr());
+                r = evalFunc(callee, cargs, depth + 1);
+                callStack.pop_back();
                 if (r) memo.try_emplace(key, *r);
               }
               if (!r) return std::nullopt;
@@ -1123,16 +1166,44 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
 
           func::FuncOp callee = symTable.lookup<func::FuncOp>(call.getCallee());
           if (!callee) continue;
-          auto res = evalFunc(callee, cargs);
+          auto res = evalFunc(callee, cargs, /*depth*/0);
+          // Optional JIT fallback (scaffold): gated by env var, memoized by caller.
+          if (!res && std::getenv("CAL_ENABLE_JIT_CONSTEVAL") != nullptr) {
+            // Memoization key: callee name + signed args
+            llvm::SmallString<128> key;
+            key += callee.getSymName(); key += '#';
+            for (auto &a : cargs) { key += llvm::Twine(a.getSExtValue()).str(); key += ','; }
+            auto itMemo = this->jitConstMemo.find(key.str());
+            if (itMemo != this->jitConstMemo.end()) {
+              res = itMemo->second;
+            } else {
+              auto j = this->tryJitConstEval(callee, cargs, /*budget*/ 1000);
+              if (j) { this->jitConstMemo.try_emplace(key.str(), *j); res = j; }
+            }
+          }
           if (!res) continue;
 
           // Replace call with a constant of the correct result type.
           OpBuilder rewriter(module.getContext());
           rewriter.setInsertionPoint(call);
           Type rt = call.getResult(0).getType();
-          unsigned bw = getBitWidth(rt);
-          auto cst = rewriter.create<arith::ConstantIntOp>(call.getLoc(), res->sextOrTrunc(bw).getSExtValue(), bw);
-          call.getResult(0).replaceAllUsesWith(cst.getResult());
+          if (auto ft = dyn_cast<FloatType>(rt)) {
+            // Build APFloat from raw APInt bits returned by JIT.
+            unsigned fbits = ft.getWidth();
+            llvm::APInt bits = res->sextOrTrunc(fbits);
+            const llvm::fltSemantics &sem = (fbits == 32)
+                                              ? llvm::APFloat::IEEEsingle()
+                                              : (fbits == 64 ? llvm::APFloat::IEEEdouble()
+                                                             : llvm::APFloat::IEEEsingle()); // default guard
+            llvm::APFloat fp(sem, bits);
+            auto attr = FloatAttr::get(rt, fp);
+            auto cst = rewriter.create<arith::ConstantOp>(call.getLoc(), attr);
+            call.getResult(0).replaceAllUsesWith(cst.getResult());
+          } else {
+            unsigned bw = getBitWidth(rt);
+            auto cst = rewriter.create<arith::ConstantIntOp>(call.getLoc(), res->sextOrTrunc(bw).getSExtValue(), bw);
+            call.getResult(0).replaceAllUsesWith(cst.getResult());
+          }
           call.erase();
         }
       }
@@ -1344,6 +1415,219 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
     }
   }
 };
+
+// JIT const-eval scaffold implementation: currently returns nullopt.
+// Future implementation will:
+//  1. Create a scratch ModuleOp with a cloned version of `callee` where
+//     arguments are replaced by constants.
+//  2. Run a small pipeline: SCFToControlFlow, ArithToLLVM, FuncToLLVM,
+//     Canonicalize, and finalize to LLVM dialect.
+//  3. Create an ExecutionEngine and invoke the lowered function to obtain
+//     the integer result, honoring `budget` for early bailout.
+//  4. Return llvm::APInt of the computed value or nullopt on failure.
+std::optional<llvm::APInt> CalConstEvalPass::tryJitConstEval(
+    func::FuncOp callee, ArrayRef<llvm::APInt> args, unsigned budget) {
+  using Clock = std::chrono::steady_clock;
+  const auto t0 = Clock::now();
+  auto getAllowedMillis = [&]() -> uint64_t {
+    if (const char *env = std::getenv("CAL_JIT_TIME_MS")) {
+      char *end = nullptr;
+      long v = std::strtol(env, &end, 10);
+      if (end != env && v > 0)
+        return static_cast<uint64_t>(v);
+    }
+    // Default time limit; small to avoid long stalls in optimization pipeline.
+    return 100ULL; // 100ms
+  };
+  const uint64_t timeLimitMs = getAllowedMillis();
+  auto expired = [&]() -> bool {
+    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0);
+    return static_cast<uint64_t>(dt.count()) > timeLimitMs;
+  };
+
+  // Basic guards.
+  if (!callee || !callee.getBody().hasOneBlock()) return std::nullopt;
+  auto fTy = callee.getFunctionType();
+  if (fTy.getNumResults() != 1) return std::nullopt;
+  Type resTy = fTy.getResult(0);
+  auto resIntTy = dyn_cast<IntegerType>(resTy);
+  auto resFltTy = dyn_cast<FloatType>(resTy);
+  bool isFloatResult = static_cast<bool>(resFltTy);
+  if (!resIntTy && !isFloatResult) return std::nullopt; // support only int/index and float scalars for now
+  if (fTy.getNumInputs() != args.size()) return std::nullopt;
+  // Simple budget guards: bound args and ops.
+  if (args.size() > 8) return std::nullopt;
+  // Operation budget: count operations recursively in the callee.
+  unsigned opBudget = budget ? budget : 1000;
+  unsigned opCount = 0;
+  callee.walk([&](Operation *op){ ++opCount; return opCount > opBudget ? WalkResult::interrupt() : WalkResult::advance(); });
+  if (opCount > opBudget) return std::nullopt;
+  if (expired()) return std::nullopt;
+
+  // Recursion guard for JIT path: bail out on self-recursive functions unless explicitly allowed.
+  bool selfRecursive = false;
+  callee.walk([&](func::CallOp c){ if (c.getCallee() == callee.getSymName()) { selfRecursive = true; return WalkResult::interrupt(); } return WalkResult::advance(); });
+  if (selfRecursive && std::getenv("CAL_JIT_ALLOW_RECURSION") == nullptr) return std::nullopt;
+
+  // Dialect whitelist: only arith, func, scf, cf, math, complex, builtin.
+  {
+  // Use a SmallVector of StringRef for whitelist; simple linear search is fine (tiny set).
+  llvm::SmallVector<StringRef, 8> allowed = {
+    "arith", "func", "scf", "cf", "math", "complex", "builtin"};
+    bool bad = false;
+    callee.walk([&](Operation *op) {
+      Dialect *d = op->getDialect();
+      StringRef ns = d ? d->getNamespace() : StringRef("builtin");
+  bool ok = llvm::any_of(allowed, [&](StringRef a){ return a == ns; });
+  if (!ok) {
+        bad = true;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (bad)
+      return std::nullopt;
+  }
+
+  // Build a dedicated single-threaded context with a pre-filled registry to
+  // avoid mutating the main context's registry during multi-threaded execution.
+  DialectRegistry reg;
+  // ControlFlow dialect is registered as mlir::cf::ControlFlowDialect in older snapshots;
+  // if not available, we fall back to adding only required dialects.
+  reg.insert<arith::ArithDialect, func::FuncDialect, scf::SCFDialect,
+             math::MathDialect, complex::ComplexDialect,
+             mlir::LLVM::LLVMDialect>();
+  // UB dialect may be referenced post-lowering depending on pipeline utilities.
+  reg.insert<mlir::ub::UBDialect>();
+  auto jitCtx = std::make_unique<MLIRContext>(reg);
+  jitCtx->disableMultithreading();
+  MLIRContext *ctx = jitCtx.get();
+  OpBuilder ob(ctx);
+  auto scratch = ModuleOp::create(UnknownLoc::get(ctx));
+
+  // Clone the callee into scratch as-is.
+  IRMapping map;
+  auto cloned = cast<func::FuncOp>(ob.clone(*callee, map));
+  scratch.push_back(cloned);
+  // Make it private to avoid symbol collisions.
+  // Make symbol private if API available; fallback to setting visibility attr manually.
+  cloned->setAttr("sym_visibility", StringAttr::get(ctx, "private"));
+
+  // Create wrapper:
+  //  - Integer path: func @__jit_entry() -> i64 { %c = call @cloned(...); %r64 = ext/trunc to i64; return %r64 }
+  //  - Float path:   func @__jit_entry() -> f32|f64 { %c = call @cloned(...); return %c }
+  auto i64Ty = ob.getI64Type();
+  Type wrapRetTy = isFloatResult ? Type(resFltTy) : Type(i64Ty);
+  auto wrapTy = FunctionType::get(ctx, {}, {wrapRetTy});
+  auto wrap = func::FuncOp::create(UnknownLoc::get(ctx), "__jit_entry", wrapTy);
+  scratch.push_back(wrap);
+  Block *entry = wrap.addEntryBlock();
+  ob.setInsertionPointToStart(entry);
+  SmallVector<Value, 8> callArgs;
+  callArgs.reserve(args.size());
+  for (auto it : llvm::enumerate(fTy.getInputs())) {
+    Type at = it.value();
+    const llvm::APInt &av = args[it.index()];
+    if (auto itInt = dyn_cast<IntegerType>(at)) {
+      // Create integer constant with the callee's bitwidth.
+      auto c = ob.create<arith::ConstantIntOp>(wrap.getLoc(), av.sextOrTrunc(itInt.getWidth()).getSExtValue(), itInt.getWidth());
+      callArgs.push_back(c.getResult());
+    } else if (isa<IndexType>(at)) {
+      // Index constant.
+      auto c = ob.create<arith::ConstantIndexOp>(wrap.getLoc(), av.getSExtValue());
+      callArgs.push_back(c.getResult());
+    } else {
+      return std::nullopt; // unsupported arg type
+    }
+  }
+  auto calleeRef = FlatSymbolRefAttr::get(cloned.getSymNameAttr());
+  // Build the call with the original result type.
+  auto call = ob.create<func::CallOp>(wrap.getLoc(), calleeRef, TypeRange{resTy}, callArgs);
+  Value resV = call.getResult(0);
+  if (isFloatResult) {
+    // Float path: return value directly.
+    ob.create<func::ReturnOp>(wrap.getLoc(), ValueRange{resV});
+  } else {
+    // Integer path: extend/truncate to i64 for a simple C ABI to call from the JIT.
+    Value res64;
+    if (resIntTy.getWidth() == 64) {
+      res64 = resV;
+    } else if (resIntTy.getWidth() < 64) {
+      res64 = ob.create<arith::ExtSIOp>(wrap.getLoc(), i64Ty, resV);
+    } else {
+      res64 = ob.create<arith::TruncIOp>(wrap.getLoc(), i64Ty, resV);
+    }
+    ob.create<func::ReturnOp>(wrap.getLoc(), ValueRange{res64});
+  }
+
+  // Pre-lowering size watchdog on the scratch module (wrapper + cloned callee).
+  unsigned scratchOps = 0;
+  scratch.walk([&](Operation *op){ ++scratchOps; });
+  if (scratchOps > opBudget * 4u) return std::nullopt;
+  if (expired()) return std::nullopt;
+
+  // Lower to LLVM dialect.
+  PassManager pm(ctx);
+  pm.enableVerifier(false);
+  pm.addPass(createConvertSCFToCFPass());
+  pm.addPass(createConvertControlFlowToLLVMPass());
+  pm.addPass(createArithToLLVMConversionPass());
+  // Convert remaining high-level to LLVM.
+  pm.addPass(createConvertToLLVMPass());
+  if (failed(pm.run(scratch))) return std::nullopt;
+
+  // Post-lowering size watchdog; LLVM form may expand IR.
+  unsigned loweredOps = 0;
+  scratch.walk([&](Operation *op){ ++loweredOps; });
+  if (loweredOps > opBudget * 16u) return std::nullopt;
+  if (expired()) return std::nullopt;
+
+  // JIT compile and invoke.
+  // Create ExecutionEngine bound to the JIT context. Avoid symbol registry
+  // mutations in the main process context.
+  ExecutionEngineOptions eeOpts;
+  eeOpts.transformer = nullptr; // default
+  auto expectedEngine = ExecutionEngine::create(scratch, eeOpts);
+  if (!expectedEngine) return std::nullopt;
+  std::unique_ptr<ExecutionEngine> engine = std::move(*expectedEngine);
+  auto symOr = engine->lookup("__jit_entry");
+  if (!symOr) return std::nullopt;
+  void *addr = *symOr; // llvm::Expected unwrap
+  // Invoke with a type-appropriate function pointer and convert to APInt bits.
+  if (isFloatResult) {
+    unsigned fbits = resFltTy.getWidth();
+    if (fbits == 32) {
+      using EntryFnF32 = float (*)();
+      auto fn = reinterpret_cast<EntryFnF32>(addr);
+      if (!fn) return std::nullopt;
+      float rv = fn();
+      uint32_t bits;
+      std::memcpy(&bits, &rv, sizeof(bits));
+      return llvm::APInt(32, static_cast<uint64_t>(bits));
+    } else if (fbits == 64) {
+      using EntryFnF64 = double (*)();
+      auto fn = reinterpret_cast<EntryFnF64>(addr);
+      if (!fn) return std::nullopt;
+      double rv = fn();
+      uint64_t bits;
+      std::memcpy(&bits, &rv, sizeof(bits));
+      return llvm::APInt(64, bits);
+    } else {
+      // Unsupported float width in this minimal implementation (e.g., f16/bf16/f80)
+      return std::nullopt;
+    }
+  } else {
+    using EntryFnI64 = int64_t (*)();
+    auto fn = reinterpret_cast<EntryFnI64>(addr);
+    if (!fn) return std::nullopt;
+    // TODO: In future, enforce wall-clock timeout using a watchdog if needed.
+    int64_t rv = fn();
+    // Convert back to original result bitwidth.
+    unsigned bw = resIntTy.getWidth();
+    llvm::APInt ap(64, static_cast<uint64_t>(rv), true);
+    return ap.sextOrTrunc(bw);
+  }
+}
 } // namespace
 
 } // namespace mlir

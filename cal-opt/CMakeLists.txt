@@ -7,6 +7,8 @@ set(LIBS
         MLIRTensorDialect
         MLIRAsyncDialect
         MLIRAsyncTransforms
+        MLIRExecutionEngine
+        MLIRExecutionEngineUtils
         MLIROptLib
         MLIRCal
         MLIRFifo
@@ -22,6 +24,8 @@ target_link_libraries(cal-opt
         MLIRGPUToLLVMIRTranslation
         MLIRLLVMToLLVMIRTranslation
         MLIRNVVMToLLVMIRTranslation
+        MLIRExecutionEngine
+        MLIRExecutionEngineUtils
         ${LIBS}
         )
 

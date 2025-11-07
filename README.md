@@ -20,6 +20,7 @@
   - [Installation Instructions](#2-installation-instructions)
   - [GPU Support](#3-gpu-support)
   - [Examples](#4-examples)
+- [JIT Const-Eval tuning](#jit-const-eval-tuning)
 - [License](#license)
 - [Acknowledgement](#acknowledgement)
 
@@ -170,6 +171,34 @@ NOTE: This is an optional step and it's often simpler to skip it if you do not w
 To help you get started, we provide a number of example programs in [examples](examples/). These examples also contain scripts and instructions on how to build and run them.
 
 The [merge](examples/merge/) example is the simplest example and the best place to get started.
+
+## JIT Const-Eval tuning
+
+The Stage‑1 structural elaboration uses an optional JIT-based constant evaluation path (gated and conservative). You can tune or gate its behavior via environment variables when invoking `cal-opt`:
+
+- CAL_ENABLE_JIT_CONSTEVAL=1
+	Enables the JIT const-eval fallback for pure helper calls when the interpreter can’t fold them. When not set, only the conservative interpreter is used.
+
+- CAL_JIT_TIME_MS=<ms> (default: 100)
+	Wall‑clock time budget for the JIT pipeline per evaluation. If exceeded, the JIT attempt is skipped.
+
+- CAL_EVAL_MAX_DEPTH=<n> (default: 64)
+	Maximum recursion depth for the interpreter const‑eval path (prevents runaway call trees). Larger values allow deeper helper nesting at the cost of compile time.
+
+- CAL_JIT_ALLOW_RECURSION=1
+	By default, the JIT path skips self‑recursive helpers to avoid unbounded work. Set this to allow JIT when a function calls itself (use with care).
+
+- CAL_ENABLE_GLOBAL_INLINER=1
+	Prefer MLIR’s global inliner early in the pipeline (instead of local inliner), which can expose more constants before JIT.
+
+- CAL_DISABLE_POW2_FASTPATH=1
+	Disables the special pow2 recognizer used to quickly fold common structural helpers. Useful for isolating JIT behavior during debugging.
+
+These can be combined, for example on macOS/zsh:
+
+```zsh
+CAL_ENABLE_JIT_CONSTEVAL=1 CAL_JIT_TIME_MS=200 CAL_EVAL_MAX_DEPTH=128 ./bin/cal-opt input.mlir --cal-const-eval
+```
 
 The [streamblocks-toolchain](examples/streamblocks-toolchain/) is a good second step as it shows you how to install the StreamBlocks frontend for transforming CAL into this dialect. It is much simpler to write CAL code than generate this dialect yourself.
 
