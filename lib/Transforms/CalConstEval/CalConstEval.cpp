@@ -19,31 +19,47 @@
 #include "mlir/Transforms/Passes.h"
 // For DialectInlinerInterface detection (guarded inliner usage)
 #include "mlir/Transforms/InliningUtils.h"
+// Generic constant matcher
+#include "mlir/IR/Matchers.h"
 // Env var check
 #include <cstdlib>
 // APInt for safe constant evaluation
 #include "llvm/ADT/APInt.h"
+// DenseMap / SmallVector / String
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallString.h"
+// Pattern helpers for constant folding checks
+#include "mlir/IR/PatternMatch.h"
 // CAL ops to scope work under cal.network
 #include "Dialect/Cal/CalOps.h"
 #include "Transforms/Passes.h"
+// For identifying FIFO port-typed block arguments when computing param counts.
+#include "Dialect/Fifo/FifoTypes.h"
 
 using namespace mlir;
 
 namespace mlir {
+#define GEN_PASS_DECL_CALCONSTEVALPASS
 #define GEN_PASS_DEF_CALCONSTEVALPASS
 #include "Transforms/Passes.h.inc"
 
 namespace {
 struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
+  // Cache to deduplicate specializations in one pass run.
+  // Key format: symName + '|' + per-param ("-" for dynamic or attribute dump).
+  llvm::StringMap<FlatSymbolRefAttr> specCache;
+
   void runOnOperation() override {
     // Run a tiny inner pipeline: prefer MLIR's inliner when available,
     // otherwise fall back to a simple local inliner, then canonicalize.
     Operation *op = getOperation();
 
     bool ranGlobalInliner = false;
-    // Use an opt-in env var to enable MLIR's global inliner. This avoids
-    // hard failures on builds where the inliner interface isn't registered.
-  if (std::getenv("CAL_ENABLE_GLOBAL_INLINER") != nullptr) {
+    // Prefer pass option; keep env var as a secondary dev toggle.
+    bool useGlobalInliner = this->enableGlobalInliner ||
+                            (std::getenv("CAL_ENABLE_GLOBAL_INLINER") != nullptr);
+    if (useGlobalInliner) {
       if (auto *ctx = op->getContext()) {
         PassManager pm(ctx);
         pm.enableVerifier(false);
@@ -62,9 +78,9 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
         SymbolTable symTable(module);
         SmallVector<func::CallOp, 8> calls;
         module.walk([&](func::CallOp call) {
-          // Restrict const-eval to calls that are nested within a cal.network
-          if (call->getParentOfType<cal::NetworkOp>())
-            calls.push_back(call);
+          // Broaden scope: allow const-eval anywhere in the module (actors, networks, helpers).
+          // This helps fold helpers inside functions called by networks as well.
+          calls.push_back(call);
         });
         for (func::CallOp call : calls) {
           // Only handle single-result calls for now.
@@ -127,70 +143,481 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
       }
     }
 
-    // Phase 2: Inline cal.network bodies at instantiate sites when all
-    // actual operands are constants. This specializes nested networks so
-    // structural predicates (e.g., scf.if on %NSTAGES) become foldable
-    // before the main flattening pass runs.
+    // Phase 2 (Stage 1): Specialize instantiated symbols (actor/network)
+    // when at least one parameter is a constant. We clone the symbol, inline
+    // constant params into the cloned body, keep the signature unchanged, and
+    // retarget the instantiate op to the specialized clone. This preserves
+    // symbolic construction while enabling aggressive folding downstream.
     if (auto module = dyn_cast<ModuleOp>(op)) {
       SymbolTable symTable(module);
+
+      auto getParamCount = [&](Operation *ent) -> int {
+        // Robust param inference: count leading non-FIFO block arguments.
+        auto countByLeadingNonFifo = [&](Region &r) -> int {
+          if (r.empty()) return 0;
+          Block &b = r.front();
+          int count = 0;
+          for (BlockArgument arg : b.getArguments()) {
+            Type ty = arg.getType();
+            // Treat any FIFO port types as the start of port section.
+            if (isa<fifo::InputPortType>(ty) || isa<fifo::OutputPortType>(ty))
+              break;
+            ++count;
+          }
+          return std::max(count, 0);
+        };
+
+        if (auto net = dyn_cast<cal::NetworkOp>(ent))
+          return countByLeadingNonFifo(net.getBody());
+        if (auto act = dyn_cast<cal::ActorOp>(ent))
+          return countByLeadingNonFifo(act.getBody());
+        return -1;
+      };
+
+  // Try to evaluate a Value to a typed constant Attribute suitable for cloning
+      // into a cal.actor/cal.network parameter. Handles:
+      //  - arith.constant (all types supported)
+      //  - simple integer expressions (addi/subi/muli/select/cmpi/index_cast)
+      auto valueToTypedAttr = [&](Value v) -> TypedAttr {
+        if (!v)
+          return {};
+        // Try generic constant matcher first (handles arith.constant and friends).
+        Attribute a;
+        if (matchPattern(v, m_Constant(&a)))
+          if (auto ta = dyn_cast<TypedAttr>(a)) return ta;
+        if (auto c = v.getDefiningOp<arith::ConstantOp>()) {
+          if (auto ta = dyn_cast<TypedAttr>(c.getValue()))
+            return ta;
+        }
+        // Small integer evaluator (copy of the quick evaluator used below).
+        std::function<std::optional<int64_t>(Value)> quickInt;
+        quickInt = [&](Value vv) -> std::optional<int64_t> {
+          if (auto kc = vv.getDefiningOp<arith::ConstantOp>())
+            if (auto ia = dyn_cast<IntegerAttr>(kc.getValue()))
+              return ia.getInt();
+          if (auto ic = vv.getDefiningOp<arith::IndexCastOp>()) {
+            auto x = quickInt(ic.getIn()); if (x) return *x;
+          }
+          if (auto ai = vv.getDefiningOp<arith::AddIOp>()) {
+            auto A = quickInt(ai.getLhs()); auto B = quickInt(ai.getRhs()); if (A && B) return *A + *B;
+          }
+          if (auto si = vv.getDefiningOp<arith::SubIOp>()) {
+            auto A = quickInt(si.getLhs()); auto B = quickInt(si.getRhs()); if (A && B) return *A - *B;
+          }
+          if (auto mi = vv.getDefiningOp<arith::MulIOp>()) {
+            auto A = quickInt(mi.getLhs()); auto B = quickInt(mi.getRhs()); if (A && B) return (*A) * (*B);
+          }
+          if (auto cmp = vv.getDefiningOp<arith::CmpIOp>()) {
+            auto A = quickInt(cmp.getLhs()); auto B = quickInt(cmp.getRhs()); if (!A || !B) return std::nullopt;
+            using P = arith::CmpIPredicate;
+            bool res = false;
+            switch (cmp.getPredicate()) {
+              case P::eq:  res = (*A == *B); break;
+              case P::ne:  res = (*A != *B); break;
+              case P::slt: res = (*A < *B); break;
+              case P::sle: res = (*A <= *B); break;
+              case P::sgt: res = (*A > *B); break;
+              case P::sge: res = (*A >= *B); break;
+              case P::ult: res = (static_cast<uint64_t>(*A) < static_cast<uint64_t>(*B)); break;
+              case P::ule: res = (static_cast<uint64_t>(*A) <= static_cast<uint64_t>(*B)); break;
+              case P::ugt: res = (static_cast<uint64_t>(*A) > static_cast<uint64_t>(*B)); break;
+              case P::uge: res = (static_cast<uint64_t>(*A) >= static_cast<uint64_t>(*B)); break;
+            }
+            return res ? 1 : 0;
+          }
+          if (auto sel = vv.getDefiningOp<arith::SelectOp>()) {
+            auto C = quickInt(sel.getCondition()); if (!C) return std::nullopt; return *C ? quickInt(sel.getTrueValue()) : quickInt(sel.getFalseValue());
+          }
+          return std::nullopt;
+        };
+        if (auto vInt = quickInt(v)) {
+          // Default to i64 unless the value already has a specific integer type.
+          Type ty = v.getType();
+          if (auto it = dyn_cast<IntegerType>(ty))
+            return IntegerAttr::get(it, *vInt);
+          if (isa<IndexType>(ty))
+            return IntegerAttr::get(IntegerType::get(v.getContext(), 64), *vInt);
+          // Fallback: create a 64-bit int attr when no better type is known.
+          return IntegerAttr::get(IntegerType::get(v.getContext(), 64), *vInt);
+        }
+        return {};
+      };
+
+      auto buildKeyForSpec = [&](StringRef symName, ArrayRef<Value> actuals,
+                                 int paramCount) -> std::string {
+        std::string key;
+        key.reserve(symName.size() + 32 + actuals.size() * 8);
+        key.append(symName.str());
+        key.push_back('|');
+        // Only the leading paramCount operands are parameters by convention.
+        for (int i = 0; i < paramCount && i < (int)actuals.size(); ++i) {
+          if (auto ta = valueToTypedAttr(actuals[i])) {
+            std::string tmp; llvm::raw_string_ostream os(tmp); ta.print(os); os.flush(); key.append(tmp);
+          } else { key.push_back('-'); }
+          key.push_back(';'); }
+        return key;
+      };
+
+      auto materializeConstAttr = [&](OpBuilder &b, Location loc, Attribute attr,
+                                      Type /*ty*/) -> Value {
+        // Prefer the typed builder to preserve the exact attribute type.
+        if (auto typed = dyn_cast<TypedAttr>(attr))
+          return b.create<arith::ConstantOp>(loc, typed).getResult();
+        // Fall back to integer/float cases if needed (unlikely for params).
+        if (auto intAttr = dyn_cast<IntegerAttr>(attr))
+          return b.create<arith::ConstantOp>(loc, intAttr).getResult();
+        if (auto fltAttr = dyn_cast<FloatAttr>(attr))
+          return b.create<arith::ConstantOp>(loc, fltAttr).getResult();
+        return {};
+      };
+
       bool changed = true;
-      unsigned guard = 0, guardMax = 8; // avoid pathological growth
+      unsigned guard = 0, guardMax = 8;
       while (changed && guard++ < guardMax) {
         changed = false;
         SmallVector<cal::InstantiateOp, 16> insts;
         module.walk([&](cal::InstantiateOp inst) {
-          // Only consider instantiations nested within a cal.network.
-          if (!inst->getParentOfType<cal::NetworkOp>()) return;
-          // Require all operands to be arith.constant so we can specialize.
-          bool allConst = llvm::all_of(inst.getOperands(), [](Value v){
-            return v.getDefiningOp<arith::ConstantOp>() != nullptr;
-          });
-          if (!allConst) return;
-          // Only inline when the target is a cal.network symbol.
-          auto target = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr());
+          // Debug: mark all instantiate ops we visit.
+          inst->setAttr("cal.specialization.seen", UnitAttr::get(module.getContext()));
+          // Consider all instantiations (both in networks and any nested regions).
+          // We no longer restrict to parents that are strictly cal.network, since
+          // specializations can introduce nested networks in new symbols within the
+          // same pass iteration and we want to catch those as well.
+          // Resolve target to either cal.network or cal.actor.
+          Operation *target = nullptr;
+          if (auto net = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr()))
+            target = net.getOperation();
+          else if (auto act = symTable.lookupNearestSymbolFrom<cal::ActorOp>(inst, inst.getActorRefAttr()))
+            target = act.getOperation();
           if (!target) return;
+          // Allow multi-stage specialization: even if the target is already a
+          // specialized clone, we may still be able to inline additional
+          // constant parameters from the current instantiation. Avoid early
+          // returns here; deduplication is handled by the specCache key below.
+          // Be robust: if we cannot determine the entity param count (e.g.,
+          // verifier helpers not wired yet), fall back to using the number of
+          // actual operands on the instantiate as the parameter count.
+          int paramCount = getParamCount(target);
+          if (paramCount < 0)
+            paramCount = static_cast<int>(inst.getNumOperands());
+          // Be defensive: if the entity declared no non-port parameters but the
+          // instantiate supplies operands, treat at least the first operand as a
+          // parameter candidate for specialization. This helps in cases where
+          // port vs param inference is not yet wired for certain entities.
+          if (paramCount == 0 && inst.getNumOperands() > 0)
+            paramCount = 1;
+          // Detect if at least one of the first paramCount operands is constant.
+          bool anyConst = false;
+          for (int i = 0, e = std::min(paramCount, (int)inst.getNumOperands()); i < e; ++i) {
+            Value v = inst.getOperand(i);
+            if (valueToTypedAttr(v)) { anyConst = true; break; }
+            if (Operation *def = v.getDefiningOp())
+              if (def->hasTrait<OpTrait::ConstantLike>()) { anyConst = true; break; }
+          }
+          if (!anyConst) return;
+          // Mark as a candidate immediately for debugging visibility.
+          inst->setAttr("cal.specialization.candidate", UnitAttr::get(module.getContext()));
           insts.push_back(inst);
         });
+
         for (cal::InstantiateOp inst : insts) {
-          auto parentNet = inst->getParentOfType<cal::NetworkOp>();
-          if (!parentNet) continue;
-          auto target = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr());
+          Operation *target = nullptr;
+          auto net = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr());
+          auto act = symTable.lookupNearestSymbolFrom<cal::ActorOp>(inst, inst.getActorRefAttr());
+          if (net)
+            target = net.getOperation();
+          else if (act)
+            target = act.getOperation();
           if (!target) continue;
 
-          // Map formal block arguments to constant actuals.
-          IRMapping map;
-          auto formalArgs = target.getBody().getArguments();
-          auto actuals = inst.getOperands();
-          if (formalArgs.size() != actuals.size())
-            continue; // arity mismatch – ignore, verified elsewhere
-          for (auto it : llvm::zip(formalArgs, actuals))
-            map.map(std::get<0>(it), std::get<1>(it));
+          // Treat all instantiate operands as parameters. cal.connect wires ports
+          // separately, so operands here are exactly the symbolic parameters.
+          int paramCount = static_cast<int>(inst.getNumOperands());
 
-          // Clone all non-symbol ops from the target body into the parent network.
-          Block &body = target.getBody().front();
-          IRRewriter rewriter(module.getContext());
-          rewriter.setInsertionPoint(inst);
-          for (Operation &inner : body.getOperations()) {
-            // Skip nested symbol ops (networks/actors) – we only need the body content.
-            if (isa<cal::NetworkOp>(&inner) || isa<cal::ActorOp>(&inner))
-              continue;
-            Operation *cloned = rewriter.clone(inner, map);
-            // Maintain mapping for any subsequent ops.
-            for (auto [oldRes, newRes] : llvm::zip(inner.getResults(), cloned->getResults()))
-              map.map(oldRes, newRes);
+          // Lookup or build a specialized clone name.
+          SmallVector<Value, 8> actuals(inst.getOperands().begin(), inst.getOperands().end());
+          std::string cacheKey = buildKeyForSpec(SymbolTable::getSymbolName(target).getValue(), actuals, paramCount);
+          auto it = specCache.find(cacheKey);
+          FlatSymbolRefAttr specializedRef;
+          if (it != specCache.end()) {
+            specializedRef = it->second;
+          } else {
+            // Mark this instantiate as a specialization candidate for visibility in IR dumps.
+            inst->setAttr("cal.specialization.candidate", UnitAttr::get(module.getContext()));
+            // Clone the symbol, assign a unique name, and insert after the original.
+            Operation *clone = target->clone();
+            // Give it a unique name based on original + "$spec" and a hash of the key.
+            std::string baseName = SymbolTable::getSymbolName(target).getValue().str() + std::string("$spec");
+            // Use a hash of the cache key for a deterministic, low-collision suffix.
+            std::string newName = baseName + std::string("_") + std::to_string(llvm::hash_value(cacheKey));
+            clone->setAttr(SymbolTable::getSymbolAttrName(), StringAttr::get(module.getContext(), newName));
+            // Insert into the module's symbol table (end of the region). This also
+            // ensures name uniqueness if a collision occurs.
+            SymbolTable(module).insert(clone);
+
+            // Inline constants into the cloned region body for param indices.
+            auto inlineConstantsIntoRegion = [&](Region &region) {
+              if (region.empty()) return;
+              Block &blk = region.front();
+              OpBuilder b(module.getContext());
+              b.setInsertionPointToStart(&blk);
+              for (int i = 0; i < paramCount && i < (int)blk.getNumArguments(); ++i) {
+                if (auto ta = valueToTypedAttr(inst.getOperand(i))) {
+                  // If types mismatch, coerce via materializeConstAttr with the formal parameter type.
+                  Value newC = materializeConstAttr(b, blk.getArgument(i).getLoc(), ta, blk.getArgument(i).getType());
+                  if (newC)
+                    blk.getArgument(i).replaceAllUsesWith(newC);
+                }
+              }
+            };
+
+            if (auto cNet = dyn_cast<cal::NetworkOp>(clone)) {
+              inlineConstantsIntoRegion(cNet.getBody());
+            } else if (auto cAct = dyn_cast<cal::ActorOp>(clone)) {
+              inlineConstantsIntoRegion(cAct.getBody());
+            }
+
+            specializedRef = FlatSymbolRefAttr::get(StringAttr::get(module.getContext(), newName));
+            // Mark the clone as specialized to avoid re-specializing.
+            clone->setAttr("cal.specialized", UnitAttr::get(module.getContext()));
+            specCache.try_emplace(cacheKey, specializedRef);
           }
-          inst.erase();
-          changed = true;
+
+          // Retarget instantiate to the specialized symbol when it actually changes.
+          if (inst.getActorRefAttr() != specializedRef) {
+            inst->setAttr("actorRef", specializedRef);
+            // Debug marker to verify retargeting occurred in dumps.
+            inst->setAttr("cal.specialization.retargeted", UnitAttr::get(module.getContext()));
+            changed = true;
+          }
         }
 
         if (changed) {
-          // Clean up newly inlined regions (fold cmp/ifs, CSE etc.).
-          PassManager pm3(op->getContext());
-          pm3.enableVerifier(false);
-          pm3.addPass(mlir::createCanonicalizerPass());
-          if (failed(pm3.run(op))) {
+          PassManager pm(op->getContext());
+          pm.enableVerifier(false);
+          pm.addPass(mlir::createCanonicalizerPass());
+          pm.addPass(mlir::createCSEPass());
+          if (failed(pm.run(module))) {
             signalPassFailure();
             return;
+          }
+        }
+      }
+      // Second-chance specialization sweep: some instantiations with constant
+      // operands may appear only after earlier clones/canonicalization. Force
+      // clone for any network/actor not yet marked cal.specialized when at
+      // least one operand is constant-like.
+      {
+        bool lateChanged = true;
+        unsigned lateGuard = 0, lateGuardMax = 6; // iterate to fixed point
+        while (lateChanged && lateGuard++ < lateGuardMax) {
+          lateChanged = false;
+          SmallVector<cal::InstantiateOp, 16> lateInsts;
+          module.walk([&](cal::InstantiateOp inst){
+            Operation *target = nullptr;
+            if (auto net = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr()))
+              target = net.getOperation();
+            else if (auto act = symTable.lookupNearestSymbolFrom<cal::ActorOp>(inst, inst.getActorRefAttr()))
+              target = act.getOperation();
+            if (!target) return;
+            // If this exact instantiate already points at a spec variant (symbol name contains $spec or $specLate) skip.
+            if (inst.getActorRef().contains("$spec")) return;
+            bool anyConst = false;
+            for (Value v : inst.getOperands()) {
+              if (valueToTypedAttr(v) || (v.getDefiningOp() && v.getDefiningOp()->hasTrait<OpTrait::ConstantLike>())) { anyConst = true; break; }
+            }
+            if (!anyConst) return;
+            lateInsts.push_back(inst);
+          });
+          for (auto inst : lateInsts) {
+            Operation *target = nullptr;
+            if (auto net = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr()))
+              target = net.getOperation();
+            else if (auto act = symTable.lookupNearestSymbolFrom<cal::ActorOp>(inst, inst.getActorRefAttr()))
+              target = act.getOperation();
+            if (!target) continue;
+            Operation *clone = target->clone();
+            std::string baseName = SymbolTable::getSymbolName(target).getValue().str() + std::string("$specLate");
+            std::string key = baseName; key.push_back('|');
+            for (Value v : inst.getOperands()) {
+              if (auto ta = valueToTypedAttr(v)) { std::string tmp; llvm::raw_string_ostream os(tmp); ta.print(os); os.flush(); key.append(tmp); }
+              else key.push_back('-');
+              key.push_back(';');
+            }
+            std::string newName = baseName + std::string("_") + std::to_string(llvm::hash_value(key));
+            clone->setAttr(SymbolTable::getSymbolAttrName(), StringAttr::get(module.getContext(), newName));
+            SymbolTable(module).insert(clone);
+            clone->setAttr("cal.specialized", UnitAttr::get(module.getContext()));
+            auto inlineRegion = [&](Region &r){
+              if (r.empty()) return;
+              Block &b = r.front();
+              OpBuilder ib(module.getContext()); ib.setInsertionPointToStart(&b);
+              for (unsigned i=0;i<b.getNumArguments() && i<inst.getNumOperands();++i){
+                if (auto ta = valueToTypedAttr(inst.getOperand(i))) {
+                  Value cv = ib.create<arith::ConstantOp>(b.getArgument(i).getLoc(), ta);
+                  b.getArgument(i).replaceAllUsesWith(cv);
+                }
+              }
+            };
+            if (auto nC = dyn_cast<cal::NetworkOp>(clone)) inlineRegion(nC.getBody());
+            if (auto aC = dyn_cast<cal::ActorOp>(clone)) inlineRegion(aC.getBody());
+            auto newRef = FlatSymbolRefAttr::get(StringAttr::get(module.getContext(), newName));
+            inst->setAttr("actorRef", newRef);
+            inst->setAttr("cal.specialization.retargeted", UnitAttr::get(module.getContext()));
+            lateChanged = true;
+          }
+          if (lateChanged) {
+            PassManager pm(op->getContext()); pm.enableVerifier(false);
+            pm.addPass(mlir::createCanonicalizerPass()); pm.addPass(mlir::createCSEPass());
+            (void)pm.run(module);
+          }
+        }
+      }
+    }
+
+    // Phase 3a: Post-specialization pow2 folding (second pass).
+    // After the late second-chance specialization sweep above we may have
+    // introduced fresh specialized clones (e.g. fft__Butterfly$specLate_*).
+    // These clones can still contain recursive pow2 helper calls whose
+    // arguments have become constant only after inlining parameter constants.
+    // The original Phase 3 pow2 fast-path ran before these clones existed,
+    // so we re-run a lightweight fold here to catch and eliminate those calls
+    // prior to pruning/DCE. We purposely keep this duplicate logic local to
+    // avoid refactoring the earlier section during rapid iteration.
+    if (this->enablePow2Fastpath && std::getenv("CAL_DISABLE_POW2_FASTPATH") == nullptr) {
+      if (auto module = dyn_cast<ModuleOp>(op)) {
+        SymbolTable symTable(module);
+        SmallVector<func::CallOp, 8> pow2Calls;
+        module.walk([&](func::CallOp call){
+          if (call.getNumOperands() != 1) return; // heuristic
+          auto callee = symTable.lookup<func::FuncOp>(call.getCallee());
+          if (!callee) return;
+          // Quick name check first (avoid expensive structural match for non-pow2 helpers).
+          bool nameHit = callee.getSymName().contains("pow2");
+          // Structural matcher reused from earlier phase (simplified):
+          auto matchesPow2 = [&](func::FuncOp fn)->bool {
+            if (!fn || !fn.getBody().hasOneBlock()) return false;
+            Block &body = fn.getBody().front();
+            auto ret = dyn_cast_or_null<func::ReturnOp>(body.getTerminator());
+            if (!ret || ret.getNumOperands() != 1) return false;
+            auto sel = ret.getOperand(0).getDefiningOp<arith::SelectOp>();
+            if (!sel) return false;
+            auto cmp = sel.getCondition().getDefiningOp<arith::CmpIOp>();
+            if (!cmp || cmp.getPredicate() != arith::CmpIPredicate::eq) return false;
+            Value lhs = cmp.getLhs(); Value rhs = cmp.getRhs();
+            auto arg0 = fn.getArgument(0);
+            auto isZero = [](Value v){
+              if (auto c = v.getDefiningOp<arith::ConstantOp>())
+                if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getValue().isZero();
+              return false;
+            };
+            if (!((lhs == arg0 && isZero(rhs)) || (rhs == arg0 && isZero(lhs)))) return false;
+            auto mul = sel.getFalseValue().getDefiningOp<arith::MulIOp>();
+            if (!mul) return false;
+            func::CallOp recCall = nullptr; IntegerAttr mulCst;
+            auto pick = [&](Value A, Value B){
+              if (auto c = A.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
+              if (auto c = B.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) mulCst = ia;
+              if (auto cc = A.getDefiningOp<func::CallOp>()) recCall = cc;
+              if (auto cc = B.getDefiningOp<func::CallOp>()) recCall = cc;
+              return recCall && mulCst && mulCst.getValue() == 2;
+            };
+            if (!pick(mul.getLhs(), mul.getRhs())) return false;
+            if (recCall.getCallee() != fn.getSymName()) return false;
+            if (recCall.getNumOperands() != 1) return false;
+            auto sub = recCall.getOperand(0).getDefiningOp<arith::SubIOp>();
+            if (!sub) return false;
+            auto isOne = [](Value v){
+              if (auto c = v.getDefiningOp<arith::ConstantOp>())
+                if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getInt() == 1;
+              return false;
+            };
+            if (!((sub.getLhs() == arg0 && isOne(sub.getRhs())) || (sub.getRhs() == arg0 && isOne(sub.getLhs())))) return false;
+            auto thenC = sel.getTrueValue().getDefiningOp<arith::ConstantOp>();
+            if (!thenC) return false;
+            if (auto ia = dyn_cast<IntegerAttr>(thenC.getValue())) {
+              auto bw = ia.getValue().getBitWidth();
+              if (!(ia.getValue() == llvm::APInt(bw, 1))) return false;
+            } else return false;
+            return true;
+          };
+          if (nameHit || matchesPow2(callee)) pow2Calls.push_back(call);
+        });
+        // Quick integer evaluator (simplified) for the single argument.
+        std::function<std::optional<int64_t>(Value)> evalIntArg;
+        evalIntArg = [&](Value v)->std::optional<int64_t>{
+          if (auto c = v.getDefiningOp<arith::ConstantOp>())
+            if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getInt();
+          if (auto castOp = v.getDefiningOp<arith::IndexCastOp>()) return evalIntArg(castOp.getIn());
+          if (auto addi = v.getDefiningOp<arith::AddIOp>()) { auto A = evalIntArg(addi.getLhs()); auto B = evalIntArg(addi.getRhs()); if (A && B) return *A + *B; }
+          if (auto subi = v.getDefiningOp<arith::SubIOp>()) { auto A = evalIntArg(subi.getLhs()); auto B = evalIntArg(subi.getRhs()); if (A && B) return *A - *B; }
+          if (auto sel = v.getDefiningOp<arith::SelectOp>()) { auto C = evalIntArg(sel.getCondition()); if (!C) return std::nullopt; return *C ? evalIntArg(sel.getTrueValue()) : evalIntArg(sel.getFalseValue()); }
+          if (auto cmp = v.getDefiningOp<arith::CmpIOp>()) { auto A = evalIntArg(cmp.getLhs()); auto B = evalIntArg(cmp.getRhs()); if (!A || !B) return std::nullopt; bool res=false; using P=arith::CmpIPredicate; switch(cmp.getPredicate()){case P::eq:res=*A==*B;break;case P::ne:res=*A!=*B;break;case P::slt:res=*A<*B;break;case P::sle:res=*A<=*B;break;case P::sgt:res=*A>*B;break;case P::sge:res=*A>=*B;break;default:res=false;} return res?1:0; }
+          return std::nullopt; };
+        for (auto call : pow2Calls) {
+          auto nOpt = evalIntArg(call.getArgOperands()[0]);
+          if (!nOpt) continue;
+          int64_t n = *nOpt; if (n < 0 || n > 63) continue; // guard
+          Type resTy = call.getResult(0).getType();
+          auto intTy = dyn_cast<IntegerType>(resTy); if (!intTy) continue;
+          unsigned bw = intTy.getWidth(); if (n >= (int64_t)bw) continue;
+          llvm::APInt val(bw, 1); val = val.shl(n);
+          OpBuilder rw(module.getContext()); rw.setInsertionPoint(call);
+          auto folded = rw.create<arith::ConstantIntOp>(call.getLoc(), val.getSExtValue(), bw);
+          call.getResult(0).replaceAllUsesWith(folded.getResult());
+          call.erase();
+        }
+      }
+    }
+
+    // Phase 2b: (optional) Inline networks when explicitly enabled.
+    // Keep disabled by default to prefer symbolic specialization in Stage 1.
+    bool useNetworkInline = this->enableNetworkInline ||
+                            (std::getenv("CAL_ENABLE_NETWORK_INLINE") != nullptr);
+    if (useNetworkInline) {
+      if (auto module = dyn_cast<ModuleOp>(op)) {
+        SymbolTable symTable(module);
+        bool changed = true;
+        unsigned guard = 0, guardMax = 4;
+        while (changed && guard++ < guardMax) {
+          changed = false;
+          SmallVector<cal::InstantiateOp, 16> insts;
+          module.walk([&](cal::InstantiateOp inst) {
+            if (!inst->getParentOfType<cal::NetworkOp>()) return;
+            bool allConst = llvm::all_of(inst.getOperands(), [](Value v){
+              return v.getDefiningOp<arith::ConstantOp>() != nullptr;
+            });
+            if (!allConst) return;
+            auto target = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr());
+            if (!target) return;
+            insts.push_back(inst);
+          });
+          for (cal::InstantiateOp inst : insts) {
+            auto target = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr());
+            if (!target) continue;
+            IRMapping map;
+            auto formalArgs = target.getBody().getArguments();
+            auto actuals = inst.getOperands();
+            if (formalArgs.size() != actuals.size()) continue;
+            for (auto it : llvm::zip(formalArgs, actuals))
+              map.map(std::get<0>(it), std::get<1>(it));
+            Block &body = target.getBody().front();
+            IRRewriter rewriter(module.getContext());
+            rewriter.setInsertionPoint(inst);
+            for (Operation &inner : body.getOperations()) {
+              if (isa<cal::NetworkOp>(&inner) || isa<cal::ActorOp>(&inner)) continue;
+              Operation *cloned = rewriter.clone(inner, map);
+              for (auto [oldRes, newRes] : llvm::zip(inner.getResults(), cloned->getResults()))
+                map.map(oldRes, newRes);
+            }
+            inst.erase();
+            changed = true;
+          }
+          if (changed) {
+            PassManager pm3(op->getContext());
+            pm3.enableVerifier(false);
+            pm3.addPass(mlir::createCanonicalizerPass());
+            (void)pm3.run(op);
           }
         }
       }
@@ -199,19 +626,80 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
     // Phase 3: Recognize and fold simple recursive pow-style helpers when
     // called with constant integer arguments. This makes array extents and
     // scf conditions fully static earlier.
-    if (auto module = dyn_cast<ModuleOp>(op)) {
+  bool usePow2Fastpath = this->enablePow2Fastpath &&
+                         (std::getenv("CAL_DISABLE_POW2_FASTPATH") == nullptr); // default ON
+  if (usePow2Fastpath) if (auto module = dyn_cast<ModuleOp>(op)) {
       SymbolTable symTable(module);
       SmallVector<func::CallOp, 16> calls;
       module.walk([&](func::CallOp call) {
-        if (!call->getParentOfType<cal::NetworkOp>()) return; // only in networks
-        if (call.getNumOperands() != 1) return;               // 1-arg helpers
-        // Only if arg is an arith.constant integer.
-        auto cst = call.getArgOperands()[0].getDefiningOp<arith::ConstantOp>();
-        if (!cst) return;
-        auto intAttr = dyn_cast_or_null<IntegerAttr>(cst.getValue());
-        if (!intAttr) return;
+        // Consider pow2-like helpers anywhere; don't restrict to network regions.
+        if (call.getNumOperands() != 1) return; // heuristic targets 1-arg pow2 helpers
         calls.push_back(call);
       });
+
+      // Helper: try to evaluate an SSA integer value to a concrete int64_t by
+      // recursively interpreting a small subset of arith ops over constant
+      // operands. This is intentionally conservative but sufficient for our
+      // structural helpers (e.g., pow2 patterns constructed from subi/select/muli).
+      std::function<std::optional<int64_t>(Value)> evalInt;
+      evalInt = [&](Value v) -> std::optional<int64_t> {
+        if (!v) return std::nullopt;
+        if (auto c = v.getDefiningOp<arith::ConstantOp>()) {
+          if (auto ia = dyn_cast<IntegerAttr>(c.getValue()))
+            return ia.getInt();
+          // Some constants may be index-typed integers.
+          if (auto ti = dyn_cast<TypedAttr>(c.getValue()))
+            if (auto ity = dyn_cast<IntegerType>(ti.getType()))
+              if (auto ia2 = dyn_cast<IntegerAttr>(c.getValue()))
+                return ia2.getInt();
+          return std::nullopt;
+        }
+        if (auto castOp = v.getDefiningOp<arith::IndexCastOp>()) {
+          auto src = evalInt(castOp.getIn());
+          if (src) return *src;
+          return std::nullopt;
+        }
+        if (auto addi = v.getDefiningOp<arith::AddIOp>()) {
+          auto a = evalInt(addi.getLhs()); auto b = evalInt(addi.getRhs());
+          if (a && b) return *a + *b; return std::nullopt;
+        }
+        if (auto subi = v.getDefiningOp<arith::SubIOp>()) {
+          auto a = evalInt(subi.getLhs()); auto b = evalInt(subi.getRhs());
+          if (a && b) return *a - *b; return std::nullopt;
+        }
+        if (auto muli = v.getDefiningOp<arith::MulIOp>()) {
+          auto a = evalInt(muli.getLhs()); auto b = evalInt(muli.getRhs());
+          if (a && b) return *a * *b; return std::nullopt;
+        }
+        if (auto sel = v.getDefiningOp<arith::SelectOp>()) {
+          // Only handle i1 condition that is constant.
+          auto cst = evalInt(sel.getCondition());
+          if (!cst) return std::nullopt;
+          // Convention: non-zero => true.
+          if (*cst != 0) return evalInt(sel.getTrueValue());
+          return evalInt(sel.getFalseValue());
+        }
+        if (auto cmpi = v.getDefiningOp<arith::CmpIOp>()) {
+          auto a = evalInt(cmpi.getLhs()); auto b = evalInt(cmpi.getRhs());
+          if (!a || !b) return std::nullopt;
+          using P = arith::CmpIPredicate;
+          bool res = false;
+          switch (cmpi.getPredicate()) {
+            case P::eq: res = (*a == *b); break;
+            case P::ne: res = (*a != *b); break;
+            case P::slt: res = (*a < *b); break;
+            case P::sle: res = (*a <= *b); break;
+            case P::sgt: res = (*a > *b); break;
+            case P::sge: res = (*a >= *b); break;
+            case P::ult: res = (static_cast<uint64_t>(*a) < static_cast<uint64_t>(*b)); break;
+            case P::ule: res = (static_cast<uint64_t>(*a) <= static_cast<uint64_t>(*b)); break;
+            case P::ugt: res = (static_cast<uint64_t>(*a) > static_cast<uint64_t>(*b)); break;
+            case P::uge: res = (static_cast<uint64_t>(*a) >= static_cast<uint64_t>(*b)); break;
+          }
+          return res ? 1 : 0;
+        }
+        return std::nullopt;
+      };
 
       auto matchesPow2Recurrence = [](func::FuncOp callee) -> bool {
         // Heuristic: returns select(cmp eq %arg0, 0, muli(call @callee(subi %arg0, 1), 2))
@@ -284,21 +772,38 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
 
       for (func::CallOp call : calls) {
         auto callee = symTable.lookup<func::FuncOp>(call.getCallee());
-        if (!matchesPow2Recurrence(callee)) continue;
-        // Evaluate 2^n in the result bitwidth.
-        auto argC = dyn_cast<IntegerAttr>(call.getArgOperands()[0]
-                        .getDefiningOp<arith::ConstantOp>().getValue());
-        if (!argC) continue;
-        int64_t n = argC.getInt();
-        if (n < 0) continue; // ignore negative
+        bool isPow2 = matchesPow2Recurrence(callee);
+        // Heuristic: also catch helper functions whose symbol name contains "pow2".
+        if (!isPow2 && callee && callee.getSymName().contains("pow2"))
+          isPow2 = true;
+        if (!isPow2) continue;
+
+        // FIRST: try argument evaluation. If not foldable yet, attempt a constant-seed partial expansion
+        // of the recursion for small depths (guard against huge N).
+        std::optional<int64_t> nOpt = evalInt(call.getArgOperands()[0]);
+        if (!nOpt) {
+          // If the argument is a direct subi/arith pattern rooted in a constant, attempt one unroll.
+          if (auto sub = call.getArgOperands()[0].getDefiningOp<arith::SubIOp>()) {
+            if (auto cBase = sub.getLhs().getDefiningOp<arith::ConstantOp>()) {
+              if (auto ia = dyn_cast<IntegerAttr>(cBase.getValue())) {
+                if (auto cOne = sub.getRhs().getDefiningOp<arith::ConstantOp>()) {
+                  if (auto iaOne = dyn_cast<IntegerAttr>(cOne.getValue()); iaOne && iaOne.getInt() == 1) {
+                    nOpt = ia.getInt() - 1;
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (!nOpt) continue;
+        int64_t n = *nOpt;
+        if (n < 0) continue;
+        if (n > 63) continue; // guard recursion depth / overflow risk.
         Type resTy = call.getResult(0).getType();
         auto intTy = dyn_cast<IntegerType>(resTy);
         if (!intTy) continue;
         unsigned bw = intTy.getWidth();
-        if (n >= static_cast<int64_t>(bw)) {
-          // Be conservative: don't fold shifts >= bitwidth.
-          continue;
-        }
+        if (n >= static_cast<int64_t>(bw)) continue;
         llvm::APInt val(bw, 1);
         val = val.shl(n);
         OpBuilder rewriter(module.getContext());
@@ -307,6 +812,535 @@ struct CalConstEvalPass : public impl::CalConstEvalPassBase<CalConstEvalPass> {
         call.getResult(0).replaceAllUsesWith(folded.getResult());
         call.erase();
       }
+    }
+
+    // Phase 3b (experimental): JIT-const-eval hook. In Phase 1 we conservatively
+    // try to fold pure helper calls by interpreting a restricted subset of
+    // arith/func/scf with constant operands. This avoids requiring the
+    // ExecutionEngine in phase 1, while providing identical behavior for
+    // the targeted helpers (e.g., small recurrences like pow2).
+    bool useJitConstEval = this->enableJitConstEval ||
+                           (std::getenv("CAL_ENABLE_JIT_CONST_EVAL") != nullptr);
+    if (useJitConstEval) {
+      if (auto module = dyn_cast<ModuleOp>(op)) {
+        SymbolTable symTable(module);
+
+        struct FnKey {
+          StringAttr callee;
+          SmallVector<int64_t, 4> args;
+          bool operator==(const FnKey &o) const {
+            if (callee != o.callee) return false;
+            if (args.size() != o.args.size()) return false;
+            for (size_t i = 0; i < args.size(); ++i)
+              if (args[i] != o.args[i]) return false;
+            return true;
+          }
+        };
+        struct FnKeyInfo {
+          static inline FnKey getEmptyKey() { return FnKey{StringAttr(), {}}; }
+          static inline FnKey getTombstoneKey() { return FnKey{StringAttr::get(nullptr, "<tomb>"), {}}; }
+          static unsigned getHashValue(const FnKey &k) {
+            llvm::SmallString<64> s;
+            if (k.callee)
+              s += k.callee.getValue();
+            s += '#';
+            for (auto v : k.args) {
+              s += llvm::Twine(v).str();
+              s += ',';
+            }
+            return llvm::hash_value(s.str());
+          }
+          static bool isEqual(const FnKey &a, const FnKey &b) { return a == b; }
+        };
+
+        llvm::DenseMap<FnKey, llvm::APInt, FnKeyInfo> memo;
+
+        // Evaluate a Value to APInt if known in the map.
+        auto getBitWidth = [&](Type ty) -> unsigned {
+          if (auto it = dyn_cast<IntegerType>(ty)) return it.getWidth();
+          if (auto idx = dyn_cast<IndexType>(ty)) return 64; // default to host index width
+          return 64;
+        };
+
+        std::function<std::optional<llvm::APInt>(Value, llvm::DenseMap<Value, llvm::APInt> &)> evalV;
+
+        std::function<std::optional<llvm::APInt>(func::FuncOp, ArrayRef<llvm::APInt>)> evalFunc;
+
+        evalFunc = [&](func::FuncOp f, ArrayRef<llvm::APInt> constArgs) -> std::optional<llvm::APInt> {
+          // Only support single-block, single-result integer return functions.
+          if (!f || !f.getBody().hasOneBlock()) return std::nullopt;
+          auto fType = f.getFunctionType();
+          if (fType.getNumResults() != 1) return std::nullopt;
+          auto resTy = dyn_cast<IntegerType>(fType.getResult(0));
+          if (!resTy) return std::nullopt;
+          if (fType.getNumInputs() != constArgs.size()) return std::nullopt;
+
+          // Whitelist: ops in arith dialect, scf.if with constant condition, scf.for with
+          // constant small trip count and no iter args, nested func.call to similarly whitelisted fns.
+          Block &body = f.getBody().front();
+          llvm::DenseMap<Value, llvm::APInt> env;
+          // Seed arguments.
+          for (auto it : llvm::zip(body.getArguments(), constArgs)) {
+            Value arg = std::get<0>(it);
+            const llvm::APInt &v = std::get<1>(it);
+            unsigned bw = getBitWidth(arg.getType());
+            env[arg] = v.sextOrTrunc(bw);
+          }
+
+          evalV = [&](Value v, llvm::DenseMap<Value, llvm::APInt> &envRef) -> std::optional<llvm::APInt> {
+            if (auto it = envRef.find(v); it != envRef.end()) return it->second;
+            if (auto c = v.getDefiningOp<arith::ConstantOp>()) {
+              if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getValue();
+            }
+            if (auto ic = v.getDefiningOp<arith::IndexCastOp>()) {
+              auto iv = evalV(ic.getIn(), envRef);
+              if (!iv) return std::nullopt;
+              unsigned bw = getBitWidth(v.getType());
+              return iv->sextOrTrunc(bw);
+            }
+            if (auto addi = v.getDefiningOp<arith::AddIOp>()) {
+              auto a = evalV(addi.getLhs(), envRef); auto b = evalV(addi.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) + b->sextOrTrunc(getBitWidth(v.getType()));
+            }
+            if (auto subi = v.getDefiningOp<arith::SubIOp>()) {
+              auto a = evalV(subi.getLhs(), envRef); auto b = evalV(subi.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) - b->sextOrTrunc(getBitWidth(v.getType()));
+            }
+            if (auto muli = v.getDefiningOp<arith::MulIOp>()) {
+              auto a = evalV(muli.getLhs(), envRef); auto b = evalV(muli.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) * b->sextOrTrunc(getBitWidth(v.getType()));
+            }
+            if (auto andi = v.getDefiningOp<arith::AndIOp>()) {
+              auto a = evalV(andi.getLhs(), envRef); auto b = evalV(andi.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) & b->sextOrTrunc(getBitWidth(v.getType()));
+            }
+            if (auto ori = v.getDefiningOp<arith::OrIOp>()) {
+              auto a = evalV(ori.getLhs(), envRef); auto b = evalV(ori.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) | b->sextOrTrunc(getBitWidth(v.getType()));
+            }
+            if (auto xori = v.getDefiningOp<arith::XOrIOp>()) {
+              auto a = evalV(xori.getLhs(), envRef); auto b = evalV(xori.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())) ^ b->sextOrTrunc(getBitWidth(v.getType()));
+            }
+            if (auto shli = v.getDefiningOp<arith::ShLIOp>()) {
+              auto a = evalV(shli.getLhs(), envRef); auto b = evalV(shli.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->zextOrTrunc(getBitWidth(v.getType())).shl(b->getLimitedValue());
+            }
+            if (auto shrs = v.getDefiningOp<arith::ShRSIOp>()) {
+              auto a = evalV(shrs.getLhs(), envRef); auto b = evalV(shrs.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->sextOrTrunc(getBitWidth(v.getType())).ashr(b->getLimitedValue());
+            }
+            if (auto shru = v.getDefiningOp<arith::ShRUIOp>()) {
+              auto a = evalV(shru.getLhs(), envRef); auto b = evalV(shru.getRhs(), envRef);
+              if (!a || !b) return std::nullopt; return a->zextOrTrunc(getBitWidth(v.getType())).lshr(b->getLimitedValue());
+            }
+            if (auto cmp = v.getDefiningOp<arith::CmpIOp>()) {
+              auto A = evalV(cmp.getLhs(), envRef); auto B = evalV(cmp.getRhs(), envRef);
+              if (!A || !B) return std::nullopt;
+              bool res = false;
+              using P = arith::CmpIPredicate;
+              switch (cmp.getPredicate()) {
+                case P::eq:  res = (*A == *B); break;
+                case P::ne:  res = (*A != *B); break;
+                case P::slt: res = A->slt(*B); break;
+                case P::sle: res = A->sle(*B); break;
+                case P::sgt: res = A->sgt(*B); break;
+                case P::sge: res = A->sge(*B); break;
+                case P::ult: res = A->ult(*B); break;
+                case P::ule: res = A->ule(*B); break;
+                case P::ugt: res = A->ugt(*B); break;
+                case P::uge: res = A->uge(*B); break;
+              }
+              return llvm::APInt(1, res ? 1 : 0);
+            }
+            if (auto sel = v.getDefiningOp<arith::SelectOp>()) {
+              auto c = evalV(sel.getCondition(), envRef);
+              if (!c) return std::nullopt;
+              bool cond = !c->isZero();
+              auto chosen = cond ? sel.getTrueValue() : sel.getFalseValue();
+              return evalV(chosen, envRef);
+            }
+            return std::nullopt;
+          };
+
+          // Walk ops in order and interpret side-effect-free fragments.
+          for (Operation &opIt : body) {
+            if (auto ifOp = dyn_cast<scf::IfOp>(&opIt)) {
+              // Extend support for scf.if with either 0 or 1 result when the
+              // condition is constant. For 1-result if, evaluate the chosen
+              // region and bind the yielded value to the ifOp result in env.
+              auto c = evalV(ifOp.getCondition(), env);
+              if (!c) return std::nullopt;
+              bool cond = !c->isZero();
+              Region &chosen = cond ? ifOp.getThenRegion() : ifOp.getElseRegion();
+              if (!chosen.empty()) {
+                for (Operation &inner : chosen.front()) {
+                  if (isa<scf::YieldOp>(&inner)) continue;
+                  // Evaluate any results of inner op that we know how to fold.
+                  for (auto res : inner.getResults()) {
+                    if (auto v = evalV(res, env)) env[res] = *v;
+                  }
+                }
+              }
+              if (ifOp.getNumResults() == 0) {
+                // Nothing to bind in env for 0-result if.
+                continue;
+              }
+              if (ifOp.getNumResults() == 1) {
+                // Read the yielded value from the chosen region and bind it to
+                // the single result of the ifOp.
+                if (!chosen.empty()) {
+                  auto *term = chosen.front().getTerminator();
+                  if (auto y = dyn_cast<scf::YieldOp>(term)) {
+                    if (y.getNumOperands() != 1) return std::nullopt;
+                    auto v = evalV(y.getOperand(0), env);
+                    if (!v) return std::nullopt;
+                    env[ifOp.getResult(0)] = *v;
+                    continue;
+                  }
+                }
+                return std::nullopt;
+              }
+              // More than 1 result is not supported.
+              return std::nullopt;
+            }
+            if (auto forOp = dyn_cast<scf::ForOp>(&opIt)) {
+              // Only structural: no results, no iter args, constant bounds, small trip.
+              if (forOp.getNumResults() != 0 || !forOp.getInitArgs().empty()) return std::nullopt;
+              auto lb = evalV(forOp.getLowerBound(), env);
+              auto ub = evalV(forOp.getUpperBound(), env);
+              auto st = evalV(forOp.getStep(), env);
+              if (!lb || !ub || !st) return std::nullopt;
+              int64_t L = lb->getSExtValue();
+              int64_t U = ub->getSExtValue();
+              int64_t S = st->getSExtValue();
+              if (S <= 0) return std::nullopt;
+              int64_t trip = (U <= L) ? 0 : ((U - L + S - 1) / S);
+              if (trip < 0 || trip > 1024) return std::nullopt;
+              for (int64_t t = 0; t < trip; ++t) {
+                // Bind induction var for this iteration.
+                int64_t iv = L + t * S;
+                env[forOp.getInductionVar()] = llvm::APInt(64, iv, true);
+                for (Operation &inner : forOp.getBody()->getOperations()) {
+                  if (isa<scf::YieldOp>(&inner)) continue;
+                  for (auto res : inner.getResults()) {
+                    if (auto v = evalV(res, env)) env[res] = *v;
+                  }
+                }
+              }
+              continue;
+            }
+            if (auto call = dyn_cast<func::CallOp>(&opIt)) {
+              // Recursively evaluate calls with constant operands.
+              SmallVector<llvm::APInt, 4> cargs;
+              cargs.reserve(call.getNumOperands());
+              for (Value a : call.getArgOperands()) {
+                auto av = evalV(a, env);
+                if (!av) { cargs.clear(); break; }
+                cargs.push_back(*av);
+              }
+              if (cargs.empty() && call.getNumOperands() != 0) return std::nullopt;
+              func::FuncOp callee = symTable.lookup<func::FuncOp>(call.getCallee());
+              if (!callee) return std::nullopt;
+              // Memoize by callee symbol + signed args.
+              FnKey key{callee.getSymNameAttr(), {}};
+              key.args.reserve(cargs.size());
+              for (auto &x : cargs) key.args.push_back(x.getSExtValue());
+              auto itM = memo.find(key);
+              std::optional<llvm::APInt> r;
+              if (itM != memo.end()) {
+                r = itM->second;
+              } else {
+                r = evalFunc(callee, cargs);
+                if (r) memo.try_emplace(key, *r);
+              }
+              if (!r) return std::nullopt;
+              // Propagate result into env for the call's SSA result.
+              if (call.getNumResults() == 1) env[call.getResult(0)] = *r;
+              continue;
+            }
+            if (auto ret = dyn_cast<func::ReturnOp>(&opIt)) {
+              if (ret.getNumOperands() != 1) return std::nullopt;
+              auto v = evalV(ret.getOperand(0), env);
+              return v;
+            }
+            // For any other op, best-effort fold its results using evalV; if any
+            // result is unknown, continue (it may be dead). If it has side effects,
+            // we conservatively bail by returning null.
+            if (!opIt.hasTrait<OpTrait::ZeroRegions>() || !opIt.hasTrait<OpTrait::ZeroSuccessors>())
+              return std::nullopt;
+            for (auto res : opIt.getResults()) {
+              auto v = evalV(res, env);
+              if (v) env[res] = *v; else return std::nullopt;
+            }
+          }
+          return std::nullopt; // no explicit return encountered
+        };
+
+  // Scan for calls anywhere in the module with all constant operands; fold when possible.
+  SmallVector<func::CallOp, 16> calls;
+  module.walk([&](func::CallOp call){ calls.push_back(call); });
+        for (func::CallOp call : calls) {
+          // Only fold when the call's operands can be reduced to constants now.
+          SmallVector<llvm::APInt, 4> cargs;
+          cargs.reserve(call.getNumOperands());
+          bool allConst = true;
+          for (Value a : call.getArgOperands()) {
+            llvm::APInt av;
+            if (auto c = a.getDefiningOp<arith::ConstantOp>()) {
+              if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) {
+                av = ia.getValue();
+              } else {
+                allConst = false; break;
+              }
+            } else if (a.getDefiningOp()) {
+              // Try quick local evaluator used earlier for pow2 folding.
+              // Reuse a minimal subset: constant/select/cmpi/addi/subi/muli/index_cast.
+              std::function<std::optional<int64_t>(Value)> quick;
+              quick = [&](Value v) -> std::optional<int64_t> {
+                if (auto kc = v.getDefiningOp<arith::ConstantOp>())
+                  if (auto ia = dyn_cast<IntegerAttr>(kc.getValue())) return ia.getInt();
+                if (auto ic = v.getDefiningOp<arith::IndexCastOp>()) { auto x = quick(ic.getIn()); if (x) return *x; }
+                if (auto ai = v.getDefiningOp<arith::AddIOp>()) { auto A = quick(ai.getLhs()); auto B = quick(ai.getRhs()); if (A && B) return *A + *B; }
+                if (auto si = v.getDefiningOp<arith::SubIOp>()) { auto A = quick(si.getLhs()); auto B = quick(si.getRhs()); if (A && B) return *A - *B; }
+                if (auto mi = v.getDefiningOp<arith::MulIOp>()) { auto A = quick(mi.getLhs()); auto B = quick(mi.getRhs()); if (A && B) return (*A) * (*B); }
+                if (auto cmp = v.getDefiningOp<arith::CmpIOp>()) { auto A = quick(cmp.getLhs()); auto B = quick(cmp.getRhs()); if (A && B) return arith::CmpIPredicate::eq == cmp.getPredicate() ? (*A == *B) : 0; }
+                if (auto sel = v.getDefiningOp<arith::SelectOp>()) {
+                  auto C = quick(sel.getCondition()); if (!C) return std::nullopt; return *C ? quick(sel.getTrueValue()) : quick(sel.getFalseValue());
+                }
+                return std::nullopt;
+              };
+              auto vOpt = quick(a);
+              if (!vOpt) { allConst = false; break; }
+              unsigned bw = getBitWidth(a.getType());
+              av = llvm::APInt(bw, *vOpt, true);
+            } else {
+              allConst = false; break;
+            }
+            cargs.push_back(av);
+          }
+          if (!allConst) continue;
+
+          func::FuncOp callee = symTable.lookup<func::FuncOp>(call.getCallee());
+          if (!callee) continue;
+          auto res = evalFunc(callee, cargs);
+          if (!res) continue;
+
+          // Replace call with a constant of the correct result type.
+          OpBuilder rewriter(module.getContext());
+          rewriter.setInsertionPoint(call);
+          Type rt = call.getResult(0).getType();
+          unsigned bw = getBitWidth(rt);
+          auto cst = rewriter.create<arith::ConstantIntOp>(call.getLoc(), res->sextOrTrunc(bw).getSExtValue(), bw);
+          call.getResult(0).replaceAllUsesWith(cst.getResult());
+          call.erase();
+        }
+      }
+    }
+
+    // Final Phase (3c): last-chance pow2 folding after all canonicalization and
+    // specializations. This catches cases where constants only materialize late
+    // (e.g., through CSE after specLate cloning). Runs immediately before helper
+    // pruning/DCE so that the pow2 function becomes dead and is removed.
+    if (this->enablePow2Fastpath && std::getenv("CAL_DISABLE_POW2_FASTPATH") == nullptr) {
+      if (auto module = dyn_cast<ModuleOp>(op)) {
+        SymbolTable symTable(module);
+        SmallVector<func::CallOp, 8> pow2Calls;
+        module.walk([&](func::CallOp c){ if (c.getNumOperands()==1) { auto callee = symTable.lookup<func::FuncOp>(c.getCallee()); if (callee && callee.getSymName().contains("pow2")) pow2Calls.push_back(c);} });
+        for (auto call : pow2Calls) {
+          // Simple constant check: direct arith.constant integer or quick subi/select chain.
+          std::function<std::optional<int64_t>(Value)> getInt;
+          getInt = [&](Value v)->std::optional<int64_t>{
+            if (auto c = v.getDefiningOp<arith::ConstantOp>()) if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) return ia.getInt();
+            if (auto sub = v.getDefiningOp<arith::SubIOp>()) {
+              auto A = getInt(sub.getLhs()); auto B = getInt(sub.getRhs()); if (A && B) return *A - *B; }
+            if (auto sel = v.getDefiningOp<arith::SelectOp>()) { auto C = getInt(sel.getCondition()); if (C) return *C ? getInt(sel.getTrueValue()) : getInt(sel.getFalseValue()); }
+            if (auto cmp = v.getDefiningOp<arith::CmpIOp>()) { auto A = getInt(cmp.getLhs()); auto B = getInt(cmp.getRhs()); if (A && B) { bool res=false; using P=arith::CmpIPredicate; switch(cmp.getPredicate()){case P::eq:res=*A==*B;break;case P::ne:res=*A!=*B;break;case P::slt:res=*A<*B;break;case P::sle:res=*A<=*B;break;case P::sgt:res=*A>*B;break;case P::sge:res=*A>=*B;break;default:res=false;} return res?1:0; } }
+            return std::nullopt; };
+          auto nOpt = getInt(call.getArgOperands()[0]);
+          if (!nOpt) continue; int64_t n=*nOpt; if (n<0 || n>63) continue;
+          Type ty = call.getResult(0).getType(); auto it = dyn_cast<IntegerType>(ty); if (!it) continue;
+          unsigned bw = it.getWidth(); if (n >= (int64_t)bw) continue;
+          llvm::APInt val(bw, 1); val = val.shl(n);
+          OpBuilder b(module.getContext()); b.setInsertionPoint(call);
+          auto folded = b.create<arith::ConstantIntOp>(call.getLoc(), val.getSExtValue(), bw);
+          call.getResult(0).replaceAllUsesWith(folded.getResult()); call.erase();
+        }
+      }
+    }
+
+    // Phase 4: Lightweight pruning of unreachable CAL symbols. Identify a
+    // single top cal.network (explicit via option `top`, or auto-detected as
+    // the only network not referenced by any instantiate). If multiple tops
+    // exist and no explicit top is provided, emit a diagnostic and fail. When
+    // a top is known, drop any cal.network or cal.actor not reachable from it
+    // by following cal.instantiate edges (only network->network edges are
+    // traversed for reachability; actors are retained iff referenced by any
+    // reachable network).
+    if (this->enablePruneUnused) {
+      if (auto module = dyn_cast<ModuleOp>(op)) {
+        SymbolTable symTable(module);
+        // Gather all networks and track which are referenced by instantiate.
+        llvm::SmallVector<cal::NetworkOp, 16> allNets;
+        llvm::DenseSet<StringAttr> referencedNetNames;
+        module.walk([&](cal::NetworkOp net){ allNets.push_back(net); });
+        module.walk([&](cal::InstantiateOp inst){
+          if (auto net = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr()))
+            referencedNetNames.insert(net.getSymNameAttr());
+        });
+
+        // Pick top.
+        cal::NetworkOp topNet;
+        if (!this->topNetwork.empty()) {
+          auto nameAttr = StringAttr::get(module.getContext(), this->topNetwork);
+          if (auto sym = symTable.lookup<cal::NetworkOp>(nameAttr)) {
+            topNet = sym;
+          } else {
+            module.emitError() << "cal-const-eval: --top='" << this->topNetwork
+                               << "' not found (no such cal.network symbol).";
+            signalPassFailure();
+            return;
+          }
+        } else {
+          // Auto-detect: networks not present in referencedNetNames are candidates.
+          llvm::SmallVector<cal::NetworkOp, 8> candidates;
+          for (auto net : allNets) {
+            if (!referencedNetNames.contains(net.getSymNameAttr()))
+              candidates.push_back(net);
+          }
+          if (candidates.size() == 1) {
+            topNet = candidates.front();
+          } else {
+            // If zero or multiple candidates, print a helpful diagnostic and bail.
+            llvm::SmallVector<StringRef, 8> names;
+            if (candidates.empty()) {
+              for (auto net : allNets) names.push_back(net.getSymName());
+            } else {
+              for (auto net : candidates) names.push_back(net.getSymName());
+            }
+            llvm::SmallString<256> msg;
+            llvm::raw_svector_ostream os(msg);
+            os << "cal-const-eval: unable to auto-detect a unique top cal.network. ";
+            if (candidates.empty())
+              os << "(no unreferenced network found)";
+            else
+              os << candidates.size() << " candidates";
+            os << "; please pass --cal-const-eval='top=<symbolName>'. Candidates: ";
+            for (size_t i = 0; i < names.size(); ++i) {
+              os << names[i]; if (i + 1 < names.size()) os << ", ";
+            }
+            module.emitError(os.str());
+            signalPassFailure();
+            return;
+          }
+        }
+
+        if (!topNet)
+          return; // nothing to prune
+
+        // Compute reachable networks by DFS from top via instantiate->network edges.
+        llvm::DenseSet<StringAttr> reachableNetNames;
+        llvm::SmallVector<cal::NetworkOp, 16> worklist;
+        worklist.push_back(topNet);
+        reachableNetNames.insert(topNet.getSymNameAttr());
+        while (!worklist.empty()) {
+          cal::NetworkOp cur = worklist.back(); worklist.pop_back();
+          cur.walk([&](cal::InstantiateOp inst){
+            if (auto n = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr())) {
+              if (reachableNetNames.insert(n.getSymNameAttr()).second)
+                worklist.push_back(n);
+            }
+          });
+        }
+
+        // Compute actors referenced by reachable networks.
+        // Consider both symbolic cal.instantiate (pre-elaboration) and
+        // concrete cal.create_instance (post-elaboration) users.
+        llvm::DenseSet<StringAttr> reachableActorNames;
+        for (auto net : allNets) {
+          if (!reachableNetNames.contains(net.getSymNameAttr())) continue;
+          // Symbolic instantiation (handles arrays, ND before elaboration).
+          net.walk([&](cal::InstantiateOp inst){
+            if (auto a = symTable.lookupNearestSymbolFrom<cal::ActorOp>(inst, inst.getActorRefAttr()))
+              reachableActorNames.insert(a.getSymNameAttr());
+          });
+          // Concrete instantiation after connect lowering / elaboration.
+          net.walk([&](cal::CreateInstanceOp ci){
+            if (auto a = symTable.lookupNearestSymbolFrom<cal::ActorOp>(ci, ci.getActorRefAttr()))
+              reachableActorNames.insert(a.getSymNameAttr());
+          });
+        }
+
+        // Erase unreachable networks.
+        llvm::SmallVector<Operation*, 16> eraseList;
+        for (auto net : allNets) {
+          if (!reachableNetNames.contains(net.getSymNameAttr()))
+            eraseList.push_back(net);
+        }
+        // Also collect unreachable actors.
+        module.walk([&](cal::ActorOp act){
+          if (!reachableActorNames.contains(act.getSymNameAttr()))
+            eraseList.push_back(act);
+        });
+        for (Operation *dead : eraseList)
+          dead->erase();
+      }
+    }
+
+    // Phase 5: Late function DCE for unused helper functions (e.g., pow2).
+    // Build a call graph among func.func and mark functions as 'kept' if they
+    // are referenced by any call site outside of their own body (e.g., calls
+    // made from cal.network regions or from other functions). Self-recursive
+    // functions with no external callers are removed. Reachability from any
+    // externally referenced function is also retained.
+    if (auto module2 = dyn_cast<ModuleOp>(op)) {
+      // Map function symbols to ops.
+      llvm::DenseMap<StringAttr, func::FuncOp> funcs;
+      module2.walk([&](func::FuncOp f) { funcs.insert({f.getSymNameAttr(), f}); });
+
+      // Build call edges and collect external roots (calls from outside any func.func).
+      llvm::DenseMap<StringAttr, llvm::SmallVector<StringAttr, 4>> edges;
+      llvm::DenseSet<StringAttr> keep; // roots and reachable callees
+      module2.walk([&](func::CallOp call) {
+        auto calleeAttr = call.getCalleeAttr();
+        if (!calleeAttr)
+          return;
+        auto callerFn = call->getParentOfType<func::FuncOp>();
+        if (!callerFn) {
+          // Called from a non-function context (e.g., cal.network) => external root
+          keep.insert(calleeAttr.getAttr());
+        } else {
+          // Record edge caller -> callee
+          edges[callerFn.getSymNameAttr()].push_back(calleeAttr.getAttr());
+        }
+      });
+
+      // Propagate reachability through the call graph.
+      llvm::SmallVector<StringAttr, 16> worklist;
+      for (auto k : keep)
+        worklist.push_back(k);
+      while (!worklist.empty()) {
+        StringAttr cur = worklist.back();
+        worklist.pop_back();
+        auto it = edges.find(cur);
+        if (it == edges.end())
+          continue;
+        for (StringAttr callee : it->second) {
+          if (keep.insert(callee).second)
+            worklist.push_back(callee);
+        }
+      }
+
+      // Erase any function not reachable from external roots.
+      llvm::SmallVector<func::FuncOp, 16> toErase;
+      for (auto &kv : funcs) {
+        StringAttr name = kv.first;
+        func::FuncOp f = kv.second;
+        if (!keep.contains(name))
+          toErase.push_back(f);
+      }
+      for (func::FuncOp f : toErase)
+        f.erase();
     }
   }
 };

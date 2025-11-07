@@ -317,6 +317,21 @@ def CalConstEvalPass : Pass<"cal-const-eval", "mlir::ModuleOp"> {
     // pre-register it to avoid dynamic loading during multithreaded execution.
     "mlir::ub::UBDialect"
   ];
+
+  let options = [
+    Option<"enableGlobalInliner", "enable-global-inliner", "bool", /*default=*/"false",
+      "Use the MLIR global inliner prior to const-eval (off by default to avoid interface/link dependencies).">,
+    Option<"enableNetworkInline", "enable-network-inline", "bool", /*default=*/"false",
+      "Inline cal.network bodies when all actuals are constants (Stage 1 keeps this off by default).">,
+    Option<"enablePow2Fastpath", "enable-pow2-fastpath", "bool", /*default=*/"true",
+      "Recognize pow2-style recurrences and fold to a constant when the exponent is statically known.">,
+    Option<"enableJitConstEval", "enable-jit-const-eval", "bool", /*default=*/"true",
+      "Experimental: try to JIT-evaluate simple helper functions with constant operands (phase 1; conservative).">,
+    Option<"enablePruneUnused", "prune-unused", "bool", /*default=*/"true",
+      "After Stage-1 specialization and folding, drop cal.network/actor symbols not reachable from the detected top.">,
+    Option<"topNetwork", "top", "std::string", /*default=*/"",
+      "Optional explicit top cal.network symbol. If omitted, the pass will auto-detect a unique top; if multiple candidates exist, it fails with a diagnostic listing them.">
+  ];
 }
 
 // Elaborate structural scf.if/scf.for with constant conditions and trip counts

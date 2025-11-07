@@ -128,12 +128,22 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
     // 1) Clone one-time ops (everything except the create_instance-derived
     // calls) into the entry block, recording result mappings so that later
     // clones in the loop body can reference them correctly.
+    // Additionally, drop purely-structural instance-array construction ops
+    // (cal.instance.array.init/set/literal/concat). After structural
+    // elaboration and connect lowering, these are dead and should not
+    // survive into the executable main().
     for (Operation &innerOp : llvm::make_early_inc_range(networkBody)) {
       if (auto callOp = dyn_cast<func::CallOp>(&innerOp)) {
         if (callOp->hasAttr("from_create_instance")) {
           // Defer calls created from create_instance to the while body.
           continue;
         }
+      }
+      if (isa<cal::InstanceArrayInitOp, cal::InstanceArraySetOp,
+        cal::InstanceArrayLiteralOp, cal::InstanceArrayConcatOp,
+        cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp,
+        cal::InstanceAtOp>(&innerOp)) {
+        continue; // structural-only; skip cloning into main()
       }
       Operation *cloned = rewriter.clone(innerOp, netToFuncMap);
       // Map results for downstream clones (e.g., loop body) to resolve uses.
@@ -634,10 +644,17 @@ public:
         map.map(networkBody.getArguments(), fn.getArguments());
 
         // Clone one-time ops into entry, skip calls from create_instance.
+        // Also drop structural instance-array ops which must not persist.
         for (Operation &inner : llvm::make_early_inc_range(networkBody)) {
           if (auto call = dyn_cast<func::CallOp>(&inner)) {
             if (call->hasAttr("from_create_instance"))
               continue;
+          }
+    if (isa<cal::InstanceArrayInitOp, cal::InstanceArraySetOp,
+      cal::InstanceArrayLiteralOp, cal::InstanceArrayConcatOp,
+      cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp,
+      cal::InstanceAtOp>(&inner)) {
+            continue;
           }
           Operation *cloned = rewriter.clone(inner, map);
           for (auto [orig, neu] : llvm::zip(inner.getResults(), cloned->getResults()))
@@ -725,6 +742,34 @@ public:
 
         rewriter.replaceOp(net, fn);
       }
+    }
+
+    // 5) Final cleanup: erase any remaining purely-structural CAL instance-array
+    // and instantiate ops that may have leaked into functions (e.g., when this
+    // pass is run on already partially-lowered IR). Only erase ops whose results
+    // are all dead to preserve safety.
+    {
+      SmallVector<Operation *, 16> toErase;
+      module->walk([&](Operation *op) {
+        if (!isa<cal::InstanceArrayInitOp, cal::InstanceArraySetOp,
+                 cal::InstanceArrayLiteralOp, cal::InstanceArrayConcatOp,
+                 cal::InstantiateOp, cal::InstantiateArrayOp,
+                 cal::InstantiateArrayIfaceOp, cal::InstanceAtOp>(op))
+          return WalkResult::advance();
+
+        bool allDead = true;
+        for (Value res : op->getResults()) {
+          if (!res.use_empty()) {
+            allDead = false;
+            break;
+          }
+        }
+        if (allDead)
+          toErase.push_back(op);
+        return WalkResult::advance();
+      });
+      for (Operation *op : toErase)
+        op->erase();
     }
   }
 };

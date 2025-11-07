@@ -817,7 +817,7 @@ def Cal_TransitionOp : Cal_Op<"transition", [HasParent<"StateOp">]> {
 
 // Construct a fixed-length instance array from a variadic list of instance
 // handles. Homogeneity is checked by verifiers in downstream passes.
-def Cal_InstanceArrayLiteralOp : Cal_Op<"instance_array.literal", []> {
+def Cal_InstanceArrayLiteralOp : Cal_Op<"instance_array.literal", [Pure]> {
   let summary = "Build an instance array from scalar handles";
   let description = [{
     Creates a `!cal.instance.array<@Entity, N>` from N scalar instance handles
@@ -832,7 +832,7 @@ def Cal_InstanceArrayLiteralOp : Cal_Op<"instance_array.literal", []> {
 // Concatenate two instance arrays into a larger array. The element type must
 // match (concrete entity or interface-typed) and sizes add up. Kept lightweight
 // here; detailed checks can be performed in a later verifier or canonicalizer.
-def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", []> {
+def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", [Pure]> {
   let summary = "Concatenate two instance arrays";
   let description = [{
     Concatenates two instance arrays with the same element handle type into a
@@ -851,7 +851,7 @@ def Cal_InstanceArrayConcatOp : Cal_Op<"instance_array.concat", []> {
 // cal.instance.array.init : create a fixed-shape array value (uninitialized)
 // Example:
 //   %arr = cal.instance.array.init : !cal.instance.array<@Actor, 4>
-def Cal_InstanceArrayInitOp : Cal_Op<"instance.array.init", []> {
+def Cal_InstanceArrayInitOp : Cal_Op<"instance.array.init", [Pure]> {
   let summary = "Create an uninitialized instance array value (optional dynamic dims)";
   let description = [{
     Produces a structural array value with the specified array type. Intended
@@ -876,7 +876,7 @@ def Cal_InstanceArrayInitOp : Cal_Op<"instance.array.init", []> {
 // Example (kD):
 //   %arr2 = cal.instance.array.set %arr[%i,%j], %h :
 //            !cal.instance.array<@A, [2,2]>, index, index, !cal.instance<@A>
-def Cal_InstanceArraySetOp : Cal_Op<"instance.array.set", []> {
+def Cal_InstanceArraySetOp : Cal_Op<"instance.array.set", [Pure]> {
   let summary = "Set one element in an instance array (returns new array value)";
   let description = [{
     Returns a new array value with the element at the provided index/indices

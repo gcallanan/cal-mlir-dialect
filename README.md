@@ -107,13 +107,22 @@ Additionally, for structural source we recommend using standard MLIR control flo
 - Prefer scf.for/if plus `cal.instance.array.init` and `cal.instance.array.set` to build arrays of instance handles. See docs/InstanceArrays-ND-and-SCF.md for the ND array types and recipes.
 - Note: legacy structural ops `cal.instance_for` and `cal.instance_if` have been removed. Use SCF-based patterns instead.
 
-We also provide a compact elaboration pipeline that exposes compile-time constants and erases structural control (useful when folding constant SCF):
+We also provide compact elaboration pipelines that expose compile-time constants and erase structural control (useful when folding constant SCF):
 
 - **cal-structural-elaboration** – Runs constant evaluation and elaborates constant `scf.if`/`scf.for` under `cal.network`. This is useful before flattening networks or lowering to functions. Invoke it via the composite fixed-point pass:
 
 Optional command (useful when you have structural constructs to elaborate):
 
 - cal-opt --composite-fixed-point-pass="pipeline=cal-structural-elaboration" input.mlir
+
+- **cal-elaborate-stage1** – End-to-end Stage-1 elaboration used in larger parametric examples (e.g., FFT):
+	- Parent-aware const-parameter specialization
+	- SCF-first elaboration (fold scf.if, unroll small static scf.for; array-builder helpers)
+	- Network flattening (symbolic instantiate/connect → concrete create_instance/fifo wiring)
+	- Late const-eval to fold helpers revealed by flatten (e.g., pow2), plus CSE and verification
+
+	Example:
+	- cal-opt --cal-elaborate-stage1 examples/fft/Top.mlir -o elaborated.mlir
 
 Tip: To validate instance array construction early, run the verifier:
 

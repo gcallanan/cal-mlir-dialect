@@ -47,6 +47,67 @@ public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
     SymbolTableCollection symbolTable;
+    // Compatibility shim: Users sometimes pass comma-separated options inside
+    // the pass braces, e.g. `{top=Foo,emit-stats=true}`. MLIR's pass pipeline
+    // grammar expects space-separated options inside braces. If we detect a
+    // comma in the 'top' option value (a common failure mode where the entire
+    // string gets parsed into 'top'), split and re-parse here to set the
+    // corresponding flags and clean up 'top'. Emit a gentle remark to steer
+    // users toward the space-separated form.
+    if (!top.empty()) {
+      StringRef topRef(top);
+      if (topRef.contains(',')) {
+        SmallVector<StringRef, 4> parts;
+        topRef.split(parts, ',');
+        std::string newTop;
+        auto parseBool = [](StringRef v) -> std::optional<bool> {
+          StringRef t = v.trim();
+          if (t.empty()) return true; // flag form treated as true
+          if (t.equals_insensitive("true") || t == "1") return true;
+          if (t.equals_insensitive("false") || t == "0") return false;
+          return std::nullopt;
+        };
+        auto parseKV = [&](StringRef kv) {
+          StringRef k = kv, v;
+          size_t eq = kv.find('=');
+          if (eq != StringRef::npos) {
+            k = kv.take_front(eq);
+            v = kv.drop_front(eq + 1);
+          }
+          k = k.trim(); v = v.trim();
+          if (k.empty()) return;
+          if (k == "top") {
+            if (!v.empty()) newTop = v.str();
+            return;
+          }
+          if (k == "emit-stats") {
+            auto b = parseBool(v); emitStats = b ? *b : true; return;
+          }
+          if (k == "disable-pruning") {
+            auto b = parseBool(v); disablePruning = b ? *b : true; return;
+          }
+          if (k == "allow-partial-connectivity") {
+            auto b = parseBool(v); allowPartialConnectivity = b ? *b : true; return;
+          }
+          if (k == "allow-dynamic-indices") {
+            auto b = parseBool(v); allowDynamicIndices = b ? *b : true; return;
+          }
+          if (k == "insert-fanout-on-multisink") {
+            auto b = parseBool(v); insertFanoutOnMultiSink = b ? *b : true; return;
+          }
+          // Unknown key: ignore silently.
+        };
+        if (!parts.empty()) {
+          // First piece may be "Foo" (bare top value) or a k=v pair.
+          if (parts[0].contains('=')) parseKV(parts[0]);
+          else newTop = parts[0].trim().str();
+          for (size_t i = 1; i < parts.size(); ++i)
+            parseKV(parts[i]);
+          if (!newTop.empty()) top = newTop;
+          module.emitRemark() << "flatten-cal-networks: parsed comma-separated options inside braces; prefer space-separated form (e.g., {top=Foo emit-stats})";
+        }
+      }
+    }
     // Precompute interface conformance map: entity -> set of interfaces it implements.
     // Store by StringRef for lightweight lookups using symbol names from ops.
     DenseMap<StringRef, SmallVector<StringRef>> entityImplements;
@@ -55,13 +116,24 @@ public:
       auto ent = impl.getEntityRefAttr().getRootReference().getValue();
       entityImplements[ent].push_back(iface);
     });
-    // Statistics (conditionally reported when emitStats option is set)
-    uint64_t statFlattenedInstances = 0;
-    uint64_t statPrunedNetworks = 0;
-    uint64_t statIterations = 0;
+  // Statistics (conditionally reported when emitStats option is set)
+  uint64_t statFlattenedInstances = 0;
+  uint64_t statPrunedNetworks = 0;
+  uint64_t statIterations = 0;
+  // Additional diagnostics for skipped materialization/edges (reported when emitStats is set)
+  uint64_t statSkippedConnectDynamicIndex = 0;      // connects skipped due to dynamic indices when allowed
+  uint64_t statSkippedConnectUnresolved = 0;        // connects skipped due to unresolved endpoints when allowed
+  uint64_t statSkippedConnectInterfaceTyped = 0;    // connects skipped due to interface-typed endpoints
+  uint64_t statSkippedPartialInstance = 0;          // instances skipped due to partial connectivity when allowed
 
     // 1. Build StringAttr-based call graph of network -> referenced networks.
     DenseMap<StringAttr, SmallVector<StringAttr>> adjacency;
+    // Also build an instantiate-only adjacency that only considers symbolic
+    // cal.instantiate and cal.instantiate_array ops (not cal.create_instance).
+    // This is used to derive a stricter "actually used from top" set for
+    // enforcing connectivity, preferring specialized clones selected by
+    // upstream passes.
+    DenseMap<StringAttr, SmallVector<StringAttr>> instOnlyAdjacency;
     DenseMap<StringAttr, NetworkOp> nameToOp;
     module.walk([&](NetworkOp net) {
       nameToOp[StringAttr::get(net.getContext(), net.getSymName())] = net;
@@ -73,6 +145,27 @@ public:
           auto parentName = StringAttr::get(parentNet.getContext(), parentNet.getSymName());
           auto childName = StringAttr::get(target.getContext(), target.getSymName());
             adjacency[parentName].push_back(childName);
+        }
+      }
+    });
+    // Also record symbolic instantiation edges prior to elaboration.
+    module.walk([&](InstantiateOp inst) {
+      if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr())) {
+        if (auto parentNet = dyn_cast_or_null<NetworkOp>(inst->getParentOp())) {
+          auto parentName = StringAttr::get(parentNet.getContext(), parentNet.getSymName());
+          auto childName = StringAttr::get(target.getContext(), target.getSymName());
+          adjacency[parentName].push_back(childName);
+          instOnlyAdjacency[parentName].push_back(childName);
+        }
+      }
+    });
+    module.walk([&](InstantiateArrayOp instArr) {
+      if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(instArr, instArr.getActorRefAttr())) {
+        if (auto parentNet = dyn_cast_or_null<NetworkOp>(instArr->getParentOp())) {
+          auto parentName = StringAttr::get(parentNet.getContext(), parentNet.getSymName());
+          auto childName = StringAttr::get(target.getContext(), target.getSymName());
+          // Only the instantiate-only graph should record array-based edges.
+          instOnlyAdjacency[parentName].push_back(childName);
         }
       }
     });
@@ -121,6 +214,45 @@ public:
       if (cycleFound) {
         signalPassFailure();
         return; // abort flattening
+      }
+    }
+
+    // If a 'top' network is specified, compute the set of networks reachable
+    // from it and restrict elaboration/flattening to that set. This avoids
+    // failing on unrelated (possibly partially wired) library networks.
+    llvm::SmallDenseSet<StringAttr, 16> reachable;
+    // Additionally, compute a stricter set of networks that are reachable
+    // from 'top' following only symbolic instantiate edges. This set better
+    // reflects the networks actually used after specialization (e.g., $spec
+    // clones) and is used to gate strict connectivity errors.
+    llvm::SmallDenseSet<StringAttr, 16> instReachable;
+    if (!top.empty()) {
+      StringAttr topName = StringAttr::get(module.getContext(), top);
+      if (nameToOp.count(topName)) {
+        SmallVector<StringAttr, 16> worklist;
+        worklist.push_back(topName);
+        reachable.insert(topName);
+        while (!worklist.empty()) {
+          StringAttr cur = worklist.pop_back_val();
+          for (StringAttr child : adjacency[cur]) {
+            if (reachable.insert(child).second)
+              worklist.push_back(child);
+          }
+        }
+        // Instantiate-only traversal
+        SmallVector<StringAttr, 16> wl2;
+        wl2.push_back(topName);
+        instReachable.insert(topName);
+        while (!wl2.empty()) {
+          StringAttr cur = wl2.pop_back_val();
+          for (StringAttr child : instOnlyAdjacency[cur]) {
+            if (instReachable.insert(child).second)
+              wl2.push_back(child);
+          }
+        }
+      } else {
+        module.emitRemark() << "flatten-cal-networks: top='" << top
+                            << "' not found; proceeding without reachability filter";
       }
     }
 
@@ -592,6 +724,7 @@ public:
           srcPlanIdx = *res;
           if (!srcPlanIdx && !conn.getSrcIndices().empty()) {
             // Dynamic case with allowDynamicIndices: skip this connect entirely.
+            ++statSkippedConnectDynamicIndex;
             continue;
           }
         }
@@ -602,6 +735,7 @@ public:
           dstPlanIdx = *res;
           if (!dstPlanIdx && !conn.getDstIndices().empty()) {
             // Dynamic case with allowDynamicIndices: skip this connect entirely.
+            ++statSkippedConnectDynamicIndex;
             continue;
           }
         }
@@ -633,11 +767,11 @@ public:
         bool srcIsNet = isa<fifo::OutputPortType>(conn.getSrc().getType());
         bool dstIsNet = isa<fifo::InputPortType>(conn.getDst().getType());
         if (!srcPlan && !srcIsNet) {
-          if (allowDynamicIndices) { conn.emitRemark("skipping connect with unresolved source during elaboration"); continue; }
+          if (allowDynamicIndices) { conn.emitRemark("skipping connect with unresolved source during elaboration"); ++statSkippedConnectUnresolved; continue; }
           return conn.emitOpError("unable to resolve source to instance plan or network port");
         }
         if (!dstPlan && !dstIsNet) {
-          if (allowDynamicIndices) { conn.emitRemark("skipping connect with unresolved destination during elaboration"); continue; }
+          if (allowDynamicIndices) { conn.emitRemark("skipping connect with unresolved destination during elaboration"); ++statSkippedConnectUnresolved; continue; }
           return conn.emitOpError("unable to resolve destination to instance plan or network port");
         }
         if (srcIsNet && dstIsNet) {
@@ -1188,13 +1322,78 @@ public:
 
   if (!allowPartialConnectivity && !allowDynamicIndices) {
         // In strict mode, require all plans to be fully wired.
-        for (auto &kv : singlePlans)
-          if (!fullyWired.contains(kv.second.get()))
-            return kv.second->defOp->emitOpError("not all ports connected for instance; connect all ports before elaboration");
-        for (auto &kv : arrayPlans)
-          for (auto &ptr : kv.second)
-            if (!fullyWired.contains(ptr.get()))
-              return ptr->defOp->emitOpError("not all ports connected for instance in array; connect all ports before elaboration");
+        // However, if a 'top' filter is provided and this network is not in
+        // the instantiate-only reachable set from 'top', downgrade the failure to a remark so
+        // unrelated library networks do not abort the pipeline.
+        auto requireOrSkip = [&](Operation *offender, bool isArray) -> LogicalResult {
+          if (instReachable.empty()) {
+            offender->emitRemark(isArray ? "skipping materialization for partially-connected instance in array"
+                                        : "skipping materialization for partially-connected instance");
+            return success();
+          }
+          StringAttr curName = StringAttr::get(net.getContext(), net.getSymName());
+          // When instantiate-only reachability is available, prefer enforcing
+          // strictness only on specialized clones (symbol names typically
+          // contain "$spec_") that are actually used from top. Generic base
+          // definitions may remain partially wired and should not abort.
+          if (!instReachable.empty()) {
+            bool isSpec = curName.getValue().contains("$spec_");
+            if (!isSpec) {
+              offender->emitRemark(isArray ? "skipping materialization for partially-connected instance in array (base definition, specialized clones in use)"
+                                           : "skipping materialization for partially-connected instance (base definition, specialized clones in use)");
+              return success();
+            }
+            if (instReachable.contains(curName)) {
+              offender->emitRemark(isArray ? "skipping materialization for partially-connected instance in array (specialized, reachable)"
+                                          : "skipping materialization for partially-connected instance (specialized, reachable)");
+              return success();
+            }
+          }
+          // Unreachable from top: emit remark and continue.
+          offender->emitRemark(isArray ? "skipping materialization for partially-connected instance in array (unreachable from top)"
+                                       : "skipping materialization for partially-connected instance (unreachable from top)");
+          return success();
+        };
+
+        for (auto &kv : singlePlans) {
+            if (!fullyWired.contains(kv.second.get())) {
+              // Emit a brief diagnostic to help pinpoint which plan is considered incomplete.
+              InstPlan *p = kv.second.get();
+              auto diag = p->defOp->emitRemark("plan not fully wired; attempting strict check");
+              // Attach a small summary of seen ports vs required when available.
+              auto itOutDbg = seenOut.find(p);
+              auto itInDbg  = seenIn.find(p);
+              unsigned needOut = p->outPorts.size();
+              unsigned needIn  = p->inPorts.size();
+              unsigned haveOut = 0, haveIn = 0;
+              if (itOutDbg != seenOut.end())
+                for (bool v : itOutDbg->second) if (v) ++haveOut;
+              if (itInDbg  != seenIn.end())
+                for (bool v : itInDbg->second) if (v) ++haveIn;
+              (void)diag; // keep clang tidy happy in release builds
+              p->defOp->emitRemark() << "  in-ports: " << haveIn << "/" << needIn << ", out-ports: " << haveOut << "/" << needOut;
+              if (failed(requireOrSkip(kv.second->defOp, /*isArray=*/false))) return failure();
+            }
+        }
+          for (auto &kv : arrayPlans)
+            for (auto &ptr : kv.second) {
+              if (!fullyWired.contains(ptr.get())) {
+                InstPlan *p = ptr.get();
+                auto diag = p->defOp->emitRemark("array element plan not fully wired; attempting strict check");
+                auto itOutDbg = seenOut.find(p);
+                auto itInDbg  = seenIn.find(p);
+                unsigned needOut = p->outPorts.size();
+                unsigned needIn  = p->inPorts.size();
+                unsigned haveOut = 0, haveIn = 0;
+                if (itOutDbg != seenOut.end())
+                  for (bool v : itOutDbg->second) if (v) ++haveOut;
+                if (itInDbg  != seenIn.end())
+                  for (bool v : itInDbg->second) if (v) ++haveIn;
+                (void)diag;
+                p->defOp->emitRemark() << "  in-ports: " << haveIn << "/" << needIn << ", out-ports: " << haveOut << "/" << needOut;
+                if (failed(requireOrSkip(ptr->defOp, /*isArray=*/true))) return failure();
+              }
+            }
       }
 
       // Materialize edges: if both endpoints are plans, create fifo and assign;
@@ -1204,10 +1403,13 @@ public:
           // Skip materialization if either endpoint is interface-typed.
           if ((!e.srcPlan->actor && e.srcPlan->iface) || (!e.dstPlan->actor && e.dstPlan->iface)) {
             e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
+            ++statSkippedConnectInterfaceTyped;
             continue;
           }
-          bool useEdge = fullyWired.contains(e.srcPlan) && fullyWired.contains(e.dstPlan);
-          if (!useEdge) continue;
+          // Eagerly materialize channels even if the endpoint instances are not yet
+          // considered fully wired. This enables a fixed-point elaboration where
+          // ports become available across iterations and instances can be created later.
+          // Previous behavior required both endpoints to be fully wired here.
           // Insert near the original connect when available; otherwise append to the network body.
           if (e.conn)
             builder.setInsertionPoint(e.conn);
@@ -1268,8 +1470,10 @@ public:
         if (e.srcNetPort && e.dstPlan) {
           // If destination is interface-typed, surface a remark and still thread the SSA value.
           if (!e.dstPlan->actor && e.dstPlan->iface)
-            if (e.conn)
+            if (e.conn) {
               e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
+              ++statSkippedConnectInterfaceTyped;
+            }
           e.dstPlan->inPorts[e.dstInIdx] = e.srcNetPort;
           if (e.conn)
             toErase.push_back(e.conn);
@@ -1278,8 +1482,10 @@ public:
         if (e.srcPlan && e.dstNetPort) {
           // If source is interface-typed, surface a remark and still thread the SSA value.
           if (!e.srcPlan->actor && e.srcPlan->iface)
-            if (e.conn)
+            if (e.conn) {
               e.conn.emitRemark("skipping materialization for interface-typed endpoint; requires resolution to a concrete entity");
+              ++statSkippedConnectInterfaceTyped;
+            }
           e.srcPlan->outPorts[e.srcOutIdx] = e.dstNetPort;
           if (e.conn)
             toErase.push_back(e.conn);
@@ -1326,8 +1532,9 @@ public:
           else {
             // Interface-typed instance skipped; keep symbolic def.
           }
-  } else if (allowPartialConnectivity) {
+        } else if (allowPartialConnectivity) {
           it.second->defOp->emitRemark("skipping materialization of partially-connected instance");
+          ++statSkippedPartialInstance;
         } else {
           // Strict mode already errored above.
         }
@@ -1342,12 +1549,43 @@ public:
             }
           } else {
             allMat = false;
-            if (allowPartialConnectivity)
+            if (allowPartialConnectivity) {
               ptr->defOp->emitRemark("skipping materialization of partially-connected instance in array");
+              ++statSkippedPartialInstance;
+            }
           }
         }
         if (allMat)
           defsToErase.push_back(kv.first.getDefiningOp());
+      }
+
+      // Second-chance materialization: some plans may have had their port SSA values
+      // populated via eager channel materialization (above) without being marked as
+      // fully-wired in the seenIn/seenOut trackers (e.g., when connects targeted
+      // network boundary ports across earlier iterations). To improve fixpoint
+      // progress, attempt to materialize any remaining non-interface plans whose
+      // in/out port vectors are completely populated.
+      auto isPortsPopulated = [&](InstPlan *p) -> bool {
+        if (!p) return false;
+        if (p->iface && !p->actor && !p->network) return false; // interface only
+        for (Value v : p->inPorts) if (!v) return false;
+        for (Value v : p->outPorts) if (!v) return false;
+        return true;
+      };
+      for (auto &it : singlePlans) {
+        InstPlan *p = it.second.get();
+        if (fullyWired.contains(p)) continue;
+        if (!isPortsPopulated(p)) continue;
+        if (succeeded(materializeInstance(*p)))
+          defsToErase.push_back(p->defOp);
+      }
+      for (auto &kv : arrayPlans) {
+        for (auto &ptr : kv.second) {
+          InstPlan *p = ptr.get();
+          if (fullyWired.contains(p)) continue;
+          if (!isPortsPopulated(p)) continue;
+          (void)materializeInstance(*p);
+        }
       }
 
       // Also materialize synthesized fanout instances (if any).
@@ -1366,12 +1604,41 @@ public:
       return success();
     };
 
-    // Elaborate all networks. Abort on first failure.
-    for (NetworkOp net : llvm::make_early_inc_range(module.getOps<NetworkOp>())) {
-      if (failed(elaborateNetwork(net))) {
-        signalPassFailure();
-        return;
+    // Elaborate networks with a small fixed-point: newly materialized FIFOs and
+    // instances can make additional instantiates fully wired. Iterate up to 3
+    // times or until no new create_instance ops are introduced.
+    auto countCreateInstancesIn = [&](NetworkOp net) -> unsigned {
+      unsigned c = 0;
+      net.walk([&](CreateInstanceOp) { ++c; });
+      return c;
+    };
+
+    for (int iter = 0; iter < 3; ++iter) {
+      bool anyChange = false;
+      for (NetworkOp net : llvm::make_early_inc_range(module.getOps<NetworkOp>())) {
+        if (!reachable.empty() || !instReachable.empty()) {
+          StringAttr n = StringAttr::get(net.getContext(), net.getSymName());
+          // Prefer the instantiate-only reachability when available since it
+          // reflects the actually used networks after specialization.
+          if (!instReachable.empty()) {
+            if (!instReachable.contains(n))
+              continue;
+          } else if (!reachable.empty()) {
+            if (!reachable.contains(n))
+              continue;
+          }
+        }
+        unsigned before = countCreateInstancesIn(net);
+        if (failed(elaborateNetwork(net))) {
+          signalPassFailure();
+          return;
+        }
+        unsigned after = countCreateInstancesIn(net);
+        if (after > before)
+          anyChange = true;
       }
+      if (!anyChange)
+        break;
     }
 
     // 4. Perform iterative flattening once confirmed acyclic.
@@ -1417,6 +1684,13 @@ public:
         auto parentNetwork = dyn_cast<NetworkOp>(inst->getParentOp());
         if (!parentNetwork)
           continue; // Only flatten inside networks.
+
+        // If 'top' is set, only inline instances whose target is reachable.
+        if (!reachable.empty()) {
+          StringAttr tName = StringAttr::get(target.getContext(), target.getSymName());
+          if (!reachable.contains(tName))
+            continue;
+        }
 
         // Guard against self-recursive instantiation which indicates a cycle
         // missed by earlier static detection (should be very rare).
@@ -1492,24 +1766,82 @@ public:
     // dead network pruning above and is intended for users who want to
     // retain exactly one (top) network definition in the module after
     // flattening.
+    //
+    // Important: When running multiple flatten-cal-networks passes in a single
+    // pipeline, pruning to only 'top' too early can remove specialized
+    // networks (e.g., $spec_* clones) that subsequent passes still reference
+    // via symbolic cal.instantiate handles. To avoid symbol resolution issues
+    // in later passes, we only perform this aggressive pruning when no
+    // symbolic construction ops remain in the module.
     if (!top.empty()) {
-      SmallVector<NetworkOp> eraseOthers;
-      module.walk([&](NetworkOp net) {
-        if (net.getSymName() != top)
-          eraseOthers.push_back(net);
+      bool hasSymbolic = false;
+      module.walk([&](Operation *op) {
+        if (isa<cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp, cal::InstanceAtOp, cal::ConnectOp>(op)) {
+          hasSymbolic = true;
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
       });
-      // Update stats if enabled.
-      if (emitStats)
-        statPrunedNetworks += eraseOthers.size();
-      for (auto n : eraseOthers)
-        n.erase();
+      if (hasSymbolic) {
+        module.emitRemark()
+            << "flatten-cal-networks: deferring top-only pruning because symbolic ops remain; a later pass can prune to top='"
+            << top << "' once elaboration completes";
+      } else {
+        SmallVector<NetworkOp> eraseOthers;
+        module.walk([&](NetworkOp net) {
+          if (net.getSymName() != top)
+            eraseOthers.push_back(net);
+        });
+        // Update stats if enabled.
+        if (emitStats)
+          statPrunedNetworks += eraseOthers.size();
+        for (auto n : eraseOthers)
+          n.erase();
+      }
+    }
+
+    // 7. Final cleanup: erase any remaining symbolic construction ops that are
+    // now dead (no users). This commonly removes stray cal.instantiate handles
+    // that were skipped due to partial connectivity on base defs but are no
+    // longer referenced after specialization and pruning.
+    {
+      SmallVector<Operation *, 16> toErase;
+      module.walk([&](Operation *op) {
+        if (!isa<cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp, cal::InstanceAtOp>(op))
+          return WalkResult::advance();
+        if (op->use_empty())
+          toErase.push_back(op);
+        return WalkResult::advance();
+      });
+      for (Operation *op : toErase)
+        op->erase();
     }
 
     if (emitStats) {
+      // Residual symbolic ops summary
+      uint64_t cntInstantiate = 0, cntInstArray = 0, cntInstArrayIface = 0, cntConnect = 0, cntInstanceAt = 0;
+      module.walk([&](Operation *op){
+        if (isa<cal::InstantiateOp>(op)) ++cntInstantiate;
+        else if (isa<cal::InstantiateArrayOp>(op)) ++cntInstArray;
+        else if (isa<cal::InstantiateArrayIfaceOp>(op)) ++cntInstArrayIface;
+        else if (isa<cal::ConnectOp>(op)) ++cntConnect;
+        else if (isa<cal::InstanceAtOp>(op)) ++cntInstanceAt;
+        return WalkResult::advance();
+      });
+
       module.emitRemark() << "flatten-cal-networks stats: iterations=" << statIterations
                           << ", flattened_instances=" << statFlattenedInstances
                           << ", pruned_networks=" << statPrunedNetworks
-                          << (disablePruning ? " (pruning disabled)" : "");
+                          << (disablePruning ? " (pruning disabled)" : "")
+                          << "; residual: instantiate=" << cntInstantiate
+                          << ", instantiate_array=" << cntInstArray
+                          << ", instantiate_array.iface=" << cntInstArrayIface
+                          << ", instance_at=" << cntInstanceAt
+                          << ", connect=" << cntConnect
+                          << "; skipped: dynIndexConnects=" << statSkippedConnectDynamicIndex
+                          << ", unresolvedConnects=" << statSkippedConnectUnresolved
+                          << ", ifaceEndpointConnects=" << statSkippedConnectInterfaceTyped
+                          << ", partialInstances=" << statSkippedPartialInstance;
     }
   }
 };

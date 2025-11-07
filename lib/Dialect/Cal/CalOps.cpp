@@ -13,6 +13,7 @@
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/PatternMatch.h"
@@ -1081,6 +1082,17 @@ struct SpecializeInstanceArrayInitExtent : OpRewritePattern<InstanceArrayInitOp>
     auto dimAttr = dyn_cast<IntegerAttr>(shape[0]);
     if (!dimAttr || dimAttr.getInt() != -1)
       return failure(); // already static or not dynamic marker
+
+    // Do not specialize if this init feeds a scf.for iter_arg directly; a later
+    // structural pass may unroll and construct a statically-sized array instead.
+    for (Operation *user : op.getArray().getUsers()) {
+      if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+        for (Value init : forOp.getInitArgs()) {
+          if (init == op.getArray())
+            return failure();
+        }
+      }
+    }
 
     // Expect exactly one extent operand and it to be a constant index.
     auto dims = op.getDims();

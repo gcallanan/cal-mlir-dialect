@@ -64,6 +64,8 @@ cal-opt -pass-pipeline='builtin.module(flatten-cal-networks{top=Top emit-stats})
   -o out.mlir
 ```
 
+Note on syntax: Inside braces, options are space-separated in MLIR pass pipelines. For compatibility, this pass also tolerates a mistakenly comma-separated form like `{top=Top,emit-stats=true}` by parsing the extra tokens and emitting a gentle remark. Prefer the space-separated form going forward.
+
 Allow partially connected instances:
 
 ```sh
