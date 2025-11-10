@@ -186,14 +186,27 @@ struct ElaborateScfStructuresPass : public impl::ElaborateScfStructuresPassBase<
 
       IRRewriter rewriter(&getContext());
       rewriter.setInsertionPoint(forOp);
-      // Clone body tripCount times, ignoring the induction variable for now.
+      // Clone body tripCount times. Maintain intra-body SSA mapping per iteration
+      // so that operands refer to the cloned defs, avoiding dangling uses of the
+      // original ops when the loop is erased.
       if (!forOp.getBody()->empty()) {
         Block &body = *forOp.getBody();
+        SmallVector<Operation *, 16> originalOps;
+        for (Operation &inner : body) {
+          if (isa<scf::YieldOp>(inner))
+            continue;
+          originalOps.push_back(&inner);
+        }
         for (int64_t i = 0; i < tripCount; ++i) {
-          for (Operation &inner : llvm::make_early_inc_range(body)) {
-            if (isa<scf::YieldOp>(&inner))
-              continue;
-            rewriter.clone(inner);
+          IRMapping map; // fresh per iteration; structural loop has no carried args
+          // Map the loop IV to a constant value for this iteration.
+          Value ivConst = rewriter.create<arith::ConstantIndexOp>(forOp.getLoc(), lb + i * st);
+          map.map(body.getArgument(0), ivConst);
+          for (Operation *orig : originalOps) {
+            Operation *cloned = rewriter.clone(*orig, map);
+            // Record result mapping so later ops in the same iteration use cloned defs.
+            for (auto [oRes, cRes] : llvm::zip(orig->getResults(), cloned->getResults()))
+              map.map(oRes, cRes);
           }
         }
       }

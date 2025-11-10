@@ -25,4 +25,6 @@ void CalDialect::initialize() {
 #include "Dialect/Cal/CalOps.cpp.inc"
       >();
   registerTypes();
+
+  // Nothing extra to do here.
 }

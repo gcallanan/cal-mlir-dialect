@@ -24,4 +24,14 @@
 #define GET_OP_CLASSES
 #include "Dialect/Cal/CalOps.h.inc"
 
+namespace mlir {
+class RewritePatternSet;
+}
+
+namespace mlir::cal {
+// Register CAL-specific canonicalization patterns (including patterns
+// anchored on non-CAL ops like scf.for that manipulate CAL constructs).
+void populateCalCanonicalizationPatterns(mlir::RewritePatternSet &results);
+}
+
 #endif // CAL_CALOPS_H

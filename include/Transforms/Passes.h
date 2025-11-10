@@ -24,6 +24,8 @@ std::unique_ptr<mlir::Pass> createCalConstEvalPass();
 std::unique_ptr<mlir::Pass> createElaborateScfStructuresPass();
 std::unique_ptr<mlir::Pass> createVerifyConnectPortsPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayFillsPass();
+std::unique_ptr<mlir::Pass> createInferCalInstanceArrayShapePass();
+std::unique_ptr<mlir::Pass> createElaborateCalEntitiesPass();
 
 // Emit registration functions.
 #define GEN_PASS_REGISTRATION

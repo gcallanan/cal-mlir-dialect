@@ -401,4 +401,68 @@ def VerifyInstanceArrayFillsPass : Pass<"verify-instance-array-fills", "mlir::Mo
   ];
 }
 
+// Promote (specialize) dynamic instance array construction loops to static
+// arrays by analyzing scf.for (and perfectly nested scf.for) patterns that
+// fill a !cal.instance.array via repeated cal.instantiate + cal.instance.array.set.
+// Handles 1-D and simple multi-D (perfectly nested) loops where each loop
+// contributes one dimension and all bounds are constant with lb=0, step=1.
+// After promotion the loops are erased and replaced by a sequence of constant
+// index sets building a statically shaped array.
+def InferCalInstanceArrayShapePass : Pass<"infer-cal-instance-array-shape", "mlir::ModuleOp"> {
+  let summary = "Infer static shapes for CAL instance arrays built in scf.for loop nests (shape-only; no unrolling)";
+  let description = [{
+    Detects patterns that construct dynamic `!cal.instance.array` values via one or more
+    perfectly nested `scf.for` loops with a single array iter_arg and a single
+    `cal.instance.array.set` yielded from the innermost loop. When all loop trip counts are
+    statically known, this pass computes the per-dimension extents (one per loop) and rewrites
+    the array type to a static `!cal.instance.array<@Actor,[d0,d1,...]>`.
+
+    Behavior:
+      - Rebuilds the loop nest with the iter_arg/result typed to the new static array type.
+      - Clones `cal.instance.array.init` and `cal.instance.array.set` inside the new loop body
+        so their result types match the static array type.
+      - Leaves the loops structurally intact (no unrolling). Use `elaborate-scf-structures`
+        later in the pipeline if unrolling is desired.
+
+    Requirements (initial version):
+      - Exactly one carried array iter_arg across the nest and one `cal.instance.array.set`
+        in the innermost loop yielding the next array.
+      - Constant lb/ub/step on each loop to compute trip counts (extent = ceil_div(ub-lb, step)).
+      - Concrete instance arrays only (interface-typed arrays may be added later).
+  }];
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect"
+  ];
+  let constructor = "mlir::createInferCalInstanceArrayShapePass()";
+}
+
+// Elaborate CAL entities (instances and instance arrays) while preserving array SSA.
+// This pass unrolls static scf.for nests that build instance arrays into linear
+// chains of cal.instance.array.set with constant indices. It keeps the array
+// values intact (no scalarization of connections) so that later structural
+// elaboration can expand connects and other sugar.
+//
+// Scope (v1):
+//  - 1D scf.for with a single array iter_arg of fully-static instance array type
+//  - Constant lb/ub/step (index-typed arith.constant)
+//  - Preserves inner scf.if and other control flow; only removes the enclosing for
+//  - ND support can be added by handling perfectly nested loops
+def ElaborateCalEntitiesPass : Pass<"elaborate-cal-entities", "mlir::ModuleOp"> {
+  let summary = "Elaborate CAL entities by unrolling static loops while keeping arrays";
+  let description = [{
+    Rewrites scf.for loops that construct CAL instance arrays (via iter_args)
+    into a straight-line sequence of cal.instance.array.set operations indexed
+    by constants. The produced array SSA value remains, enabling subsequent
+    passes (e.g., elaborate-scf-structures) to expand connections safely.
+  }];
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect"
+  ];
+  let constructor = "mlir::createElaborateCalEntitiesPass()";
+}
+
 #endif // CAL_TRANSFORM_PASSES

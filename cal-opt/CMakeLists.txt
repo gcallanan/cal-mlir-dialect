@@ -26,6 +26,7 @@ target_link_libraries(cal-opt
         MLIRNVVMToLLVMIRTranslation
         MLIRExecutionEngine
         MLIRExecutionEngineUtils
+        InferCalInstanceArrayShapePass
         ${LIBS}
         )
 

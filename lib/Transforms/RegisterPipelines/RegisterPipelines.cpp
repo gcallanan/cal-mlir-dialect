@@ -14,6 +14,11 @@ namespace mlir {
 static void buildCalStructuralElabPipeline(OpPassManager &pm) {
   pm.addPass(createCalConstEvalPass());
   // Legacy passes (resolve-instance-if, lower-instance-for) removed.
+  // Infer static shapes for instance arrays, then elaborate entities
+  pm.addPass(createInferCalInstanceArrayShapePass());
+  // Elaborate entities (instances/arrays) first to remove loop shells while
+  // preserving array SSA, then elaborate structural SCF for connections and sugar.
+  pm.addPass(createElaborateCalEntitiesPass());
   pm.addPass(createElaborateScfStructuresPass());
   // Bounds and basic completeness verification for instance arrays
   pm.addPass(createVerifyInstanceArrayFillsPass());
@@ -36,10 +41,13 @@ static void buildCalStructuralElabPipeline(OpPassManager &pm) {
 static void buildCalElaborateStage1Pipeline(OpPassManager &pm) {
   pm.addPass(createCalConstEvalPass());
   pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(createInferCalInstanceArrayShapePass());
+  pm.addPass(createElaborateCalEntitiesPass());
   pm.addPass(createElaborateScfStructuresPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createFlattenCalNetworksPass());
   pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(createElaborateCalEntitiesPass());
   pm.addPass(createElaborateScfStructuresPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createCalConstEvalPass());

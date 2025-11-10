@@ -9,4 +9,5 @@ target_link_libraries(CalGenericTransformsPipelines
   MLIRFifo
   MLIRVerifyInstanceArrayFills
   VerifyConnectPortsPass
+  InferCalInstanceArrayShapePass
 )
