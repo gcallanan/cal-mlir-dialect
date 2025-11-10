@@ -7,9 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Cal/CalOps.h"
-#include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalTypes.h"
-#include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -182,6 +180,169 @@ struct ConnectLowerArrayIndexToInstanceAt : ::mlir::OpRewritePattern<ConnectOp> 
     }
 
     return success(changed);
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Canonicalization: Promote dynamic 1-D instance array fill loops to static.
+// See detailed comment near the bottom registration for the handled pattern.
+//===----------------------------------------------------------------------===//
+struct PromoteDynamicInstanceArrayFillLoop : OpRewritePattern<cal::InstanceArraySetOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(cal::InstanceArraySetOp setOp,
+                                PatternRewriter &rewriter) const override {
+    // Must be inside an scf.for.
+    auto forOp = dyn_cast<scf::ForOp>(setOp->getParentOp());
+    if (!forOp)
+      return failure();
+
+    // Single iter arg/result only.
+    if (forOp.getInitArgs().size() != 1 || forOp.getNumResults() != 1)
+      return failure();
+
+    // The yielded value must be this setOp's result.
+    auto yieldOp = dyn_cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    if (!yieldOp || yieldOp.getNumOperands() != 1 || yieldOp.getOperand(0) != setOp.getResult())
+      return failure();
+
+    // Dynamic 1-D instance array type check.
+    auto dynArrTy = dyn_cast<cal::InstanceArrayType>(forOp.getResult(0).getType());
+    if (!dynArrTy)
+      return failure();
+    ArrayAttr shapeAttr = dynArrTy.getShape();
+    if (!shapeAttr || shapeAttr.size() != 1)
+      return failure();
+    auto dimAttr = dyn_cast<IntegerAttr>(shapeAttr[0]);
+    if (!dimAttr || dimAttr.getInt() != -1)
+      return failure(); // already static or not dynamic marker
+
+    // Initial value must come from a matching cal.instance.array.init with dynamic shape.
+    auto initOp = forOp.getInitArgs()[0].getDefiningOp<cal::InstanceArrayInitOp>();
+    if (!initOp)
+      return failure();
+    auto initTy = dyn_cast<cal::InstanceArrayType>(initOp.getArray().getType());
+    if (!initTy || initTy.getActorRef() != dynArrTy.getActorRef())
+      return failure();
+    auto initShape = initTy.getShape();
+    if (!initShape || initShape.size() != 1)
+      return failure();
+    auto initDimAttr = dyn_cast<IntegerAttr>(initShape[0]);
+    if (!initDimAttr || initDimAttr.getInt() != -1)
+      return failure(); // already static (another pattern should have handled this)
+
+    // Loop bounds + step must be constant index.
+    auto lbC = forOp.getLowerBound().getDefiningOp<arith::ConstantOp>();
+    auto ubC = forOp.getUpperBound().getDefiningOp<arith::ConstantOp>();
+    auto stC = forOp.getStep().getDefiningOp<arith::ConstantOp>();
+    if (!lbC || !ubC || !stC)
+      return failure();
+    auto lbIdx = dyn_cast<IntegerAttr>(lbC.getValue());
+    auto ubIdx = dyn_cast<IntegerAttr>(ubC.getValue());
+    auto stIdx = dyn_cast<IntegerAttr>(stC.getValue());
+    if (!lbIdx || !ubIdx || !stIdx)
+      return failure();
+    int64_t lb = lbIdx.getInt();
+    int64_t ub = ubIdx.getInt();
+    int64_t step = stIdx.getInt();
+    if (step != 1 || ub < lb)
+      return failure();
+    int64_t tripCount = ub - lb;
+    if (tripCount < 0)
+      return failure();
+
+    // Init op must have exactly one dim operand which is a constant equal to tripCount.
+    if (initOp.getDims().size() != 1)
+      return failure();
+    auto dimValC = initOp.getDims()[0].getDefiningOp<arith::ConstantOp>();
+    if (!dimValC)
+      return failure();
+    auto dimValAttr = dyn_cast<IntegerAttr>(dimValC.getValue());
+    if (!dimValAttr || dimValAttr.getInt() != tripCount)
+      return failure();
+
+    // Body must contain exactly: (optional) index arithmetic, one or more cal.instantiate ops,
+    // one cal.instance.array.set (the matched op), no other side-effecting ops.
+    Value iv = forOp.getInductionVar();
+    bool seenSet = false;
+    for (Operation &op : *forOp.getBody()) {
+      if (isa<scf::YieldOp>(op)) continue;
+      if (&op == setOp.getOperation()) {
+        if (seenSet) return failure();
+        seenSet = true;
+        continue;
+      }
+      if (isa<arith::SubIOp, arith::AddIOp>(op)) {
+        // Allow if result only used by setOp index chain.
+        for (Value res : op.getResults()) {
+          for (Operation *user : res.getUsers()) {
+            if (user != setOp.getOperation()) return failure();
+          }
+        }
+        continue;
+      }
+      if (isa<cal::InstantiateOp>(op)) continue;
+      // Disallow any other op types for now (keeps pattern conservative).
+      return failure();
+    }
+    if (!seenSet) return failure();
+
+    // Validate index expression maps iv -> [0..tripCount-1].
+    if (setOp.getIndices().size() != 1)
+      return failure();
+    Value idxVal = setOp.getIndices()[0];
+    auto asConstOffset = [&](Value v) -> std::optional<int64_t> {
+      if (v == iv) {
+        if (lb == 0) return 0; // idx = iv - lb
+        return std::nullopt;   // iv alone with non-zero lb not supported
+      }
+      if (auto subi = v.getDefiningOp<arith::SubIOp>()) {
+        if (subi.getLhs() == iv) {
+          if (auto c = subi.getRhs().getDefiningOp<arith::ConstantOp>()) {
+            if (auto ia = dyn_cast<IntegerAttr>(c.getValue())) { if (lb == ia.getInt()) return 0; else return std::nullopt; }
+          }
+        }
+      }
+      return std::nullopt;
+    };
+    if (!asConstOffset(idxVal))
+      return failure();
+
+    // All preconditions satisfied -> perform rewrite.
+    Location loc = forOp.getLoc();
+    MLIRContext *ctx = rewriter.getContext();
+    auto i64Ty = rewriter.getIntegerType(64);
+    auto newDimAttr = IntegerAttr::get(i64Ty, tripCount);
+    auto newShape = ArrayAttr::get(ctx, ArrayRef<Attribute>{newDimAttr});
+    auto staticArrTy = cal::InstanceArrayType::get(ctx, dynArrTy.getActorRef(), newShape);
+
+    rewriter.setInsertionPoint(forOp);
+    // New static init (no dynamic dims operands required for static shape).
+    auto newInit = rewriter.create<cal::InstanceArrayInitOp>(loc, staticArrTy, ValueRange{});
+    Value cur = newInit.getArray();
+
+    // Gather instantiate ops (in original order) for cloning each iteration.
+    SmallVector<cal::InstantiateOp, 4> instOps;
+    for (Operation &op : *forOp.getBody()) {
+      if (auto inst = dyn_cast<cal::InstantiateOp>(&op)) instOps.push_back(inst);
+    }
+
+    for (int64_t i = 0; i < tripCount; ++i) {
+      // Clone instantiate ops for this iteration.
+      SmallVector<Value> lastHandles; lastHandles.reserve(instOps.size());
+      for (cal::InstantiateOp inst : instOps) {
+        Operation *cloned = rewriter.clone(*inst.getOperation());
+        lastHandles.push_back(cloned->getResult(0));
+      }
+      // Use last handle if multiple (common pattern is one). Otherwise, bail if none.
+      if (lastHandles.empty()) return failure();
+      Value handle = lastHandles.back();
+      // Constant index i.
+      auto idxConst = rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i));
+      cur = rewriter.create<cal::InstanceArraySetOp>(loc, staticArrTy, cur, ValueRange{idxConst}, handle).getResult();
+    }
+
+    rewriter.replaceOp(forOp, cur);
+    return success();
   }
 };
 } // namespace
@@ -1121,7 +1282,14 @@ struct SpecializeInstanceArrayInitExtent : OpRewritePattern<InstanceArrayInitOp>
 void InstanceArrayInitOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                       MLIRContext *context) {
   patterns.add<SpecializeInstanceArrayInitExtent>(context);
+  // Also register loop-promotion of dynamic fills here (pattern roots on
+  // InstanceArraySetOp but registration location is arbitrary).
+  patterns.add<PromoteDynamicInstanceArrayFillLoop>(context);
 }
+
+
+// Note: No dedicated getCanonicalizationPatterns hook on InstanceArraySetOp; the
+// pattern is registered above via InstanceArrayInitOp to keep this change local.
 
 // Verify that a list of inputs are all instance handles of the same element
 // kind and that the provided result array type matches the element and count.
