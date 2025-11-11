@@ -19,6 +19,8 @@ static void buildCalStructuralElabPipeline(OpPassManager &pm) {
   // Elaborate entities (instances/arrays) first to remove loop shells while
   // preserving array SSA, then elaborate structural SCF for connections and sugar.
   pm.addPass(createElaborateCalEntitiesPass());
+  // Normalize multi-sink connections early (before structural expansion)
+  pm.addPass(createInsertFanoutOnMultiSinkPass());
   pm.addPass(createElaborateScfStructuresPass());
   // Bounds and basic completeness verification for instance arrays
   pm.addPass(createVerifyInstanceArrayFillsPass());
@@ -43,11 +45,13 @@ static void buildCalElaborateStage1Pipeline(OpPassManager &pm) {
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createInferCalInstanceArrayShapePass());
   pm.addPass(createElaborateCalEntitiesPass());
+  pm.addPass(createInsertFanoutOnMultiSinkPass());
   pm.addPass(createElaborateScfStructuresPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createFlattenCalNetworksPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createElaborateCalEntitiesPass());
+  pm.addPass(createInsertFanoutOnMultiSinkPass());
   pm.addPass(createElaborateScfStructuresPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createCalConstEvalPass());

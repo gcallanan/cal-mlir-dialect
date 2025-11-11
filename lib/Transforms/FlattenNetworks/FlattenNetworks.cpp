@@ -1,5 +1,4 @@
 //===- FlattenNetworks.cpp - Flatten hierarchical cal.networks ------------===//
-// NOTE(diag): Edited on pass-fix to verify rebuild picks up this line.
 // This file is licensed under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -7,17 +6,14 @@
 
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
-#include "Dialect/Fifo/FifoOps.h"
-#include "Dialect/Fifo/FifoTypes.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "Dialect/Cal/CalTypes.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Dialect/SCF/IR/SCF.h" // Needed for dependent dialect registration in Passes.td
 // STL
 #include <algorithm>
 #include <climits>
@@ -92,9 +88,7 @@ public:
           if (k == "allow-dynamic-indices") {
             auto b = parseBool(v); allowDynamicIndices = b ? *b : true; return;
           }
-          if (k == "insert-fanout-on-multisink") {
-            auto b = parseBool(v); insertFanoutOnMultiSink = b ? *b : true; return;
-          }
+
           // Unknown key: ignore silently.
         };
         if (!parts.empty()) {
@@ -1036,25 +1030,23 @@ public:
           // auto-fanout insertion is enabled. Otherwise, emit a duplicate-source
           // diagnostic (legacy behavior).
           if (seenOut[srcPlan][*srcOutIdx]) {
-            if (!this->insertFanoutOnMultiSink) {
-              auto diag = conn.emitOpError("source port already connected");
-              std::string entityLabel;
-              std::string entityName;
-              if (srcPlan->actor) { entityLabel = "actor"; entityName = srcPlan->actor.getSymName().str(); }
-              else if (srcPlan->network) { entityLabel = "network"; entityName = srcPlan->network.getSymName().str(); }
-              else if (srcPlan->iface) { entityLabel = "interface"; entityName = srcPlan->iface.getSymName().str(); }
-              else { entityLabel = "entity"; entityName = "<unknown>"; }
-              std::string ctxMsg = " (" + entityLabel + "=@" + entityName + ", instance=";
-              if (srcPlan->name && !srcPlan->name.getValue().empty())
-                ctxMsg += '"' + srcPlan->name.getValue().str() + '"';
-              else
-                ctxMsg += "<unnamed>";
-              ctxMsg += ", port=out" + Twine(*srcOutIdx).str() + ")";
-              diag << ctxMsg;
-              if (Operation *first = firstOutConn[srcPlan][*srcOutIdx])
-                first->emitRemark("first connection to this port was here");
-              return failure();
-            }
+            auto diag = conn.emitOpError("source port already connected");
+            std::string entityLabel;
+            std::string entityName;
+            if (srcPlan->actor) { entityLabel = "actor"; entityName = srcPlan->actor.getSymName().str(); }
+            else if (srcPlan->network) { entityLabel = "network"; entityName = srcPlan->network.getSymName().str(); }
+            else if (srcPlan->iface) { entityLabel = "interface"; entityName = srcPlan->iface.getSymName().str(); }
+            else { entityLabel = "entity"; entityName = "<unknown>"; }
+            std::string ctxMsg = " (" + entityLabel + "=@" + entityName + ", instance=";
+            if (srcPlan->name && !srcPlan->name.getValue().empty())
+              ctxMsg += '"' + srcPlan->name.getValue().str() + '"';
+            else
+              ctxMsg += "<unnamed>";
+            ctxMsg += ", port=out" + Twine(*srcOutIdx).str() + ")";
+            diag << ctxMsg;
+            if (Operation *first = firstOutConn[srcPlan][*srcOutIdx])
+              first->emitRemark("first connection to this port was here");
+            return failure();
           } else {
             seenOut[srcPlan][*srcOutIdx] = true;
             firstOutConn[srcPlan][*srcOutIdx] = conn;
@@ -1092,162 +1084,7 @@ public:
         }
         edges.push_back(std::move(e));
       }
-
-    // If a source out port is connected to multiple destinations, insert a
-    // synthetic fanout actor to split the token to N sinks (if enabled).
-    // We perform this rewrite before computing fully-wired plans so completeness
-    // and materialization see the updated topology.
-    SmallVector<std::unique_ptr<InstPlan>> extraPlans; // synthesized fanouts to materialize later
-
-    // Helper: create or fetch a module-level fanout actor symbol with 1 input
-    // port of elemTy and N output ports of elemTy.
-  auto getOrCreateFanoutActor = [&](Type elemTy, unsigned N) -> cal::ActorOp {
-        // Build a deterministic, compact symbol name based on type + N.
-        std::string tyStr;
-        {
-          llvm::raw_string_ostream os(tyStr);
-          elemTy.print(os);
-        }
-        // Hash the type string for brevity.
-        auto h = llvm::hash_value(tyStr);
-        std::string symName = (Twine("__cal_fanout_") + Twine(N) + "_" + Twine(h)).str();
-        if (auto existing = module.lookupSymbol<cal::ActorOp>(symName))
-          return existing;
-
-  OpBuilder mb(module.getContext());
-  mb.setInsertionPointToEnd(module.getBody());
-  auto nameAttr = StringAttr::get(module.getContext(), symName);
-  // Create the actor op with just the name; optional attrs are left null.
-  auto actor = mb.create<cal::ActorOp>(module.getLoc(), nameAttr, ArrayAttr(), ArrayAttr(), mlir::UnitAttr());
-
-        // Build entry block args: 1x !fifo.output_port<T>, Nx !fifo.input_port<T>
-        Region &areg = actor.getBody();
-        auto *entry = new Block();
-        areg.push_back(entry);
-        auto outPortTy = fifo::OutputPortType::get(module.getContext(), elemTy);
-        auto inPortTy  = fifo::InputPortType::get(module.getContext(), elemTy);
-        // No params; first the single input (ports_in), then the N outputs (ports_out)
-        entry->addArgument(outPortTy, module.getLoc());
-        for (unsigned i = 0; i < N; ++i)
-          entry->addArgument(inPortTy, module.getLoc());
-
-        // Build action-based fanout: perform a single pop, then push to all outputs.
-  OpBuilder ab(entry, entry->end());
-  auto action = ab.create<cal::ActionOp>(module.getLoc(), mlir::StringAttr(), mlir::IntegerAttr());
-        // Create action body block
-        Region &actReg = action.getBody();
-        auto *actBlock = new Block();
-        actReg.push_back(actBlock);
-        OpBuilder actB(actBlock, actBlock->end());
-        Value inArg = entry->getArgument(0);
-        SmallVector<Value> outs;
-        outs.reserve(N);
-        for (unsigned i = 0; i < N; ++i)
-          outs.push_back(entry->getArgument(1 + i));
-
-        auto tok = actB.create<mlir::fifo::Pop>(module.getLoc(), elemTy, inArg);
-        for (Value outp : outs)
-          actB.create<mlir::fifo::Push>(module.getLoc(), tok.getResult(), outp);
-
-        return actor;
-      };
-
-      // Group plan→plan edges by (srcPlan, srcOutIdx)
-      llvm::DenseMap<std::pair<InstPlan*, unsigned>, SmallVector<unsigned>> multiOutGroups;
-      for (unsigned ei = 0; ei < edges.size(); ++ei) {
-        auto &e = edges[ei];
-        if (e.srcPlan && e.dstPlan)
-          multiOutGroups[{e.srcPlan, e.srcOutIdx}].push_back(ei);
-      }
-
-      // Rewrite groups with fanout when > 1 sinks (only if enabled)
-      SmallVector<unsigned> indicesToRemove;
-      SmallVector<PendingEdge> edgesToAdd;
-      for (auto &kv : multiOutGroups) {
-        auto &idxs = kv.second;
-        if (idxs.size() <= 1) continue;
-        if (!this->insertFanoutOnMultiSink)
-          continue; // leave multiple edges as-is; duplicate already handled above if disallowed
-        // Skip if interface typed endpoints present (we already filtered plan→plan only).
-        // Determine element type and create/reuse fanout actor symbol.
-        auto &firstE = edges[idxs.front()];
-        Type elemTy = firstE.elemTy;
-        unsigned N = static_cast<unsigned>(idxs.size());
-        auto fanActor = getOrCreateFanoutActor(elemTy, N);
-
-        // Create a synthesized plan for this fanout instance.
-        auto fanPlan = std::make_unique<InstPlan>();
-        fanPlan->actor = fanActor;
-        fanPlan->inPorts.resize(1);
-        fanPlan->outPorts.resize(N);
-        // Anchor location/order to the first original connect in the group.
-        if (firstE.conn)
-          fanPlan->defOp = firstE.conn.getOperation();
-        // Name: <srcName>.fanout.out<idx>
-        std::string baseName = "fanout";
-        if (auto n = kv.first.first->name)
-          baseName = (n.getValue().str() + std::string(".fanout.out") + Twine(kv.first.second).str());
-  fanPlan->name = StringAttr::get(module.getContext(), baseName);
-
-        // Trackers for fanPlan
-        ensureTrackers(fanPlan.get());
-        seenIn[fanPlan.get()][0] = true;
-        for (unsigned i = 0; i < N; ++i) seenOut[fanPlan.get()][i] = true;
-
-        // Build edges: src -> fan (single)
-        PendingEdge eSrcFan; eSrcFan.srcPlan = kv.first.first; eSrcFan.srcOutIdx = kv.first.second; eSrcFan.dstPlan = fanPlan.get(); eSrcFan.dstInIdx = 0; eSrcFan.elemTy = elemTy;
-        edgesToAdd.push_back(eSrcFan);
-
-        // Transfer capacities: copy per-dst capacity to channelCaps for fan->dst; compute a single cap for src->fan
-        std::optional<uint64_t> srcFanCap;
-        Operation *firstConnSite = nullptr;
-        for (unsigned i = 0; i < N; ++i) {
-          auto &orig = edges[idxs[i]];
-          // Remember original connect for erasure
-          if (orig.conn) toErase.push_back(orig.conn);
-          // fan -> dst edge
-          PendingEdge ef; ef.srcPlan = fanPlan.get(); ef.srcOutIdx = i; ef.dstPlan = orig.dstPlan; ef.dstInIdx = orig.dstInIdx; ef.elemTy = elemTy;
-          edgesToAdd.push_back(ef);
-          // Per-edge capacity for fan->dst from original connect attribute
-          if (auto capAttr = orig.conn ? orig.conn.getCapacityAttr() : nullptr) {
-            uint64_t v = static_cast<uint64_t>(capAttr.getInt());
-            ChannelKey ck{fanPlan.get(), i, orig.dstPlan, orig.dstInIdx};
-            channelCaps.insert({ck, {v, orig.conn}});
-            if (!srcFanCap) { srcFanCap = v; firstConnSite = orig.conn; }
-            else if (*srcFanCap != v) {
-              auto err = orig.conn.emitOpError("conflicting capacities for shared source; cannot infer fan-in capacity: existing=") << *srcFanCap << ", new=" << v;
-              if (firstConnSite)
-                firstConnSite->emitRemark("first capacity specified here");
-              return failure();
-            }
-          }
-        }
-        if (srcFanCap) {
-          ChannelKey ck{kv.first.first, kv.first.second, fanPlan.get(), 0u};
-          channelCaps.insert({ck, {*srcFanCap, firstConnSite}});
-        }
-
-        // Mark originals for removal from the edges list
-        indicesToRemove.append(idxs.begin(), idxs.end());
-
-        // Register synthesized plan to be materialized later
-        extraPlans.push_back(std::move(fanPlan));
-      }
-
-      if (!indicesToRemove.empty()) {
-        llvm::sort(indicesToRemove);
-        indicesToRemove.erase(std::unique(indicesToRemove.begin(), indicesToRemove.end()), indicesToRemove.end());
-        SmallVector<PendingEdge> kept;
-        kept.reserve(edges.size() - indicesToRemove.size() + edgesToAdd.size());
-        size_t ri = 0;
-        for (size_t i = 0; i < edges.size(); ++i) {
-          if (ri < indicesToRemove.size() && indicesToRemove[ri] == i) { ++ri; continue; }
-          kept.push_back(edges[i]);
-        }
-        kept.append(edgesToAdd.begin(), edgesToAdd.end());
-        edges.swap(kept);
-      }
-
+        
   // Determine fully-wired plans.
       DenseSet<InstPlan*> fullyWired;
       // We'll also assign deterministic sequence numbers within this network
@@ -1287,15 +1124,6 @@ public:
         }
       }
 
-      // Include synthesized fanout plans as fully wired (we ensured trackers earlier).
-      for (auto &ptr : extraPlans) {
-        InstPlan *p = ptr.get();
-        // Ensure trackers exist for safety
-        ensureTrackers(p);
-        fullyWired.insert(p);
-        Operation *anchor = p->defOp ? p->defOp : body.getTerminator();
-        allPlansForOrder.push_back(PlanOrder{p, anchor, std::numeric_limits<unsigned>::max()});
-      }
 
       // Sort plans deterministically: by defining op position in block, then by array index.
       llvm::sort(allPlansForOrder, [&](const PlanOrder &a, const PlanOrder &b){
@@ -1588,10 +1416,6 @@ public:
         }
       }
 
-      // Also materialize synthesized fanout instances (if any).
-      for (auto &ptr : extraPlans) {
-        (void)materializeInstance(*ptr);
-      }
 
       // Erase symbolic ops: remove only connects we elaborated and defs we replaced.
       for (Operation *op : toErase)

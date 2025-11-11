@@ -286,8 +286,6 @@ def FifoMemrefAtomicizePass : Pass<"fifo-memref-atomicize"> {
      "Allow elaboration to proceed even if some instances are not fully connected. Fully-wired instances are materialized; partially wired instances and their symbolic ops are left intact for incremental builds.">,
    Option<"allowDynamicIndices", "allow-dynamic-indices", "bool", /*default=*/"false",
      "Permit dynamic indices in cal.instance_at or cal.connect array sugar. Such connections are skipped during elaboration with a remark (to be handled by later passes). When disabled (default), dynamic indices cause a failure.">
-   , Option<"insertFanoutOnMultiSink", "insert-fanout-on-multisink", "bool", /*default=*/"true",
-      "When a single source port connects to multiple destinations, automatically synthesize a 1-to-N fanout actor and rewrite connections through it. When disabled, multiple connections from the same source port are rejected with an error (legacy behavior).">
    , Option<"top", "top", "std::string", /*default=*/"\"\"",
       "If set, keep only the cal.network with this symbol name after flattening and erase all others. Useful to retain only the designated top network definition for downstream pipelines.">
   ];
@@ -463,6 +461,39 @@ def ElaborateCalEntitiesPass : Pass<"elaborate-cal-entities", "mlir::ModuleOp"> 
     "mlir::arith::ArithDialect"
   ];
   let constructor = "mlir::createElaborateCalEntitiesPass()";
+}
+
+// Insert synthetic fanout actors when a single source connects to multiple sinks
+// at the symbolic level. This pass scans cal.network bodies for groups of
+// cal.connect operations sharing the same source endpoint and rewrites them to
+// route through a synthesized 1-to-N fanout actor:
+//   src -> fan.in
+//   fan.out<i> -> dst_i
+// Capacity attributes on the original connects are propagated to fan.out<i> -> dst_i,
+// and a single capacity is chosen for src -> fan.in when all per-edge capacities agree;
+// otherwise a conflict is diagnosed.
+//
+// The pass creates or reuses a module-level actor symbol per (elemType, N) key with
+// a simple pop-and-push action. This prepares the IR for later elaboration/flattening
+// without embedding fanout logic into the network-flattening pass itself.
+def InsertFanoutOnMultiSinkPass : Pass<"insert-fanout-on-multisink", "mlir::ModuleOp"> {
+  let summary = "Insert fanout actors for multi-sink connections at the symbolic level";
+  let description = [{
+    Detects when a single source endpoint (instance port or network port) is connected
+    to multiple destinations within a cal.network and rewrites the topology by inserting
+    a 1-to-N fanout actor. This normalization avoids duplicate-source diagnostics in
+    downstream structural passes and keeps fanout logic modular.
+
+    Limitations (v1):
+    - Requires constant array indices when connect uses array indexing on the source.
+    - Skips interface-typed sources (no concrete element type to materialize fanout).
+  }];
+  let constructor = "mlir::createInsertFanoutOnMultiSinkPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::fifo::FifoDialect",
+    "mlir::arith::ArithDialect"
+  ];
 }
 
 #endif // CAL_TRANSFORM_PASSES

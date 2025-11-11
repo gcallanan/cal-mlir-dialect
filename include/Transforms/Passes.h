@@ -26,6 +26,7 @@ std::unique_ptr<mlir::Pass> createVerifyConnectPortsPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayFillsPass();
 std::unique_ptr<mlir::Pass> createInferCalInstanceArrayShapePass();
 std::unique_ptr<mlir::Pass> createElaborateCalEntitiesPass();
+std::unique_ptr<mlir::Pass> createInsertFanoutOnMultiSinkPass();
 
 // Emit registration functions.
 #define GEN_PASS_REGISTRATION

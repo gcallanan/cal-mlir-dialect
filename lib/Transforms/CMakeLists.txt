@@ -4,6 +4,7 @@ add_subdirectory(DenseConstantsToGPU)
 add_subdirectory(HoistAllocs)
 add_subdirectory(CalPrepareGpuAsyncRegions)
 add_subdirectory(FifoAtomicize)
+add_subdirectory(InsertFanoutOnMultiSink)
 add_subdirectory(FlattenNetworks)
 # Legacy structural passes removed: LowerInstanceFor and ResolveInstanceIf
 add_subdirectory(CalConstEval)

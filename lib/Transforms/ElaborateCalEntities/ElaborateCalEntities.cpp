@@ -65,9 +65,9 @@ struct ElaborateCalEntitiesPass : public impl::ElaborateCalEntitiesPassBase<Elab
       Type arrTy = arrInit.getResult().getType();
       if (!isa<cal::InstanceArrayType>(arrTy)) return; // concrete arrays only v1
       // Constant bounds only.
-  auto lb = evalConstIndex(forOp.getLowerBound());
-  auto ub = evalConstIndex(forOp.getUpperBound());
-  auto step = evalConstIndex(forOp.getStep());
+      auto lb = evalConstIndex(forOp.getLowerBound());
+      auto ub = evalConstIndex(forOp.getUpperBound());
+      auto step = evalConstIndex(forOp.getStep());
       if (!(lb && ub && step) || *step <= 0) return;
       candidates.push_back(forOp);
     });
@@ -76,9 +76,9 @@ struct ElaborateCalEntitiesPass : public impl::ElaborateCalEntitiesPassBase<Elab
 
     // Process each loop: inline body iterations sequentially and rebuild array sets.
     for (scf::ForOp forOp : candidates) {
-  auto lb = *evalConstIndex(forOp.getLowerBound());
-  auto ub = *evalConstIndex(forOp.getUpperBound());
-  auto step = *evalConstIndex(forOp.getStep());
+      auto lb = *evalConstIndex(forOp.getLowerBound());
+      auto ub = *evalConstIndex(forOp.getUpperBound());
+      auto step = *evalConstIndex(forOp.getStep());
       int64_t tripCount = (ub - lb + step - 1) / step; // ceil_div
       if (tripCount <= 0) continue;
 

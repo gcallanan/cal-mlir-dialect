@@ -10,4 +10,5 @@ target_link_libraries(CalGenericTransformsPipelines
   MLIRVerifyInstanceArrayFills
   VerifyConnectPortsPass
   InferCalInstanceArrayShapePass
+  InsertFanoutOnMultiSinkPass
 )
