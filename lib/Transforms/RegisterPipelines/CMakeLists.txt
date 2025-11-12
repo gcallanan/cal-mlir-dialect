@@ -7,6 +7,8 @@ target_link_libraries(CalGenericTransformsPipelines
   MLIROptLib
   MLIRCal
   MLIRFifo
+  ConstJITResolvePass
+  ParamSpecializePass
   MLIRVerifyInstanceArrayFills
   VerifyConnectPortsPass
   InferCalInstanceArrayShapePass

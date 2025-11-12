@@ -37,7 +37,7 @@ static void buildCalStructuralElabPipeline(OpPassManager &pm) {
 //  canonicalize
 //  elaborate-scf-structures
 //  canonicalize
-//  cal-const-eval   (late fold e.g. pow2 after flatten)
+//  cal-const-eval   (late const-eval after flatten)
 //  cse
 //  verify-instance-array-fills, verify-connect-ports (sanity)
 static void buildCalElaborateStage1Pipeline(OpPassManager &pm) {
@@ -70,6 +70,50 @@ void registerCalGenericTransformationsPipelines() {
       "cal-elaborate-stage1",
       "Parent-aware const-parameter specialization + SCF-first elaboration + flatten + late const-eval (Stage 1)",
       [](OpPassManager &pm) { buildCalElaborateStage1Pipeline(pm); });
+
+  // New unified full elaboration pipeline (WORK IN PROGRESS): cal-network-elab
+  // Target ordering (final goal):
+  //   A  ConstJITResolvePass          (always JIT – replaces CalConstEval)
+  //   B  ParamSpecializePass          (stable cloning of cal.actor/network)
+  //   C  NetworkElementsElabPass      (entity/array structuralization: extract arrays from loops, fold const scf.if)
+  //   E  NetworkFlattenPass           (symbolic flatten only)
+  //   Fanout InsertFanoutAfterFlatten (mandatory symbolic fanout synthesis)
+  //   D  NetworkElaboratePass         (materialize fifo.create + cal.create_instance)
+  //   F  ReachabilityPruneAndVerify   (pruning + port + connectivity checks)
+  //   G  (later conversion pipeline, not part of this transform pipeline)
+  // Until the new passes land we approximate with existing ones:
+  //   - CalConstEvalPass stands in for A
+  //   - (no separate B yet)
+  //   - ElaborateScfStructuresPass approximates C
+  //   - FlattenCalNetworksPass approximates E (still performs some concrete work today)
+  //   - InsertFanoutOnMultiSinkPass acts as Fanout (multi-sink normalization)
+  //   - ElaborateCalEntitiesPass approximates D (entity elaboration)
+  //   - VerifyConnectPortsPass + VerifyInstanceArrayFillsPass partially cover F
+  // NOTE: As refactors land, replace these with the dedicated passes and adjust ordering.
+  auto buildCalNetworkElabPipeline = [](OpPassManager &pm) {
+    // A: always-JIT const resolution (wrapper over CalConstEval for now)
+    pm.addPass(createConstJITResolvePass());
+    // B: specialize symbols on constant parameter tuples
+    pm.addPass(createParamSpecializePass());
+  // C: network elements elaboration placeholder (entities/arrays only)
+  pm.addPass(createElaborateScfStructuresPass());
+  pm.addPass(createNetworkElementsElabPass());
+    // E: flatten (currently also does some elaboration; will be split later)
+    pm.addPass(createFlattenCalNetworksPass());
+    // Fanout: mandatory symbolic fanout (currently multi-sink normalization)
+    pm.addPass(createInsertFanoutOnMultiSinkPass());
+    // D: concrete entity elaboration placeholder
+    pm.addPass(createElaborateCalEntitiesPass());
+    // F: verification & basic array fill checks (pruning to be centralized later)
+    pm.addPass(createVerifyInstanceArrayFillsPass());
+    pm.addPass(createVerifyConnectPortsPass());
+    // (G conversion passes come from separate conversion pipeline invocations)
+  };
+
+  PassPipelineRegistration<> calNetworkElab(
+      "cal-network-elab",
+      "Unified full CAL network elaboration (experimental skeleton – will migrate to dedicated passes: ConstJITResolve, ParamSpecialize, StructuralLoopElab, NetworkFlatten, Fanout, NetworkElaborate, ReachabilityPruneAndVerify)",
+      buildCalNetworkElabPipeline);
 }
 
 } // namespace mlir

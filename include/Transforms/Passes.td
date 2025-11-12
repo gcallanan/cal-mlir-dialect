@@ -321,14 +321,61 @@ def CalConstEvalPass : Pass<"cal-const-eval", "mlir::ModuleOp"> {
       "Use the MLIR global inliner prior to const-eval (off by default to avoid interface/link dependencies).">,
     Option<"enableNetworkInline", "enable-network-inline", "bool", /*default=*/"false",
       "Inline cal.network bodies when all actuals are constants (Stage 1 keeps this off by default).">,
-    Option<"enablePow2Fastpath", "enable-pow2-fastpath", "bool", /*default=*/"true",
-      "Recognize pow2-style recurrences and fold to a constant when the exponent is statically known.">,
     Option<"enableJitConstEval", "enable-jit-const-eval", "bool", /*default=*/"true",
       "Experimental: try to JIT-evaluate simple helper functions with constant operands (phase 1; conservative).">,
     Option<"enablePruneUnused", "prune-unused", "bool", /*default=*/"true",
       "After Stage-1 specialization and folding, drop cal.network/actor symbols not reachable from the detected top.">,
     Option<"topNetwork", "top", "std::string", /*default=*/"",
       "Optional explicit top cal.network symbol. If omitted, the pass will auto-detect a unique top; if multiple candidates exist, it fails with a diagnostic listing them.">
+  ];
+}
+
+// Clone symbols (actors/networks) when instantiate operands contain constants,
+// inlining those constants into the clone's entry block and retargeting the
+// instantiate op to the specialized symbol. Enables more aggressive folding
+// and structural elaboration downstream.
+def ParamSpecializePass : Pass<"cal-param-specialize", "mlir::ModuleOp"> {
+  let summary = "Specialize CAL symbols on constant parameter sets";
+  let description = [{
+    Detects cal.instantiate ops where one or more operands are compile-time
+    constants, clones the referenced cal.actor or cal.network symbol, and
+    replaces the leading parameter block arguments in the clone with those
+    constants. The instantiate op is updated to refer to the new clone, and
+    instance handle types are updated accordingly. Multiple instantiations with
+    the same constant tuple are deduplicated using a stable key.
+  }];
+  let constructor = "mlir::createParamSpecializePass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::cal::CalDialect"
+  ];
+}
+
+// Always-JIT constant resolution: evaluate pure helpers via JIT and fold
+// results into the IR. This replaces pow2-style static folding with a single
+// JIT-based mechanism. Interim implementation delegates to CalConstEval until
+// dedicated JIT folding lands.
+def ConstJITResolvePass : Pass<"const-jit-resolve", "mlir::ModuleOp"> {
+  let summary = "Always-JIT constant evaluation for pure helper functions";
+  let description = [{
+    Resolves calls to small, side-effect-free helper functions using JIT
+    evaluation when all operands are constant, replacing results with
+    compile-time constants. This pass is intended to be the single entry point
+    for constant resolution in the network elaboration pipeline and will
+    subsume ad-hoc folding like pow2-recursion detection.
+
+    Note: The initial implementation is a thin wrapper around CalConstEval
+    while the dedicated JIT machinery is extracted. The pipeline should use
+    this pass name going forward.
+  }];
+
+  let constructor = "mlir::createConstJITResolvePass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::cal::CalDialect",
+    "mlir::ub::UBDialect"
   ];
 }
 
@@ -343,6 +390,32 @@ def ElaborateScfStructuresPass : Pass<"elaborate-scf-structures", "mlir::ModuleO
     unchanged and may emit diagnostics when static elaboration is required.
   }];
   let constructor = "mlir::createElaborateScfStructuresPass()";
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
+// Elaborate network elements (entities and structural arrays) without
+// flattening: extract/normalize instance arrays from static scf.for and
+// fold const scf.if when guarding array/element construction. Does not touch
+// connects.
+def NetworkElementsElabPass : Pass<"network-elements-elab", "mlir::ModuleOp"> {
+  let summary = "Elaborate entity/array elements (structural) without flattening";
+  let description = [{
+    This pass rewrites structural array construction patterns (e.g.,
+    cal.instance.array.init/set inside static scf.for) into canonical
+    array forms such as cal.instantiate_array with static count, or
+    cal.instance_array.literal/concat where applicable. It may fold
+    constant scf.if that merely guard element/array construction.
+
+    The pass does not materialize connects, FIFOs, or concrete instance
+    creation, and does not flatten networks. It focuses solely on entity
+    and array structuralization to prepare for later flattening and
+    fanout.
+  }];
+  let constructor = "mlir::createNetworkElementsElabPass()";
   let dependentDialects = [
     "mlir::scf::SCFDialect",
     "mlir::cal::CalDialect",

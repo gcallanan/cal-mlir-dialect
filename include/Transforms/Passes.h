@@ -21,12 +21,15 @@ namespace mlir {
 // users including this header can call them without including the generated
 // Passes.h.inc in multiple places.
 std::unique_ptr<mlir::Pass> createCalConstEvalPass();
+std::unique_ptr<mlir::Pass> createConstJITResolvePass();
+std::unique_ptr<mlir::Pass> createParamSpecializePass();
 std::unique_ptr<mlir::Pass> createElaborateScfStructuresPass();
 std::unique_ptr<mlir::Pass> createVerifyConnectPortsPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayFillsPass();
 std::unique_ptr<mlir::Pass> createInferCalInstanceArrayShapePass();
 std::unique_ptr<mlir::Pass> createElaborateCalEntitiesPass();
 std::unique_ptr<mlir::Pass> createInsertFanoutOnMultiSinkPass();
+std::unique_ptr<mlir::Pass> createNetworkElementsElabPass();
 
 // Emit registration functions.
 #define GEN_PASS_REGISTRATION
