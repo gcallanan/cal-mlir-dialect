@@ -46,13 +46,15 @@ public:
     module.walk([&](cal::InstanceArraySetOp setOp) {
       auto arrTy = dyn_cast<InstanceArrayType>(setOp.getArray().getType());
       if (!arrTy) return;
-      checkIndices(setOp, arrTy, setOp.getIndices());
+      SmallVector<Value, 4> idxVals(setOp.getIndices().begin(), setOp.getIndices().end());
+      checkIndices(setOp, arrTy, idxVals);
     });
 
     module.walk([&](cal::InstanceAtOp atOp) {
       auto arrTy = dyn_cast<InstanceArrayType>(atOp.getArray().getType());
       if (!arrTy) return;
-      checkIndices(atOp, arrTy, atOp.getIndices());
+      SmallVector<Value, 4> idxVals(atOp.getIndices().begin(), atOp.getIndices().end());
+      checkIndices(atOp, arrTy, idxVals);
     });
 
     if (hadError) signalPassFailure();

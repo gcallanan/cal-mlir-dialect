@@ -130,12 +130,29 @@ struct InferCalInstanceArrayShapePass
     : public mlir::impl::InferCalInstanceArrayShapePassBase<InferCalInstanceArrayShapePass> {
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    // Collect arrays that participate in connect ops with non-constant indices; skip staticization to avoid
+    // interfering with downstream structural elaboration that expects dynamic shapes for indexed wiring.
+    DenseSet<Value> arraysToSkip;
+    module.walk([&](cal::ConnectOp conn) {
+      auto markIfDynamic = [&](Value arrVal, ValueRange indices) {
+        if (!arrVal || indices.empty()) return;
+        bool anyNonConst = false;
+        for (Value iv : indices) {
+          if (!iv.getDefiningOp<arith::ConstantOp>()) { anyNonConst = true; break; }
+        }
+        if (anyNonConst) arraysToSkip.insert(arrVal);
+      };
+      markIfDynamic(conn.getSrc(), conn.getSrcIndices());
+      markIfDynamic(conn.getDst(), conn.getDstIndices());
+    });
     SmallVector<scf::ForOp> forOps;
     module.walk([&](scf::ForOp f){ forOps.push_back(f); });
     IRRewriter rewriter(&getContext());
     for (scf::ForOp root : forOps) {
       LoopNestInfo info;
-      if (!collectLoopNest(root, info)) continue;
+  if (!collectLoopNest(root, info)) continue;
+  // If outer loop result array is marked to skip (used in dynamic indexed connect), do not staticize.
+  if (arraysToSkip.contains(root.getResult(0))) continue;
       // Compute extents from each loop.
       SmallVector<int64_t> extents; extents.reserve(info.loops.size());
       bool fail=false;
@@ -262,6 +279,7 @@ struct InferCalInstanceArrayShapePass
       if (!shape) continue;
       bool anyStatic=false; for (Attribute a : shape) if (auto ia=dyn_cast<IntegerAttr>(a)) if (ia.getInt()!=-1) anyStatic=true;
       if (anyStatic) continue; // already partially or fully static -> skip (handled elsewhere)
+      if (arraysToSkip.contains(init.getResult())) continue;
       // If there are no dims operands, cannot infer (already dynamic without explicit extents)
       if (init.getDims().empty()) continue;
       SmallVector<int64_t> extents; bool allConst=true;
@@ -294,6 +312,7 @@ struct InferCalInstanceArrayShapePass
       if (!shape || shape.size() != 1) continue; // only 1-D for now
       auto ia = dyn_cast<IntegerAttr>(shape[0]);
       if (!ia || ia.getInt() != -1) continue; // already static
+      if (arraysToSkip.contains(lit.getResult())) continue;
       int64_t n = (int64_t)lit.getInputs().size();
       if (n <= 0) continue;
       auto *ctx = rewriter.getContext();
@@ -315,6 +334,7 @@ struct InferCalInstanceArrayShapePass
       if (!resShape || resShape.size()!=1) continue; // Only 1-D for now
       auto resDimAttr = dyn_cast<IntegerAttr>(resShape[0]);
       if (!resDimAttr || resDimAttr.getInt() != -1) continue; // already static result
+      if (arraysToSkip.contains(concat.getResult())) continue;
       auto lhsTy = dyn_cast<InstanceArrayType>(concat.getLhs().getType());
       auto rhsTy = dyn_cast<InstanceArrayType>(concat.getRhs().getType());
       if (!lhsTy || !rhsTy) continue;

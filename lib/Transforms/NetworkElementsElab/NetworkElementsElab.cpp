@@ -167,8 +167,9 @@ public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
     RewritePatternSet patterns(&getContext());
-    patterns.add<FoldConstIfNoResult>(&getContext());
-  patterns.add<ForUnrollArrayBuilder>(&getContext());
+    // Temporarily disable FoldConstIfNoResult due to eraseOp assertion when nested uses remain.
+    // patterns.add<FoldConstIfNoResult>(&getContext());
+    patterns.add<ForUnrollArrayBuilder>(&getContext());
     (void)applyPatternsGreedily(module, std::move(patterns));
   }
 };

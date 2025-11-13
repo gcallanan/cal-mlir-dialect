@@ -1,5 +1,6 @@
 add_mlir_dialect_library(InferCalInstanceArrayShapePass
   InferCalInstanceArrayShape.cpp
+  VerifyInstanceArrayStaticUsage.cpp
 
   DEPENDS
     CalGenericTransformationsPassesIncGen

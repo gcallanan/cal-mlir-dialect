@@ -99,18 +99,19 @@ void registerCalGenericTransformationsPipelines() {
     //     This ensures subsequent structural passes (loop unrolling / entity elaboration)
     //     see static shapes and do not mutate array element types themselves.
     pm.addPass(createInferCalInstanceArrayShapePass());
-  // C: network elements elaboration placeholder (entities/arrays only)
-  pm.addPass(createElaborateScfStructuresPass());
-  pm.addPass(createNetworkElementsElabPass());
+    // C: network elements elaboration placeholder (entities/arrays only)
+    // TEMP: omit ElaborateScfStructuresPass here due to instance_at use-after-destroy crash (#cal-net-elab-temp)
+    // pm.addPass(createElaborateScfStructuresPass());
+    pm.addPass(createNetworkElementsElabPass());
     // E: flatten (currently also does some elaboration; will be split later)
-    pm.addPass(createFlattenCalNetworksPass());
-    // Fanout: mandatory symbolic fanout (currently multi-sink normalization)
-    pm.addPass(createInsertFanoutOnMultiSinkPass());
-    // D: concrete entity elaboration placeholder
-    pm.addPass(createElaborateCalEntitiesPass());
+  pm.addPass(createFlattenCalNetworksPass());
+  // Fanout pass temporarily disabled due to dominance issues on fft example.
+  // pm.addPass(createInsertFanoutOnMultiSinkPass());
+  // D: concrete entity elaboration placeholder
+  pm.addPass(createElaborateCalEntitiesPass());
     // F: verification & basic array fill checks (pruning to be centralized later)
-    pm.addPass(createVerifyInstanceArrayFillsPass());
-    pm.addPass(createVerifyConnectPortsPass());
+  pm.addPass(createVerifyInstanceArrayFillsPass());
+  pm.addPass(createVerifyConnectPortsPass());
   pm.addPass(createVerifyInstanceArrayStaticUsagePass());
     // (G conversion passes come from separate conversion pipeline invocations)
   };
