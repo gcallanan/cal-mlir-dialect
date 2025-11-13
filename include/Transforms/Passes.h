@@ -30,6 +30,7 @@ std::unique_ptr<mlir::Pass> createInferCalInstanceArrayShapePass();
 std::unique_ptr<mlir::Pass> createElaborateCalEntitiesPass();
 std::unique_ptr<mlir::Pass> createInsertFanoutOnMultiSinkPass();
 std::unique_ptr<mlir::Pass> createNetworkElementsElabPass();
+std::unique_ptr<mlir::Pass> createVerifyInstanceArrayStaticUsagePass();
 
 // Emit registration functions.
 #define GEN_PASS_REGISTRATION

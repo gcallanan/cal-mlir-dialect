@@ -95,6 +95,10 @@ void registerCalGenericTransformationsPipelines() {
     pm.addPass(createConstJITResolvePass());
     // B: specialize symbols on constant parameter tuples
     pm.addPass(createParamSpecializePass());
+    // C0: early shape inference for instance arrays (static extent upgrade)
+    //     This ensures subsequent structural passes (loop unrolling / entity elaboration)
+    //     see static shapes and do not mutate array element types themselves.
+    pm.addPass(createInferCalInstanceArrayShapePass());
   // C: network elements elaboration placeholder (entities/arrays only)
   pm.addPass(createElaborateScfStructuresPass());
   pm.addPass(createNetworkElementsElabPass());
@@ -107,6 +111,7 @@ void registerCalGenericTransformationsPipelines() {
     // F: verification & basic array fill checks (pruning to be centralized later)
     pm.addPass(createVerifyInstanceArrayFillsPass());
     pm.addPass(createVerifyConnectPortsPass());
+  pm.addPass(createVerifyInstanceArrayStaticUsagePass());
     // (G conversion passes come from separate conversion pipeline invocations)
   };
 

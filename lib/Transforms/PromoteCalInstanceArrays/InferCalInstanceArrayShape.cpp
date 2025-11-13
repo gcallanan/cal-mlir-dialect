@@ -6,6 +6,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "Dialect/Cal/CalOps.h"
@@ -163,15 +164,20 @@ struct InferCalInstanceArrayShapePass
         newDims.push_back(IntegerAttr::get(IntegerType::get(ctx,64), e));
       auto staticTy = InstanceArrayType::get(ctx, dynTy.getActorRef(), ArrayAttr::get(ctx, newDims));
 
-      // Rebuild loop nest recursively (shape-only) with static array type.
+      // Rebuild entire loop nest recursively (shape-only) with static array type.
+      DenseSet<Operation*> rebuilt;
       std::function<Value(unsigned, Value)> rebuildNest = [&](unsigned idx, Value carried) -> Value {
         scf::ForOp oldLoop = info.loops[idx];
+        if (rebuilt.contains(oldLoop.getOperation()))
+          return info.loops[idx]->getResult(0); // already rebuilt
         rewriter.setInsertionPoint(oldLoop);
         Value init = carried;
         if (idx == 0) {
+          // Fresh static init replaces dynamic iter arg seed.
           init = rewriter.create<cal::InstanceArrayInitOp>(oldLoop.getLoc(), staticTy, ValueRange{});
         }
         auto newLoop = rewriter.create<scf::ForOp>(oldLoop.getLoc(), oldLoop.getLowerBound(), oldLoop.getUpperBound(), oldLoop.getStep(), ValueRange{init});
+        rebuilt.insert(oldLoop.getOperation());
         Block *oldBody = oldLoop.getBody();
         Block *newBody = newLoop.getBody();
         IRMapping map;
@@ -179,9 +185,19 @@ struct InferCalInstanceArrayShapePass
         map.map(oldLoop.getRegionIterArg(0), newLoop.getRegionIterArg(0));
         rewriter.setInsertionPointToStart(newBody);
         for (Operation &op : oldBody->without_terminator()) {
+          // Nested loop: rebuild recursively and map its result.
           if (auto innerOld = dyn_cast<scf::ForOp>(&op)) {
-            // Recurse to build inner loop; existing rebuild will handle its body.
-            (void)innerOld; // no-op; the actual nested loop will be handled when root advances
+            // Identify index of this inner loop in collected nest.
+            unsigned nextIdx = 0;
+            bool found=false;
+            for (unsigned k=0;k<info.loops.size();++k) {
+              if (info.loops[k] == innerOld) { nextIdx = k; found=true; break; }
+            }
+            if (found) {
+              Value carriedInner = map.lookupOrDefault(oldLoop.getRegionIterArg(0));
+              Value innerRes = rebuildNest(nextIdx, carriedInner);
+              map.map(innerOld.getResult(0), innerRes);
+            }
             continue;
           }
           if (auto setOp = dyn_cast<cal::InstanceArraySetOp>(&op)) {
@@ -194,11 +210,13 @@ struct InferCalInstanceArrayShapePass
             continue;
           }
           if (isa<cal::InstanceArrayInitOp>(&op)) {
-            continue; // skip dynamic init
+            // Drop dynamic init; replaced by static init above.
+            continue;
           }
           Operation *cloned = rewriter.clone(op, map);
           for (auto [o, n] : llvm::zip(op.getResults(), cloned->getResults())) map.map(o, n);
         }
+        // Yield last mapped set or the carried array if none.
         scf::YieldOp oldYield = dyn_cast<scf::YieldOp>(oldBody->getTerminator());
         Value oldYieldVal = oldYield.getOperand(0);
         Value newYieldVal = map.lookupOrNull(oldYieldVal);
@@ -209,8 +227,143 @@ struct InferCalInstanceArrayShapePass
       };
 
       Value finalVal = rebuildNest(0, Value());
+      // Adjust enclosing function signature BEFORE replacing loop so verification sees consistent types.
+      if (auto fn = info.loops.front()->getParentOfType<func::FuncOp>()) {
+        auto oldFnType = fn.getFunctionType();
+        SmallVector<Type> resultTypes(oldFnType.getResults().begin(), oldFnType.getResults().end());
+        // Scan returns for staticized arrays.
+        bool needsUpdate=false;
+        fn.walk([&](func::ReturnOp ret){
+          for (auto it : llvm::enumerate(ret.getOperands())) {
+            if (it.index() >= resultTypes.size()) continue;
+            auto oldArr = dyn_cast<cal::InstanceArrayType>(resultTypes[it.index()]);
+            auto newArr = dyn_cast<cal::InstanceArrayType>(finalVal.getType());
+            if (!oldArr || !newArr) continue;
+            bool oldDynamic=false; for (Attribute a : oldArr.getShape()) if (auto ia=dyn_cast<IntegerAttr>(a)) if (ia.getInt()==-1) { oldDynamic=true; break; }
+            bool newFullyStatic=true; for (Attribute a : newArr.getShape()) if (auto ia=dyn_cast<IntegerAttr>(a)) if (ia.getInt()==-1) { newFullyStatic=false; break; }
+            if (oldDynamic && newFullyStatic) { resultTypes[it.index()] = newArr; needsUpdate=true; }
+          }
+        });
+        if (needsUpdate) {
+          auto newFnType = FunctionType::get(fn.getContext(), oldFnType.getInputs(), resultTypes);
+          fn.setType(newFnType);
+        }
+      }
       rewriter.replaceOp(info.loops.front(), finalVal);
     }
+
+    // Pass 2: Upgrade dynamic instance.array.init with constant dim operands to static type.
+    SmallVector<cal::InstanceArrayInitOp> initOps;
+    module.walk([&](cal::InstanceArrayInitOp op){ initOps.push_back(op); });
+    for (auto init : initOps) {
+      auto arrTy = dyn_cast<InstanceArrayType>(init.getResult().getType());
+      if (!arrTy) continue;
+      auto shape = arrTy.getShape();
+      if (!shape) continue;
+      bool anyStatic=false; for (Attribute a : shape) if (auto ia=dyn_cast<IntegerAttr>(a)) if (ia.getInt()!=-1) anyStatic=true;
+      if (anyStatic) continue; // already partially or fully static -> skip (handled elsewhere)
+      // If there are no dims operands, cannot infer (already dynamic without explicit extents)
+      if (init.getDims().empty()) continue;
+      SmallVector<int64_t> extents; bool allConst=true;
+      for (Value d : init.getDims()) {
+        auto c = evalConstIndex(d);
+        if (!c || *c <= 0) { allConst=false; break; }
+        extents.push_back(*c);
+      }
+      if (!allConst) continue;
+      // Build static type
+      auto *ctx = rewriter.getContext();
+      SmallVector<Attribute> dimAttrs; dimAttrs.reserve(extents.size());
+      for (int64_t e : extents)
+        dimAttrs.push_back(IntegerAttr::get(IntegerType::get(ctx,64), e));
+      auto staticTy = InstanceArrayType::get(ctx, arrTy.getActorRef(), ArrayAttr::get(ctx, dimAttrs));
+      rewriter.setInsertionPoint(init);
+      auto newInit = rewriter.create<cal::InstanceArrayInitOp>(init.getLoc(), staticTy, ValueRange{});
+      // Mark for debugging
+      newInit->setAttr("cal.shape_inferred", rewriter.getUnitAttr());
+      rewriter.replaceOp(init, newInit.getResult());
+    }
+
+    // Pass 3: Upgrade dynamic instance_array.literal based on operand count (1-D only).
+    SmallVector<cal::InstanceArrayLiteralOp> literalOps;
+    module.walk([&](cal::InstanceArrayLiteralOp op){ literalOps.push_back(op); });
+    for (auto lit : literalOps) {
+      auto arrTy = dyn_cast<InstanceArrayType>(lit.getResult().getType());
+      if (!arrTy) continue;
+      auto shape = arrTy.getShape();
+      if (!shape || shape.size() != 1) continue; // only 1-D for now
+      auto ia = dyn_cast<IntegerAttr>(shape[0]);
+      if (!ia || ia.getInt() != -1) continue; // already static
+      int64_t n = (int64_t)lit.getInputs().size();
+      if (n <= 0) continue;
+      auto *ctx = rewriter.getContext();
+      auto newShape = ArrayAttr::get(ctx, IntegerAttr::get(IntegerType::get(ctx,64), n));
+      auto staticTy = InstanceArrayType::get(ctx, arrTy.getActorRef(), newShape);
+      rewriter.setInsertionPoint(lit);
+      auto newLit = rewriter.create<cal::InstanceArrayLiteralOp>(lit.getLoc(), staticTy, lit.getInputs());
+      newLit->setAttr("cal.shape_inferred", rewriter.getUnitAttr());
+      rewriter.replaceOp(lit, newLit.getResult());
+    }
+
+    // Pass 4: Upgrade dynamic instance_array.concat where both operands are static 1-D arrays.
+    SmallVector<cal::InstanceArrayConcatOp> concatOps;
+    module.walk([&](cal::InstanceArrayConcatOp op){ concatOps.push_back(op); });
+    for (auto concat : concatOps) {
+      auto resTy = dyn_cast<InstanceArrayType>(concat.getResult().getType());
+      if (!resTy) continue;
+      auto resShape = resTy.getShape();
+      if (!resShape || resShape.size()!=1) continue; // Only 1-D for now
+      auto resDimAttr = dyn_cast<IntegerAttr>(resShape[0]);
+      if (!resDimAttr || resDimAttr.getInt() != -1) continue; // already static result
+      auto lhsTy = dyn_cast<InstanceArrayType>(concat.getLhs().getType());
+      auto rhsTy = dyn_cast<InstanceArrayType>(concat.getRhs().getType());
+      if (!lhsTy || !rhsTy) continue;
+      auto lhsShape = lhsTy.getShape();
+      auto rhsShape = rhsTy.getShape();
+      if (!lhsShape || lhsShape.size()!=1 || !rhsShape || rhsShape.size()!=1) continue;
+      auto lhsDim = dyn_cast<IntegerAttr>(lhsShape[0]);
+      auto rhsDim = dyn_cast<IntegerAttr>(rhsShape[0]);
+      if (!lhsDim || !rhsDim) continue;
+      int64_t l = lhsDim.getInt();
+      int64_t r = rhsDim.getInt();
+      if (l < 0 || r < 0) continue; // both must be static
+      int64_t total = l + r;
+      auto *ctx = rewriter.getContext();
+      auto newShape = ArrayAttr::get(ctx, IntegerAttr::get(IntegerType::get(ctx,64), total));
+      auto staticTy = InstanceArrayType::get(ctx, resTy.getActorRef(), newShape);
+      rewriter.setInsertionPoint(concat);
+      auto newConcat = rewriter.create<cal::InstanceArrayConcatOp>(concat.getLoc(), staticTy, concat.getLhs(), concat.getRhs());
+      newConcat->setAttr("cal.shape_inferred", rewriter.getUnitAttr());
+      rewriter.replaceOp(concat, newConcat.getResult());
+    }
+
+    // Final adjustment: update function result types if returns were staticized.
+    module.walk([&](func::FuncOp fn){
+      // Collect return ops and see if any operand type differs only by dynamic -> static array change.
+      bool needsUpdate=false;
+      SmallVector<Type> newResults(fn.getFunctionType().getResults().begin(), fn.getFunctionType().getResults().end());
+      fn.walk([&](func::ReturnOp ret){
+        for (auto it : llvm::enumerate(ret.getOperands())) {
+          Type retTy = it.value().getType();
+          if (it.index() >= newResults.size()) continue;
+          auto oldTy = dyn_cast<cal::InstanceArrayType>(newResults[it.index()]);
+          auto newTy = dyn_cast<cal::InstanceArrayType>(retTy);
+          if (!oldTy || !newTy) continue;
+          // If old was dynamic in any dim and new is fully static, update.
+          bool oldDynamic=false; bool newStatic=true;
+          for (Attribute a : oldTy.getShape()) if (auto ia=dyn_cast<IntegerAttr>(a)) if (ia.getInt()==-1) { oldDynamic=true; break; }
+          for (Attribute a : newTy.getShape()) if (auto ia=dyn_cast<IntegerAttr>(a)) if (ia.getInt()==-1) { newStatic=false; break; }
+          if (oldDynamic && newStatic) {
+            newResults[it.index()] = retTy;
+            needsUpdate=true;
+          }
+        }
+      });
+      if (needsUpdate) {
+        auto newFnType = FunctionType::get(fn.getContext(), fn.getFunctionType().getInputs(), newResults);
+        fn.setType(newFnType);
+      }
+    });
   }
 };
 
