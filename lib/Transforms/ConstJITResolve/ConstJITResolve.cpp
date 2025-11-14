@@ -13,6 +13,8 @@
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/APFloat.h"
 #include <optional>
 #include <cstdint>
@@ -64,7 +66,7 @@ struct ConstJITResolvePass
 
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, func::FuncDialect, scf::SCFDialect,
-                    cal::CalDialect, ub::UBDialect>();
+                    cf::ControlFlowDialect, LLVM::LLVMDialect, cal::CalDialect, ub::UBDialect>();
   }
 
   void runOnOperation() override {
@@ -113,6 +115,9 @@ struct ConstJITResolvePass
         if (auto call = dyn_cast<func::CallOp>(&op)) if (call.getCallee() == f.getSymName()) selfRec = true;
       }
       pureFuncs[f.getSymName()] = {f, selfRec, ok};
+      if (ok) {
+        f.emitRemark() << "Detected as pure function (selfRec=" << selfRec << ")";
+      }
     }
     // --- Task 39: Function Isolation Module ------------------------------
     // Build an in-memory temporary ModuleOp per pure function containing
@@ -194,10 +199,7 @@ struct ConstJITResolvePass
     // We instantiate one ExecutionEngine per successfully lowered isolation unit.
     struct JITEntry { std::unique_ptr<ExecutionEngine> engine; void *fnPtr = nullptr; };
     DenseMap<StringRef, JITEntry> jitCache;
-    MLIRContext *ctx = module.getContext();
-    // Register dialect translations (once).
-    registerBuiltinDialectTranslation(*ctx);
-  registerLLVMDialectTranslation(*ctx);
+  MLIRContext *ctx = module.getContext();
   if (enableExecEngine)
   for (IsolationUnit &IU : isolationUnits) {
       if (!IU.root->hasAttr("jit.lower_to_llvm.ok")) continue; // Skip failed lowers
@@ -337,32 +339,169 @@ struct ConstJITResolvePass
   std::unordered_map<std::string, int64_t> memo; // key: funcName|arg0,arg1,...
     std::function<std::optional<int64_t>(func::FuncOp, SmallVector<int64_t>&, int)> eval;
     eval = [&](func::FuncOp fn, SmallVector<int64_t> &args, int depth) -> std::optional<int64_t> {
-      if (depth > maxRecDepthOpt) return std::nullopt; auto itInfo = pureFuncs.find(fn.getSymName()); if (itInfo == pureFuncs.end() || !itInfo->second.supported) return std::nullopt;
+      if (depth > maxRecDepthOpt) {
+        fn.emitRemark() << "Recursion depth exceeded at depth=" << depth;
+        return std::nullopt;
+      }
+      auto itInfo = pureFuncs.find(fn.getSymName()); 
+      if (itInfo == pureFuncs.end() || !itInfo->second.supported) {
+        fn.emitRemark() << "Function not pure or supported";
+        return std::nullopt;
+      }
       std::string key = fn.getSymName().str(); key.push_back('|');
       for (size_t i=0;i<args.size();++i){ key.append(std::to_string(args[i])); if (i+1<args.size()) key.push_back(','); }
       if (auto it = memo.find(key); it != memo.end()) return it->second;
-      Block &block = fn.getBody().front(); if ((int)block.getNumArguments() != (int)args.size()) return std::nullopt;
-      llvm::DenseMap<Value,int64_t> env; for (auto [v,a] : llvm::zip(block.getArguments(), args)) env[v]=a;
-      int64_t retValue = 0;
-      for (Operation &op : block) {
-        if (auto ret = dyn_cast<func::ReturnOp>(&op)) { Value rv = ret.getOperand(0); if (!env.count(rv)) return std::nullopt; retValue = env[rv]; break; }
-        else if (auto cst = dyn_cast<arith::ConstantOp>(&op)) { if (auto iattr = dyn_cast<IntegerAttr>(cst.getValue())) env[cst.getResult()] = iattr.getInt(); else return std::nullopt; }
-        else if (auto addi = dyn_cast<arith::AddIOp>(&op)) { if (!env.count(addi.getLhs())||!env.count(addi.getRhs())) return std::nullopt; env[addi.getResult()] = env[addi.getLhs()]+env[addi.getRhs()]; }
-        else if (auto subi = dyn_cast<arith::SubIOp>(&op)) { if (!env.count(subi.getLhs())||!env.count(subi.getRhs())) return std::nullopt; env[subi.getResult()] = env[subi.getLhs()]-env[subi.getRhs()]; }
-        else if (auto muli = dyn_cast<arith::MulIOp>(&op)) { if (!env.count(muli.getLhs())||!env.count(muli.getRhs())) return std::nullopt; env[muli.getResult()] = env[muli.getLhs()]*env[muli.getRhs()]; }
-  else if (auto cmp = dyn_cast<arith::CmpIOp>(&op)) { if (!env.count(cmp.getLhs())||!env.count(cmp.getRhs())) return std::nullopt; int64_t lhs=env[cmp.getLhs()], rhs=env[cmp.getRhs()]; bool res=false; switch(cmp.getPredicate()){case arith::CmpIPredicate::eq:res=lhs==rhs;break;case arith::CmpIPredicate::ne:res=lhs!=rhs;break;case arith::CmpIPredicate::slt:res=lhs<rhs;break;case arith::CmpIPredicate::sle:res=lhs<=rhs;break;case arith::CmpIPredicate::sgt:res=lhs>rhs;break;case arith::CmpIPredicate::sge:res=lhs>=rhs;break;default:return std::nullopt;} env[cmp.getResult()] = res?1:0; }
-  else if (auto sel = dyn_cast<arith::SelectOp>(&op)) { Value cond = sel.getCondition(); if(!env.count(cond)) return std::nullopt; bool takeTrue = env[cond] != 0; Value chosen = takeTrue? sel.getTrueValue() : sel.getFalseValue(); if(!env.count(chosen)) return std::nullopt; env[sel.getResult()] = env[chosen]; }
-        else if (auto ifOp = dyn_cast<scf::IfOp>(&op)) { Value cond = ifOp.getCondition(); if (!env.count(cond)) return std::nullopt; bool takeThen = env[cond]!=0; Region &chosen = takeThen? ifOp.getThenRegion(): ifOp.getElseRegion(); if (!chosen.hasOneBlock()) return std::nullopt; Block &cb = chosen.front(); scf::YieldOp yld; for (Operation &inner : cb){ if (auto c = dyn_cast<arith::ConstantOp>(&inner)) { if (auto iattr = dyn_cast<IntegerAttr>(c.getValue())) env[c.getResult()]=iattr.getInt(); else return std::nullopt; } else if (auto y = dyn_cast<scf::YieldOp>(&inner)) { yld = y; break; } else if (auto ai = dyn_cast<arith::AddIOp>(&inner)) { if (!env.count(ai.getLhs())||!env.count(ai.getRhs())) return std::nullopt; env[ai.getResult()] = env[ai.getLhs()]+env[ai.getRhs()]; } else if (auto si = dyn_cast<arith::SubIOp>(&inner)) { if (!env.count(si.getLhs())||!env.count(si.getRhs())) return std::nullopt; env[si.getResult()] = env[si.getLhs()]-env[si.getRhs()]; } else if (auto mi = dyn_cast<arith::MulIOp>(&inner)) { if (!env.count(mi.getLhs())||!env.count(mi.getRhs())) return std::nullopt; env[mi.getResult()] = env[mi.getLhs()]*env[mi.getRhs()]; } }
-          if (!yld) return std::nullopt; Value yielded = yld.getOperand(0); if (!env.count(yielded)) return std::nullopt; env[ifOp.getResult(0)] = env[yielded]; }
-        else if (auto call = dyn_cast<func::CallOp>(&op)) { SmallVector<int64_t> argVals; bool allConst=true; for (Value v : call.getOperands()){ if(!env.count(v)){ allConst=false; break;} argVals.push_back(env[v]); } if(!allConst) return std::nullopt; func::FuncOp callee = module.lookupSymbol<func::FuncOp>(call.getCallee()); if(!callee) return std::nullopt; auto subRes = eval(callee, argVals, depth+1); if(!subRes) return std::nullopt; env[call.getResult(0)] = *subRes; }
-        else if (isa<scf::YieldOp>(op)) { /* handled */ }
-        else return std::nullopt;
+      Block &block = fn.getBody().front(); 
+      if ((int)block.getNumArguments() != (int)args.size()) {
+        fn.emitRemark() << "Arg count mismatch in eval";
+        return std::nullopt;
       }
-      memo[key] = retValue; return retValue;
+      llvm::DenseMap<Value,int64_t> env; 
+      for (auto [v,a] : llvm::zip(block.getArguments(), args)) env[v]=a;
+      
+      // Demand-driven evaluation: recursively compute a value only when needed
+      std::function<std::optional<int64_t>(Value)> evalValue;
+      evalValue = [&](Value v) -> std::optional<int64_t> {
+        if (env.count(v)) return env[v];
+        Operation *defOp = v.getDefiningOp();
+        if (!defOp) return std::nullopt;
+        
+        if (auto cst = dyn_cast<arith::ConstantOp>(defOp)) {
+          if (auto iattr = dyn_cast<IntegerAttr>(cst.getValue())) {
+            int64_t val = iattr.getInt();
+            env[v] = val;
+            return val;
+          }
+          return std::nullopt;
+        }
+        else if (auto addi = dyn_cast<arith::AddIOp>(defOp)) {
+          auto lhs = evalValue(addi.getLhs()); if (!lhs) return std::nullopt;
+          auto rhs = evalValue(addi.getRhs()); if (!rhs) return std::nullopt;
+          int64_t val = *lhs + *rhs;
+          env[v] = val;
+          return val;
+        }
+        else if (auto subi = dyn_cast<arith::SubIOp>(defOp)) {
+          auto lhs = evalValue(subi.getLhs()); if (!lhs) return std::nullopt;
+          auto rhs = evalValue(subi.getRhs()); if (!rhs) return std::nullopt;
+          int64_t val = *lhs - *rhs;
+          env[v] = val;
+          return val;
+        }
+        else if (auto muli = dyn_cast<arith::MulIOp>(defOp)) {
+          auto lhs = evalValue(muli.getLhs()); if (!lhs) return std::nullopt;
+          auto rhs = evalValue(muli.getRhs()); if (!rhs) return std::nullopt;
+          int64_t val = *lhs * *rhs;
+          env[v] = val;
+          return val;
+        }
+        else if (auto cmp = dyn_cast<arith::CmpIOp>(defOp)) {
+          auto lhs = evalValue(cmp.getLhs()); if (!lhs) return std::nullopt;
+          auto rhs = evalValue(cmp.getRhs()); if (!rhs) return std::nullopt;
+          bool res = false;
+          switch(cmp.getPredicate()){
+            case arith::CmpIPredicate::eq: res = *lhs == *rhs; break;
+            case arith::CmpIPredicate::ne: res = *lhs != *rhs; break;
+            case arith::CmpIPredicate::slt: res = *lhs < *rhs; break;
+            case arith::CmpIPredicate::sle: res = *lhs <= *rhs; break;
+            case arith::CmpIPredicate::sgt: res = *lhs > *rhs; break;
+            case arith::CmpIPredicate::sge: res = *lhs >= *rhs; break;
+            default: return std::nullopt;
+          }
+          int64_t val = res ? 1 : 0;
+          env[v] = val;
+          return val;
+        }
+        else if (auto sel = dyn_cast<arith::SelectOp>(defOp)) {
+          auto cond = evalValue(sel.getCondition()); if (!cond) return std::nullopt;
+          // Short-circuit: only evaluate the chosen branch
+          Value chosen = (*cond != 0) ? sel.getTrueValue() : sel.getFalseValue();
+          auto val = evalValue(chosen); if (!val) return std::nullopt;
+          env[v] = *val;
+          return val;
+        }
+        else if (auto call = dyn_cast<func::CallOp>(defOp)) {
+          SmallVector<int64_t> argVals;
+          for (Value opnd : call.getOperands()) {
+            auto argVal = evalValue(opnd); if (!argVal) return std::nullopt;
+            argVals.push_back(*argVal);
+          }
+          func::FuncOp callee = module.lookupSymbol<func::FuncOp>(call.getCallee());
+          if (!callee) return std::nullopt;
+          auto subRes = eval(callee, argVals, depth+1);
+          if (!subRes) return std::nullopt;
+          env[v] = *subRes;
+          return subRes;
+        }
+        // Add other ops as needed (scf.if, etc.)
+        return std::nullopt;
+      };
+      
+      // Find the return op and evaluate its operand
+      func::ReturnOp retOp = nullptr;
+      for (Operation &op : block) {
+        if (auto ret = dyn_cast<func::ReturnOp>(&op)) {
+          retOp = ret;
+          break;
+        }
+      }
+      if (!retOp) return std::nullopt;
+      
+      auto retVal = evalValue(retOp.getOperand(0));
+      if (!retVal) return std::nullopt;
+      
+      memo[key] = *retVal;
+      return *retVal;
     };
     if (enableInterpreterFallback) {
       OpBuilder builder(module.getContext());
-      module.walk([&](func::CallOp call){ func::FuncOp callee = module.lookupSymbol<func::FuncOp>(call.getCallee()); if(!callee) return; auto itInfo=pureFuncs.find(call.getCallee()); if(itInfo==pureFuncs.end()||!itInfo->second.supported) return; SmallVector<int64_t> argVals; for(Value opnd: call.getOperands()){ if(auto cst=opnd.getDefiningOp<arith::ConstantOp>()) { if(auto iattr=dyn_cast<IntegerAttr>(cst.getValue())) { argVals.push_back(iattr.getInt()); continue; } } return; } if(argVals.size()!=callee.getFunctionType().getNumInputs()) return; auto valueOpt = eval(callee, argVals, 0); if(!valueOpt) return; builder.setInsertionPoint(call); auto folded = builder.create<arith::ConstantIntOp>(call.getLoc(), *valueOpt, 32); if (call.getNumResults()==1) call.getResult(0).replaceAllUsesWith(folded.getResult()); call.erase(); });
+      int foldCount = 0;
+      module.walk([&](func::CallOp call){ 
+        func::FuncOp callee = module.lookupSymbol<func::FuncOp>(call.getCallee()); 
+        if(!callee) {
+          call.emitRemark() << "Callee not found: " << call.getCallee();
+          return;
+        }
+        auto itInfo=pureFuncs.find(call.getCallee()); 
+        if(itInfo==pureFuncs.end()) {
+          call.emitRemark() << "Callee not in pureFuncs map: " << call.getCallee();
+          return;
+        }
+        if(!itInfo->second.supported) {
+          call.emitRemark() << "Callee not supported: " << call.getCallee();
+          return;
+        }
+        SmallVector<int64_t> argVals; 
+        for(Value opnd: call.getOperands()){ 
+          if(auto cst=opnd.getDefiningOp<arith::ConstantOp>()) { 
+            if(auto iattr=dyn_cast<IntegerAttr>(cst.getValue())) { 
+              argVals.push_back(iattr.getInt()); 
+              continue; 
+            } 
+          } 
+          call.emitRemark() << "Non-constant operand in call to " << call.getCallee();
+          return; 
+        } 
+        if(argVals.size()!=callee.getFunctionType().getNumInputs()) {
+          call.emitRemark() << "Arg count mismatch for " << call.getCallee();
+          return;
+        }
+        call.emitRemark() << "Attempting to evaluate " << call.getCallee() << " with args";
+        auto valueOpt = eval(callee, argVals, 0); 
+        if(!valueOpt) {
+          call.emitRemark() << "Eval returned nullopt for " << call.getCallee();
+          return;
+        }
+        call.emitRemark() << "Folded " << call.getCallee() << " -> " << *valueOpt;
+        builder.setInsertionPoint(call); 
+        auto folded = builder.create<arith::ConstantIntOp>(call.getLoc(), *valueOpt, 32); 
+        if (call.getNumResults()==1) call.getResult(0).replaceAllUsesWith(folded.getResult()); 
+        call.erase();
+        foldCount++;
+      });
+      if (foldCount > 0) {
+        module.emitRemark() << "Interpreter folded " << foldCount << " calls";
+      }
     }
     // Final cleanup to propagate newly folded constants.
     {
