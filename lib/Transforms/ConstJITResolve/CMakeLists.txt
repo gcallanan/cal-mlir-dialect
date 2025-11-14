@@ -4,6 +4,12 @@ add_mlir_dialect_library(ConstJITResolvePass
   DEPENDS
     CalGenericTransformationsPassesIncGen
 
+  LINK_COMPONENTS
+    Core
+    Support
+    nativecodegen
+    X86AsmParser
+
   LINK_LIBS PUBLIC
     MLIRIR
     MLIRSupport
@@ -11,4 +17,16 @@ add_mlir_dialect_library(ConstJITResolvePass
     MLIRFuncDialect
     MLIRArithDialect
     MLIRSCFDialect
+    MLIRControlFlowDialect
+    MLIRLLVMDialect
+    MLIRUBDialect
+    MLIRExecutionEngine
+    MLIRTargetLLVMIRExport
+    MLIRSCFToControlFlow
+  MLIRControlFlowToLLVM
+    MLIRFuncToLLVM
+    MLIRArithToLLVM
+    MLIRMathToLLVM
+    MLIRMemRefToLLVM
+    MLIRReconcileUnrealizedCasts
 )

@@ -155,7 +155,7 @@ struct ElaborateScfStructuresPass : public impl::ElaborateScfStructuresPassBase<
         for (Operation &inner : llvm::make_early_inc_range(blk)) {
           if (isa<scf::YieldOp>(&inner))
             continue;
-          rewriter.clone(inner);
+          inner.moveBefore(ifOp);
         }
       }
       rewriter.eraseOp(ifOp);

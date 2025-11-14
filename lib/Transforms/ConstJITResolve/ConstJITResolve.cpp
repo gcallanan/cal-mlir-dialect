@@ -8,14 +8,23 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "mlir/IR/Visitors.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
+#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/Support/TargetSelect.h"
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -71,6 +80,14 @@ struct ConstJITResolvePass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    
+    // Initialize LLVM native target for JIT execution (required for ExecutionEngine)
+    if (enableExecEngine) {
+      llvm::InitializeNativeTarget();
+      llvm::InitializeNativeTargetAsmPrinter();
+      llvm::InitializeNativeTargetAsmParser();
+    }
+    
   // Build a small inner pass manager and parse a textual pipeline that
   // forces JIT-only const eval while disabling inliner, network inlining,
   // and pruning.
@@ -106,14 +123,25 @@ struct ConstJITResolvePass
       if (f.empty() || !f.getBody().hasOneBlock()) continue;
       if (type.getNumResults() != 1 || !type.getResult(0).isInteger(32)) continue;
       bool ok = true; bool selfRec = false;
-      for (Operation &op : f.getBody().front()) {
-        if (!isSupportedOp(&op)) { ok = false; break; }
-        if (auto mem = dyn_cast<MemoryEffectOpInterface>(&op)) {
-          // Be permissive for func.call; purity of callee will be checked when visited.
-          if (!isa<func::CallOp>(op) && !mem.hasNoEffect()) { ok = false; break; }
+      f.walk([&](Operation *op) -> WalkResult {
+        if (op == f)
+          return WalkResult::advance();
+        if (!isSupportedOp(op)) {
+          ok = false;
+          return WalkResult::interrupt();
         }
-        if (auto call = dyn_cast<func::CallOp>(&op)) if (call.getCallee() == f.getSymName()) selfRec = true;
-      }
+        if (auto mem = dyn_cast<MemoryEffectOpInterface>(op)) {
+          // Be permissive for func.call; purity of callee will be checked when visited.
+          if (!isa<func::CallOp>(op) && !mem.hasNoEffect()) {
+            ok = false;
+            return WalkResult::interrupt();
+          }
+        }
+        if (auto call = dyn_cast<func::CallOp>(op))
+          if (call.getCallee() == f.getSymName())
+            selfRec = true;
+        return WalkResult::advance();
+      });
       pureFuncs[f.getSymName()] = {f, selfRec, ok};
       if (ok) {
         f.emitRemark() << "Detected as pure function (selfRec=" << selfRec << ")";
@@ -161,26 +189,24 @@ struct ConstJITResolvePass
   if (enableExecEngine)
   for (IsolationUnit &IU : isolationUnits) {
       ModuleOp iso = IU.isolated;
-      // Build a lowering pipeline. Use explicit pass manager instead of textual
-      // pipeline to get compile-time coverage and clearer failures.
+      // Build a lowering pipeline. Use explicit pass creation instead of textual
+      // pipeline to ensure all passes are available at compile time.
       PassManager lowerPM(iso.getContext());
       // Canonicalize before conversions.
       lowerPM.addPass(createCanonicalizerPass());
       // Convert SCF to CF so later LLVM conversion can proceed.
       lowerPM.addPass(createConvertSCFToCFPass());
-      // (Optional) Expand complex arithmetic; currently not needed but safe.
-      // lowerPM.addPass(createMathToFuncsPass()); // If math functions present.
       // Perform another canonicalize+CSE to clean up.
       lowerPM.addPass(createCanonicalizerPass());
       lowerPM.addPass(createCSEPass());
-      // Attempt common conversions if available (best-effort across toolchains).
-      (void)parsePassPipeline("convert-arith-to-llvm", lowerPM);
-      (void)parsePassPipeline("convert-math-to-llvm", lowerPM);
-      (void)parsePassPipeline("convert-memref-to-llvm", lowerPM);
-      // Attempt textual pipeline to lower func to llvm if available.
-      if (failed(parsePassPipeline("convert-func-to-llvm", lowerPM))) {
-        IU.root->setAttr("jit.lower_to_llvm.pipeline_parse_failed", UnitAttr::get(iso.getContext()));
-      }
+      // Convert all dialects to LLVM using proper pass creation functions
+  lowerPM.addPass(createArithToLLVMConversionPass());
+  lowerPM.addPass(createConvertMathToLLVMPass());
+  lowerPM.addPass(createConvertControlFlowToLLVMPass());
+  lowerPM.addPass(createFinalizeMemRefToLLVMConversionPass());
+  lowerPM.addPass(createConvertFuncToLLVMPass());
+      // Reconcile unrealized casts that may be left over
+      lowerPM.addPass(createReconcileUnrealizedCastsPass());
       // One more canonicalize to fold trivial patterns post-conversion.
       lowerPM.addPass(createCanonicalizerPass());
       if (failed(lowerPM.run(iso))) {
@@ -203,9 +229,12 @@ struct ConstJITResolvePass
   if (enableExecEngine)
   for (IsolationUnit &IU : isolationUnits) {
       if (!IU.root->hasAttr("jit.lower_to_llvm.ok")) continue; // Skip failed lowers
-      // Create engine.
+      
+      // Create ExecutionEngine - the translation interfaces should already be
+      // registered in the main context (from cal-opt main.cpp)
       auto expectedEngine = ExecutionEngine::create(IU.isolated);
       if (!expectedEngine) {
+        // If this fails, the translation interfaces might not be registered
         IU.root->setAttr("jit.engine_create_failed", UnitAttr::get(ctx));
         continue;
       }

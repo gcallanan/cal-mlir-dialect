@@ -49,6 +49,8 @@
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Target/LLVMIR/Dialect/GPU/GPUToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 
 // Project-specific dialects
 #include "Dialect/Cal/CalDialect.h"
@@ -138,6 +140,7 @@ int main(int argc, char **argv) {
   mlir::NVVM::registerConvertGpuToNVVMInterface(registry);
   mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerGPUDialectTranslation(registry);
+  mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
   mlir::registerNVVMDialectTranslation(registry);
 
