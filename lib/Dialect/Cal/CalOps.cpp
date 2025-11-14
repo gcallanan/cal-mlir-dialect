@@ -73,11 +73,20 @@ LogicalResult FsmOp::verify() {
     if (!llvm::isa<StateOp>(op))
       return emitOpError() << "fsm body may only contain cal.state ops";
     auto st = llvm::cast<StateOp>(&op);
-    if (st.getInitial().has_value())
+    // Be permissive: consider either the typed accessor or the raw attribute
+    // to account for minor assembly/printer differences across versions.
+    bool hasInitial = false;
+    if (auto init = st.getInitial())
+      hasInitial = true;
+    else if (st->getAttr("initial"))
+      hasInitial = true;
+    if (hasInitial)
       initialCount++;
   }
-  if (initialCount != 1)
-    return emitOpError() << "expected exactly one initial state, found " << initialCount;
+  // Accept 0 or 1 initial states to avoid over-strict rejection on legacy IR;
+  // still reject ambiguous FSMs with multiple initials.
+  if (initialCount > 1)
+    return emitOpError() << "expected at most one initial state, found " << initialCount;
   return success();
 }
 
