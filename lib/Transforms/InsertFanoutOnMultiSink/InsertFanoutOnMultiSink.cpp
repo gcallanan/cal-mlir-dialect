@@ -79,10 +79,21 @@ struct InsertFanoutOnMultiSinkPass
     auto loc = UnknownLoc::get(ctx);
     // Create actor with one input port and numSinks output ports.
     // Build with required attributes (symbol name; no port name attrs at build time).
+    // Prepare explicit port names so downstream connect-by-name verification succeeds.
+    SmallVector<Attribute> inNamesAttrs;
+    inNamesAttrs.push_back(StringAttr::get(ctx, "in"));
+    SmallVector<Attribute> outNamesAttrs;
+    outNamesAttrs.reserve(numSinks);
+    for (unsigned i = 0; i < numSinks; ++i) {
+      outNamesAttrs.push_back(StringAttr::get(ctx, ("out" + std::to_string(i)).c_str()));
+    }
+    auto inNames = ArrayAttr::get(ctx, inNamesAttrs);
+    auto outNames = ArrayAttr::get(ctx, outNamesAttrs);
+
     auto actor = actorBuilder.create<cal::ActorOp>(
       loc,
-      actorBuilder.getStringAttr(symName), /*inPortNames*/ ArrayAttr(),
-      /*outPortNames*/ ArrayAttr(), /*nonPreemptive*/ UnitAttr());
+      actorBuilder.getStringAttr(symName), /*inPortNames*/ inNames,
+      /*outPortNames*/ outNames, /*nonPreemptive*/ UnitAttr());
       // Construct entry block with ports.
       // Ports are region block arguments; pattern: [standard params][ports_in][ports_out]. We have only ports.
       Block &bodyBlock = actor.getBody().emplaceBlock();
@@ -210,14 +221,34 @@ struct InsertFanoutOnMultiSinkPass
 
         // Instantiate fanout actor inside the network (symbolic instantiate -> instance handle for now).
         // We create an explicit instantiate op (pre-elaboration) then connections.
-        auto loc = connects.front().getLoc();
-        builder.setInsertionPoint(connects.front());
+        // CRITICAL: choose an insertion point that (a) comes after the src definition and
+        // (b) dominates all sink connects. If connects are spread across different blocks,
+        // conservatively skip this group to avoid SSA dominance issues; a later pass can revisit.
+        Operation *defOp = src.getDefiningOp();
+        Block *defBlock = defOp ? defOp->getBlock() : &net.getBody().front();
+        bool sameBlock = llvm::all_of(connects, [&](cal::ConnectOp c){ return c->getBlock() == defBlock; });
+        if (!sameBlock) {
+          // Skip groups that span multiple blocks; avoid introducing cross-block dominance bugs.
+          continue;
+        }
+        // Find earliest connect in the defining block.
+        Operation *anchor = connects.front();
+        for (cal::ConnectOp c : connects) {
+          if (c->getBlock() == defBlock && c->isBeforeInBlock(anchor)) anchor = c;
+        }
+        // Ensure we insert after the source definition if present.
+        auto loc = anchor->getLoc();
+        if (defOp && anchor->isBeforeInBlock(defOp)) {
+          builder.setInsertionPointAfter(defOp);
+        } else {
+          builder.setInsertionPoint(anchor);
+        }
   // Build a !cal.instance<@fan> handle result type for instantiate
   auto fanSymRef = FlatSymbolRefAttr::get(ctx, fanoutActor.getSymName());
   auto fanHandleTy = cal::InstanceType::get(ctx, fanSymRef);
   auto fanHandle = builder.create<cal::InstantiateOp>(loc, fanHandleTy, fanSymRef, /*instanceName*/ StringAttr(), /*params*/ ValueRange{});
 
-        // Connect src -> fan.in (port name is "in") inserted before first connect.
+        // Connect src -> fan.in (port name is "in") inserted before the earliest connect.
         StringAttr fanInName = StringAttr::get(ctx, "in");
         IntegerAttr capAttr = (cap >= 0) ? builder.getI64IntegerAttr(cap) : IntegerAttr();
         builder.create<cal::ConnectOp>(loc,
@@ -244,7 +275,7 @@ struct InsertFanoutOnMultiSinkPass
 };
 } // namespace
 
-std::unique_ptr<Pass> mlir::createInsertFanoutOnMultiSinkPass() {
+std::unique_ptr<Pass> createInsertFanoutOnMultiSinkPass() {
   return std::make_unique<InsertFanoutOnMultiSinkPass>();
 }
 } // namespace mlir
