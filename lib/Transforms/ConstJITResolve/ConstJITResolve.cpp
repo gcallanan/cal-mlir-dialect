@@ -23,6 +23,7 @@
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/Support/TargetSelect.h"
 #include <optional>
@@ -34,10 +35,6 @@ namespace mlir {
 
 namespace {
 /// Thin wrapper pass while we extract a dedicated always-JIT constant resolver.
-#include <optional>
-#include <string>
-#include <unordered_map>
-#include <set>
 
 /// For now, delegate to CalConstEval with default options and follow with a
 /// canonicalizer to propagate constants.
@@ -81,11 +78,20 @@ struct ConstJITResolvePass
   void runOnOperation() override {
     ModuleOp module = getOperation();
     
+    // Decide whether to use the ExecutionEngine (JIT).
+    bool useExecEngine = enableExecEngine;
+    std::string hostTripleStr;
+    if (useExecEngine) {
+      if (auto jtmbOrErr = llvm::orc::JITTargetMachineBuilder::detectHost())
+        hostTripleStr = jtmbOrErr->getTargetTriple().getTriple();
+    }
+
     // Initialize LLVM native target for JIT execution (required for ExecutionEngine)
-    if (enableExecEngine) {
+    if (useExecEngine) {
       llvm::InitializeNativeTarget();
       llvm::InitializeNativeTargetAsmPrinter();
       llvm::InitializeNativeTargetAsmParser();
+      llvm::InitializeNativeTargetDisassembler();
     }
     
   // Build a small inner pass manager and parse a textual pipeline that
@@ -173,6 +179,21 @@ struct ConstJITResolvePass
       dfs(root, visited, reachable);
       // Create temporary module and deep-clone reachable pure functions.
       ModuleOp isoMod = ModuleOp::create(root.getLoc());
+      // Stamp host target triple and data layout for reliable JIT on non-x86 (e.g., AArch64).
+      if (enableExecEngine) {
+        auto expectedJtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
+        if (expectedJtmb) {
+          auto jtmb = std::move(*expectedJtmb);
+          auto expectedDL = jtmb.getDefaultDataLayoutForTarget();
+          if (expectedDL) {
+            auto dl = std::move(*expectedDL);
+            auto tripleStr = jtmb.getTargetTriple().getTriple();
+            MLIRContext *ctx = isoMod.getContext();
+            isoMod->setAttr(LLVM::LLVMDialect::getTargetTripleAttrName(), StringAttr::get(ctx, tripleStr));
+            isoMod->setAttr(LLVM::LLVMDialect::getDataLayoutAttrName(), StringAttr::get(ctx, dl.getStringRepresentation()));
+          }
+        }
+      }
       for (func::FuncOp rf : reachable) {
         Operation *cloned = rf.clone();
         isoMod.push_back(cloned);
@@ -186,7 +207,7 @@ struct ConstJITResolvePass
     // lower 'isolated' modules to LLVM and JIT evaluate them.
 
     // --- Task 40: Lower isolation modules to LLVM dialect -----------------
-  if (enableExecEngine)
+  if (useExecEngine)
   for (IsolationUnit &IU : isolationUnits) {
       ModuleOp iso = IU.isolated;
       // Build a lowering pipeline. Use explicit pass creation instead of textual
@@ -226,13 +247,15 @@ struct ConstJITResolvePass
     struct JITEntry { std::unique_ptr<ExecutionEngine> engine; void *fnPtr = nullptr; };
     DenseMap<StringRef, JITEntry> jitCache;
   MLIRContext *ctx = module.getContext();
-  if (enableExecEngine)
+  if (useExecEngine)
   for (IsolationUnit &IU : isolationUnits) {
       if (!IU.root->hasAttr("jit.lower_to_llvm.ok")) continue; // Skip failed lowers
       
       // Create ExecutionEngine - the translation interfaces should already be
       // registered in the main context (from cal-opt main.cpp)
-      auto expectedEngine = ExecutionEngine::create(IU.isolated);
+      ExecutionEngineOptions eeOpts;
+      // Let the engine pick host triple/CPU. Using options path for better portability.
+      auto expectedEngine = ExecutionEngine::create(IU.isolated, eeOpts);
       if (!expectedEngine) {
         // If this fails, the translation interfaces might not be registered
         IU.root->setAttr("jit.engine_create_failed", UnitAttr::get(ctx));
@@ -262,6 +285,10 @@ struct ConstJITResolvePass
       if (it == jitCache.end()) return;
       func::FuncOp callee = module.lookupSymbol<func::FuncOp>(calleeName);
       if (!callee) return;
+      // Avoid JIT-folding for self-recursive helpers; prefer interpreter path.
+      if (auto itInfo = pureFuncs.find(calleeName); itInfo != pureFuncs.end())
+        if (itInfo->second.selfRecursive)
+          return;
       auto fType = callee.getFunctionType();
       if (fType.getNumResults() != 1) return;
       if (call.getNumOperands() != fType.getNumInputs()) return;
