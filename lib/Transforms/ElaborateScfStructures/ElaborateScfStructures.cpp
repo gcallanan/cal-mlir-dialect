@@ -234,9 +234,9 @@ struct ElaborateScfStructuresPass : public impl::ElaborateScfStructuresPassBase<
       int64_t lb = *lbOpt2;
       int64_t ub = *ubOpt2;
       int64_t st = *stOpt2;
-      if (lb != 0 || st != 1)
+      if (st != 1)
         continue;
-      int64_t tripCount = std::max<int64_t>(0, ub);
+      int64_t tripCount = (ub <= lb) ? 0 : ((ub - lb + st - 1) / st);
       if (tripCount < 0 || tripCount > 16)
         continue; // Be conservative.
 
@@ -257,6 +257,25 @@ struct ElaborateScfStructuresPass : public impl::ElaborateScfStructuresPassBase<
           if (arraySetOp) { arraySetOp = nullptr; break; }
           arraySetOp = &inner;
           continue;
+        }
+        bool isArithOp =
+            inner.getDialect() &&
+            inner.getDialect()->getNamespace() ==
+                arith::ArithDialect::getDialectNamespace();
+        if (isArithOp) {
+          bool escapes = false;
+          for (Value res : inner.getResults()) {
+            for (Operation *user : res.getUsers()) {
+              if (user->getParentOp() != forOp) {
+                escapes = true;
+                break;
+              }
+            }
+            if (escapes)
+              break;
+          }
+          if (!escapes)
+            continue;
         }
         // Unknown op in body, skip pattern.
         instantiateOp = nullptr;
@@ -284,10 +303,12 @@ struct ElaborateScfStructuresPass : public impl::ElaborateScfStructuresPassBase<
       // We'll clone the instantiate op N times and set into array at constant index.
       for (int64_t i = 0; i < tripCount; ++i) {
         auto cIdx = rewriter.create<arith::ConstantIndexOp>(forOp.getLoc(), i);
+        auto ivConst =
+            rewriter.create<arith::ConstantIndexOp>(forOp.getLoc(), lb + i * st);
         // Clone instantiate op.
         IRMapping mapping;
-        // Map the loop IV to the constant index for any potential use.
-        mapping.map(forOp.getInductionVar(), cIdx);
+        // Map the loop IV to the constant value for this iteration.
+        mapping.map(forOp.getInductionVar(), ivConst);
         // Map the carried array arg to current accumulator.
         mapping.map(forOp.getRegionIterArg(0), cur);
         Operation *newInst = rewriter.clone(*instantiateOp, mapping);
