@@ -17,6 +17,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
@@ -66,11 +67,13 @@ public:
         if (auto cmp = vv.getDefiningOp<arith::CmpIOp>()) {
           auto A = quickInt(cmp.getLhs()); auto B = quickInt(cmp.getRhs()); if (!A || !B) return std::nullopt;
           using P = arith::CmpIPredicate; bool res = false;
+          auto clampNN = [](int64_t v) -> uint64_t { return v < 0 ? static_cast<uint64_t>(0) : static_cast<uint64_t>(v); };
           switch (cmp.getPredicate()) {
             case P::eq: res = (*A == *B); break; case P::ne: res = (*A != *B); break; case P::slt: res = (*A < *B); break;
             case P::sle: res = (*A <= *B); break; case P::sgt: res = (*A > *B); break; case P::sge: res = (*A >= *B); break;
-            case P::ult: res = (static_cast<uint64_t>(*A) < static_cast<uint64_t>(*B)); break; case P::ule: res = (static_cast<uint64_t>(*A) <= static_cast<uint64_t>(*B)); break;
-            case P::ugt: res = (static_cast<uint64_t>(*A) > static_cast<uint64_t>(*B)); break; case P::uge: res = (static_cast<uint64_t>(*A) >= static_cast<uint64_t>(*B)); break;
+            // Treat negatives as 0 for unsigned predicates to model natural-number params and avoid underflow-induced growth.
+            case P::ult: res = (clampNN(*A) < clampNN(*B)); break; case P::ule: res = (clampNN(*A) <= clampNN(*B)); break;
+            case P::ugt: res = (clampNN(*A) > clampNN(*B)); break; case P::uge: res = (clampNN(*A) >= clampNN(*B)); break;
           }
           return res ? 1 : 0;
         }
@@ -86,6 +89,109 @@ public:
         return IntegerAttr::get(IntegerType::get(v.getContext(), 64), *vInt);
       }
       return {};
+    };
+
+    // Local simplifier: fold const cmp/select, fold scf.if with const cond, and erase zero-trip scf.for in a region.
+    auto locallySimplifyRegion = [&](Region &region) {
+      if (region.empty()) return;
+      bool changedLocal = true;
+      while (changedLocal) {
+        changedLocal = false;
+        for (Block &b : region) {
+          for (Operation &op : llvm::make_early_inc_range(b)) {
+            // Fold arith.cmpi with constant-like operands
+            if (auto cmp = dyn_cast<arith::CmpIOp>(&op)) {
+              auto A = valueToTypedAttr(cmp.getLhs());
+              auto B = valueToTypedAttr(cmp.getRhs());
+              if (auto ia = dyn_cast_or_null<IntegerAttr>(A)) {
+                if (auto ib = dyn_cast_or_null<IntegerAttr>(B)) {
+                  // Reuse quick evaluator path via building a fake Select over constants
+                  bool res = false; using P = arith::CmpIPredicate;
+                  auto a = ia.getInt(); auto b = ib.getInt();
+                  auto clampNN = [](int64_t v) -> uint64_t { return v < 0 ? static_cast<uint64_t>(0) : static_cast<uint64_t>(v); };
+                  switch (cmp.getPredicate()) {
+                    case P::eq: res = (a == b); break; case P::ne: res = (a != b); break; case P::slt: res = (a < b); break;
+                    case P::sle: res = (a <= b); break; case P::sgt: res = (a > b); break; case P::sge: res = (a >= b); break;
+                    case P::ult: res = (clampNN(a) < clampNN(b)); break; case P::ule: res = (clampNN(a) <= clampNN(b)); break;
+                    case P::ugt: res = (clampNN(a) > clampNN(b)); break; case P::uge: res = (clampNN(a) >= clampNN(b)); break;
+                  }
+                  OpBuilder rb(cmp);
+                  auto c = rb.create<arith::ConstantIntOp>(cmp.getLoc(), res ? 1 : 0, 1);
+                  cmp.replaceAllUsesWith(c.getResult());
+                  cmp.erase();
+                  changedLocal = true;
+                  continue;
+                }
+              }
+            }
+            // Fold arith.select with constant condition
+            if (auto sel = dyn_cast<arith::SelectOp>(&op)) {
+              if (auto ca = valueToTypedAttr(sel.getCondition())) {
+                if (auto ci = dyn_cast<IntegerAttr>(ca)) {
+                  Value repl = ci.getInt() ? sel.getTrueValue() : sel.getFalseValue();
+                  sel.replaceAllUsesWith(repl);
+                  sel.erase();
+                  changedLocal = true; continue;
+                }
+              }
+            }
+            // Simplify scf.if with constant condition
+            if (auto ifOp = dyn_cast<scf::IfOp>(&op)) {
+              if (auto ca = valueToTypedAttr(ifOp.getCondition())) {
+                if (auto ci = dyn_cast<IntegerAttr>(ca)) {
+                  bool takeThen = ci.getInt() != 0;
+                  Region &chosen = takeThen ? ifOp.getThenRegion() : ifOp.getElseRegion();
+                  SmallVector<Value, 4> replVals;
+                  // Gather yield operands for result replacement (if present)
+                  if (!chosen.empty()) {
+                    Block &cb = chosen.front();
+                    if (auto y = dyn_cast<scf::YieldOp>(cb.getTerminator()))
+                      replVals.append(y.getOperands().begin(), y.getOperands().end());
+                  }
+                  // Move chosen body ops (except terminator) before the ifOp
+                  if (!chosen.empty()) {
+                    for (Operation &inner : llvm::make_early_inc_range(chosen.front())) {
+                      if (isa<scf::YieldOp>(&inner)) continue;
+                      inner.moveBefore(ifOp);
+                    }
+                  }
+                  // Replace results when counts match; otherwise drop results if unused.
+                  if (ifOp->getNumResults() == replVals.size() && replVals.size() > 0) {
+                    ifOp.replaceAllUsesWith(ValueRange{replVals});
+                  } else if (ifOp->getNumResults() == 0) {
+                    // nothing to replace
+                  } else {
+                    // If there are results but we couldn't produce replacements, skip folding here.
+                    // Continue without erasing to avoid invalid IR.
+                    continue;
+                  }
+                  ifOp.erase();
+                  changedLocal = true; continue;
+                }
+              }
+            }
+            // Erase zero-trip scf.for (upper <= lower) by replacing results with iter_args
+            if (auto forOp = dyn_cast<scf::ForOp>(&op)) {
+              auto lowerC = valueToTypedAttr(forOp.getLowerBound());
+              auto upperC = valueToTypedAttr(forOp.getUpperBound());
+              auto stepC  = valueToTypedAttr(forOp.getStep());
+              if (auto li = dyn_cast_or_null<IntegerAttr>(lowerC))
+                if (auto ui = dyn_cast_or_null<IntegerAttr>(upperC))
+                  if (auto si = dyn_cast_or_null<IntegerAttr>(stepC)) {
+                    int64_t L = li.getInt(), U = ui.getInt(), S = std::abs(si.getInt());
+                    if (S == 0) S = 1; // be safe
+                    if (U <= L) {
+                      // Zero-trip: replace results with iter operands
+                      for (auto [res, init] : llvm::zip(forOp.getResults(), forOp.getInitArgs()))
+                        res.replaceAllUsesWith(init);
+                      forOp.erase();
+                      changedLocal = true; continue;
+                    }
+                  }
+            }
+          }
+        }
+      }
     };
 
     auto buildKeyForSpec = [&](StringRef symName, ArrayRef<Value> actuals, int paramCount) -> std::string {
@@ -115,22 +221,31 @@ public:
     bool changed = true; unsigned guard = 0, guardMax = 8;
     while (changed && guard++ < guardMax) {
       changed = false;
-      SmallVector<cal::InstantiateOp, 16> insts;
-      module.walk([&](cal::InstantiateOp inst) {
+      // Worklist of instantiations to process in this sweep (including those appearing inside newly created clones).
+      SmallVector<cal::InstantiateOp, 32> worklist;
+      DenseSet<Operation *> seenInsts;
+
+      auto considerInst = [&](cal::InstantiateOp inst) {
+        if (!inst || seenInsts.contains(inst)) return;
         Operation *target = nullptr;
         if (auto net = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr())) target = net.getOperation();
         else if (auto act = symTable.lookupNearestSymbolFrom<cal::ActorOp>(inst, inst.getActorRefAttr())) target = act.getOperation();
         if (!target) return;
-        // Do not specialize already-specialized clones to avoid cascades.
-        if (target->hasAttr("cal.specialized")) return;
+        if (target->hasAttr("cal.specialized")) return; // don't specialize a clone symbol itself
         int paramCount = static_cast<int>(inst.getNumOperands());
         bool anyConst = false;
         for (int i = 0; i < paramCount; ++i) if (valueToTypedAttr(inst.getOperand(i))) { anyConst = true; break; }
         if (!anyConst) return;
-        insts.push_back(inst);
-      });
+        seenInsts.insert(inst);
+        worklist.push_back(inst);
+      };
 
-      for (cal::InstantiateOp inst : insts) {
+      // Seed from current module contents.
+      module.walk([&](cal::InstantiateOp inst) { considerInst(inst); });
+
+      while (!worklist.empty()) {
+        cal::InstantiateOp inst = worklist.back();
+        worklist.pop_back();
         Operation *target = nullptr;
   if (auto net = symTable.lookupNearestSymbolFrom<cal::NetworkOp>(inst, inst.getActorRefAttr())) target = net.getOperation();
   else if (auto act = symTable.lookupNearestSymbolFrom<cal::ActorOp>(inst, inst.getActorRefAttr())) target = act.getOperation();
@@ -149,8 +264,17 @@ public:
           std::string newName = baseName + std::string("_") + std::to_string(llvm::hash_value(cacheKey));
           clone->setAttr(SymbolTable::getSymbolAttrName(), StringAttr::get(module.getContext(), newName));
           SymbolTable(module).insert(clone);
-          if (auto cNet = dyn_cast<cal::NetworkOp>(clone)) inlineConstantsIntoRegion(cNet.getBody(), actuals, paramCount);
-          else if (auto cAct = dyn_cast<cal::ActorOp>(clone)) inlineConstantsIntoRegion(cAct.getBody(), actuals, paramCount);
+          if (auto cNet = dyn_cast<cal::NetworkOp>(clone)) {
+            inlineConstantsIntoRegion(cNet.getBody(), actuals, paramCount);
+            // Locally simplify constants/guards to enable termination (e.g., NSTAGES<=1 => zero-trip, no recurse)
+            locallySimplifyRegion(cNet.getBody());
+            // Discover new instantiates inside this clone and enqueue them immediately.
+            cNet.walk([&](cal::InstantiateOp inner) { considerInst(inner); });
+          } else if (auto cAct = dyn_cast<cal::ActorOp>(clone)) {
+            inlineConstantsIntoRegion(cAct.getBody(), actuals, paramCount);
+            locallySimplifyRegion(cAct.getBody());
+            cAct.walk([&](cal::InstantiateOp inner) { considerInst(inner); });
+          }
           specializedRef = FlatSymbolRefAttr::get(StringAttr::get(module.getContext(), newName));
           clone->setAttr("cal.specialized", UnitAttr::get(module.getContext()));
           specCache.try_emplace(cacheKey, specializedRef);
