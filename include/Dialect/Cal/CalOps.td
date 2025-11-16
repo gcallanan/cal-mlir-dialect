@@ -540,7 +540,7 @@ def CAL_StateSetOp : Cal_Op<"set", [MemoryEffects<[MemWrite]>]> {
 // or (no params / no name):
 //   %h = cal.instantiate @MyActor
 // The result is !cal.instance<@MyActor>.
-def Cal_InstantiateOp : Cal_Op<"instantiate", []> {
+def Cal_InstantiateOp : Cal_Op<"instantiate", [Pure]> {
   let summary = "Create a symbolic actor instance handle";
   let description = [{
     Produces a `!cal.instance<@Actor>` handle for use in subsequent structural
@@ -586,7 +586,7 @@ def Cal_InstantiateOp : Cal_Op<"instantiate", []> {
 // If not yet defined, add a TODO for implementers.
 // Expected spelling: Cal_InstanceArray (mirrors Cal_Instance)
 
-def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", []> {
+def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", [Pure]> {
   let summary = "Create an array of symbolic actor instance handles";
   let description = [{
     Allocates (symbolically) an array of N instances of @Actor. No FIFOs are
@@ -606,7 +606,7 @@ def Cal_InstantiateArrayOp : Cal_Op<"instantiate_array", []> {
   let hasCanonicalizer = 1;
 }
 
-def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {
+def Cal_InstanceAtOp : Cal_Op<"instance_at", [Pure]> {
   let summary = "Extract a single instance handle from an instance array (ND indices)";
   let description = [{
     Given an instance array value and one or more index operands, produce the
@@ -626,7 +626,7 @@ def Cal_InstanceAtOp : Cal_Op<"instance_at", []> {
 
 // Interface-typed variant: produce an array of interface instance handles.
 // Printed type form: !cal.instance.array.iface<@Iface, N>
-def Cal_InstantiateArrayIfaceOp : Cal_Op<"instantiate_array.iface", []> {
+def Cal_InstantiateArrayIfaceOp : Cal_Op<"instantiate_array.iface", [Pure]> {
   let summary = "Create an array of interface-typed instance handles";
   let description = [{
     Allocates (symbolically) an array of N instances typed by @Interface. No
@@ -721,7 +721,7 @@ def Cal_ImplementsOp : Cal_Op<"implements", [NoTerminator, DeclareOpInterfaceMet
 }
 
 // cal.instance.cast %h : !cal.instance<@E> -> !cal.instance.iface<@I>
-def Cal_InstanceCastOp : Cal_Op<"instance.cast", []> {
+def Cal_InstanceCastOp : Cal_Op<"instance.cast", [Pure]> {
   let summary = "Cast a concrete instance handle to an interface-typed handle";
   let description = [{
     Converts a concrete entity handle to an interface-typed handle. The cast is
@@ -790,7 +790,7 @@ def Cal_StateOp : Cal_Op<"state", [Symbol, HasParent<"FsmOp">, NoTerminator]> {
 
 // cal.transition
 // Transition from the enclosing state to `target`, labeled by `actionName`.
-def Cal_TransitionOp : Cal_Op<"transition", [HasParent<"StateOp">]> {
+def Cal_TransitionOp : Cal_Op<"transition", [HasParent<"StateOp">, DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Transition labeled by an action from a state to a target state";
   let description = [{
     The `cal.transition` operation defines a directed edge from the enclosing

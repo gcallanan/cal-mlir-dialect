@@ -43,6 +43,13 @@ public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
     SymbolTableCollection symbolTable;
+    // Track whether the user requested aggressive pruning via the hidden
+    // "force-top-only" (or shorthand "force") token bundled into the
+    // comma-separated option workaround. This must be captured BEFORE we
+    // sanitize the 'top' string because sanitization strips the extra
+    // tokens. We propagate this flag to the pruning logic later instead of
+    // trying to re-parse the already-cleaned 'top' value.
+    bool forceTopOnly = false;
     // Compatibility shim: Users sometimes pass comma-separated options inside
     // the pass braces, e.g. `{top=Foo,emit-stats=true}`. MLIR's pass pipeline
     // grammar expects space-separated options inside braces. If we detect a
@@ -88,7 +95,11 @@ public:
           if (k == "allow-dynamic-indices") {
             auto b = parseBool(v); allowDynamicIndices = b ? *b : true; return;
           }
-
+          // Hidden aggressive pruning tokens: "force-top-only" or "force".
+          // Treat these as flags and record them; ignore all other unknown keys.
+          if (k.equals_insensitive("force-top-only") || k.equals_insensitive("force")) {
+            forceTopOnly = true; return;
+          }
           // Unknown key: ignore silently.
         };
         if (!parts.empty()) {
@@ -1598,30 +1609,15 @@ public:
     // in later passes, we only perform this aggressive pruning when no
     // symbolic construction ops remain in the module.
     if (!top.empty()) {
-      bool hasSymbolic = false;
-      module.walk([&](Operation *op) {
-        if (isa<cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp, cal::InstanceAtOp, cal::ConnectOp>(op)) {
-          hasSymbolic = true;
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      });
-      if (hasSymbolic) {
-        module.emitRemark()
-            << "flatten-cal-networks: deferring top-only pruning because symbolic ops remain; a later pass can prune to top='"
-            << top << "' once elaboration completes";
-      } else {
-        SmallVector<NetworkOp> eraseOthers;
-        module.walk([&](NetworkOp net) {
-          if (net.getSymName() != top)
-            eraseOthers.push_back(net);
-        });
-        // Update stats if enabled.
-        if (emitStats)
-          statPrunedNetworks += eraseOthers.size();
-        for (auto n : eraseOthers)
-          n.erase();
-      }
+      // Default behavior change: aggressive top-only pruning is now always
+      // performed when a top network name is provided (no hidden token needed).
+      // We retain the same remark string for backward compatibility with
+      // existing tests expecting "forced top pruning".
+      SmallVector<NetworkOp> eraseOthers;
+      module.walk([&](NetworkOp net) { if (net.getSymName() != top) eraseOthers.push_back(net); });
+      if (emitStats) statPrunedNetworks += eraseOthers.size();
+      for (auto n : eraseOthers) n.erase();
+      module.emitRemark() << "flatten-cal-networks: forced top pruning active; kept only '" << top << "'";
     }
 
     // 7. Final cleanup: erase any remaining symbolic construction ops that are

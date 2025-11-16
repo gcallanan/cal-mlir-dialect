@@ -476,6 +476,24 @@ struct ConstJITResolvePass
           env[v] = *val;
           return val;
         }
+        else if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
+          // Evaluate the condition, then traverse only the chosen region and
+          // evaluate the yielded value.
+          auto condVal = evalValue(ifOp.getCondition());
+          if (!condVal) return std::nullopt;
+          Region &chosen = (*condVal != 0) ? ifOp.getThenRegion() : ifOp.getElseRegion();
+          if (chosen.empty()) return std::nullopt;
+          Block &b = chosen.front();
+          scf::YieldOp yld = nullptr;
+          for (Operation &rop : b) {
+            if (auto y = dyn_cast<scf::YieldOp>(&rop)) { yld = y; break; }
+          }
+          if (!yld || yld.getNumOperands() != 1) return std::nullopt;
+          auto inner = evalValue(yld.getOperand(0));
+          if (!inner) return std::nullopt;
+          env[v] = *inner;
+          return inner;
+        }
         else if (auto call = dyn_cast<func::CallOp>(defOp)) {
           SmallVector<int64_t> argVals;
           for (Value opnd : call.getOperands()) {

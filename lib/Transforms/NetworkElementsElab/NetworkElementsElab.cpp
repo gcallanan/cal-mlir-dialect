@@ -109,12 +109,6 @@ struct ForUnrollArrayBuilder : OpRewritePattern<scf::ForOp> {
     for (cal::InstanceArraySetOp s : setOps) {
       if (s.getArray() != expectedArray)
         return failure();
-      unsigned ivCount = 0;
-      for (Value idx : s.getIndices())
-        if (idx == forOp.getInductionVar())
-          ++ivCount;
-      if (ivCount != 1)
-        return failure();
       expectedArray = s.getResult();
     }
     auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());

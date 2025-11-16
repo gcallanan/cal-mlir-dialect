@@ -1,6 +1,8 @@
 #include "Transforms/Passes.h"
-#include "mlir/Pass/PassManager.h"
+#include "Dialect/Cal/CalOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
 
@@ -90,33 +92,54 @@ void registerCalGenericTransformationsPipelines() {
   //   - ElaborateCalEntitiesPass approximates D (entity elaboration)
   //   - VerifyConnectPortsPass + VerifyInstanceArrayFillsPass partially cover F
   // NOTE: As refactors land, replace these with the dedicated passes and adjust ordering.
-  auto buildCalNetworkElabPipeline = [](OpPassManager &pm) {
+    // NOTE: Removed PassPipelineOptions usage to avoid RTTI dependency in
+    // non-RTTI LLVM builds. Users should pass per-pass options directly, e.g.:
+    //   -pass-pipeline='builtin.module(flatten-cal-networks{top=MyTop,force-top-only})'
+    // This pipeline now only wires the fixed sequence; option forwarding
+    // relies on individual pass registrations.
+    auto buildCalNetworkElabPipeline = [](OpPassManager &pm) {
+    // Ensure initial ordering up to network-elements-elab as requested:
+    // const-jit-resolve, cal-param-specialize, canonicalize,
+    // const-jit-resolve, canonicalize,
+    // infer-cal-instance-array-shape, canonicalize,
+    // network-elements-elab
     // A: always-JIT const resolution (wrapper over CalConstEval for now)
     pm.addPass(createConstJITResolvePass());
     // B: specialize symbols on constant parameter tuples
     pm.addPass(createParamSpecializePass());
-    // C0: early shape inference for instance arrays (static extent upgrade)
-    //     This ensures subsequent structural passes (loop unrolling / entity elaboration)
-    //     see static shapes and do not mutate array element types themselves.
+    pm.addPass(mlir::createCanonicalizerPass());
+    // Re-run const evaluation after specialization to expose new constants
+    pm.addPass(createConstJITResolvePass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    // Infer static shapes for instance arrays before structural elaboration
     pm.addPass(createInferCalInstanceArrayShapePass());
-    // C: network elements elaboration placeholder (entities/arrays only)
-    pm.addPass(createElaborateScfStructuresPass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    // C: network elements elaboration (entities/arrays only)
     pm.addPass(createNetworkElementsElabPass());
-    // E: flatten (currently also does some elaboration; will be split later)
-  pm.addPass(createFlattenCalNetworksPass());
-  pm.addPass(createInsertFanoutOnMultiSinkPass());
-  // D: concrete entity elaboration placeholder
-  pm.addPass(createElaborateCalEntitiesPass());
-    // F: verification & basic array fill checks (pruning to be centralized later)
-  pm.addPass(createVerifyInstanceArrayFillsPass());
-  pm.addPass(createVerifyConnectPortsPass());
-  pm.addPass(createVerifyInstanceArrayStaticUsagePass());
+    // D: elaborate concrete entities prior to flatten so pruning can proceed
+    pm.addPass(createElaborateCalEntitiesPass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    // E: flatten (now on elaborated IR) with forwarded options
+    FlattenCalNetworksPassOptions flOpts; // use defaults; user may still push options via pass pipeline string
+    pm.addPass(createFlattenCalNetworksPass(std::move(flOpts)));
+    // NOTE: Force pruning of non-top networks removed due to build issues.
+    // TODO: Reintroduce via a dedicated pass source file with proper cloning semantics.
+    // Post-flatten cleanup to remove dead arrays/symbols
+    pm.addPass(mlir::createCanonicalizerPass());
+    //pm.addPass(mlir::createSymbolDCEPass());
+    // Fanout synthesis and verification
+    pm.addPass(createInsertFanoutOnMultiSinkPass());
+    // F: verification & basic array fill checks
+    pm.addPass(createVerifyInstanceArrayFillsPass());
+    pm.addPass(createVerifyConnectPortsPass());
+    pm.addPass(createVerifyInstanceArrayStaticUsagePass());
+    //pm.addPass(mlir::createCanonicalizerPass());
     // (G conversion passes come from separate conversion pipeline invocations)
   };
 
-  PassPipelineRegistration<> calNetworkElab(
+    PassPipelineRegistration<> calNetworkElab(
       "cal-network-elab",
-      "Unified full CAL network elaboration (experimental skeleton – will migrate to dedicated passes: ConstJITResolve, ParamSpecialize, StructuralLoopElab, NetworkFlatten, Fanout, NetworkElaborate, ReachabilityPruneAndVerify)",
+      "Unified full CAL network elaboration (experimental skeleton – options removed to avoid RTTI; configure individual passes directly)",
       buildCalNetworkElabPipeline);
 }
 

@@ -133,6 +133,19 @@ LogicalResult TransitionOp::verify() {
 
   return success();
 }
+
+// Ensure that the transition's target state symbol is a valid reference.
+// Implementing this hook satisfies the SymbolUserOpInterface vtable and
+// allows passes like SymbolDCE to recognize the reference and keep the
+// targeted state alive.
+LogicalResult TransitionOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto targetRef = getTargetAttr();
+  if (!symbolTable.lookupNearestSymbolFrom<StateOp>(*this, targetRef)) {
+    return emitOpError() << "target state '" << targetRef.getValue()
+                         << "' not found in enclosing cal.fsm";
+  }
+  return success();
+}
 //===----------------------------------------------------------------------===//
 // ConnectOp canonicalization: lower array+index sides to instance_at handles.
 // This yields a handle-only connect in the IR (printer may still show sugar).
