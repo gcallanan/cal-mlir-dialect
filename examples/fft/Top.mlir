@@ -282,50 +282,61 @@ module {
     %t3 = arith.constant 3.1415926535 : f32 loc(#loc84)
     %t4 = arith.negf %t3 : f32 loc(#loc85)
     cal.set(%t2: !cal.state_ref<f32>, %t4: f32)
-    %t5 = cal.create_state_var<memref<?xf32>> : !cal.state_ref<memref<?xf32>>
-    %t7 = arith.constant 1 : index
-    %t6 = memref.alloc(%t7) : memref<?xf32>
-    %t8 = arith.constant 0 : i32 loc(#loc86)
-    %t9 = cal.get(%t2: !cal.state_ref<f32>) : f32
-    %t10 = arith.negf %t9 : f32 loc(#loc87)
-    %t11 = arith.constant 0 : i32 // unresolved var k
-    %t12 = arith.fptosi %t10 : f32 to i32
-    %t13 = arith.muli %t12, %t11 : i32 loc(#loc88)
-    %t14 = arith.divui %t13, %N : i32 loc(#loc88)
-    %t15 = arith.sitofp %t8 : i32 to f32
-    %t16 = arith.sitofp %t14 : i32 to f32
-    %t17 = complex.create %t15, %t16 : complex<f32>
-    %t18 = complex.exp %t17 : complex<f32> loc(#loc89)
-    %t19 = complex.re %t18 : complex<f32>
-    %t20 = arith.constant 0 : index
-    memref.store %t19, %t6[%t20] : memref<?xf32>
-    cal.set(%t5: !cal.state_ref<memref<?xf32>>, %t6: memref<?xf32>)
+    %t5 = cal.create_state_var<memref<128xf32>> : !cal.state_ref<memref<128xf32>>
+    %t6 = memref.alloc() : memref<128xf32>
+    %t7 = arith.constant 0 : i32 loc(#loc86)
+    %t8 = arith.constant 128 : i32 loc(#loc87)
+    %t9 = arith.constant 1 : i32 loc(#loc88)
+    %t10 = arith.subi %t8, %t9 : i32 loc(#loc87)
+    %t11 = arith.index_cast %t7 : i32 to index
+    %t12 = arith.index_cast %t10 : i32 to index
+    %t13 = arith.constant 1 : index
+    %t14 = arith.addi %t12, %t13 : index
+    %t15 = arith.constant 1 : index
+    scf.for %t16 = %t11 to %t14 step %t15 {
+      %t17 = arith.index_cast %t16 : index to i32
+      %t18 = arith.constant 0 : i32 loc(#loc89)
+      %t19 = cal.get(%t2: !cal.state_ref<f32>) : f32
+      %t20 = arith.negf %t19 : f32 loc(#loc90)
+      %t21 = arith.fptosi %t20 : f32 to i32
+      %t22 = arith.muli %t21, %t17 : i32 loc(#loc91)
+      %t23 = arith.divui %t22, %N : i32 loc(#loc91)
+      %t24 = arith.sitofp %t18 : i32 to f32
+      %t25 = arith.sitofp %t23 : i32 to f32
+      %t26 = complex.create %t24, %t25 : complex<f32>
+      %t27 = complex.exp %t26 : complex<f32> loc(#loc92)
+      %t28 = complex.re %t27 : complex<f32>
+      %t29 = arith.subi %t16, %t11 : index
+      memref.store %t28, %t6[%t29] : memref<128xf32>
+      scf.yield
+    }
+    cal.set(%t5: !cal.state_ref<memref<128xf32>>, %t6: memref<128xf32>)
     cal.action "$untagged0" priority=0 {
-      %t21 = fifo.pop(%Trigger: !fifo.output_port<f32> ) : f32 loc(#loc90)
-      %t22 = fifo.pop(%Trigger: !fifo.output_port<f32> ) : f32 loc(#loc90)
-      %t23 = cal.get(%t0: !cal.state_ref<i32>) : i32
-      %t24 = arith.constant 1 : i32 loc(#loc91)
-      %t25 = arith.addi %t23, %t24 : i32 loc(#loc92)
-      cal.set(%t0: !cal.state_ref<i32>, %t25: i32)
-      %t26 = cal.get(%t0: !cal.state_ref<i32>) : i32
-      %t27 = arith.cmpi uge, %t26, %N : i32 loc(#loc93)
-      %t28 = scf.if %t27 -> i1 {
-        %t29 = arith.constant 0 : i32 loc(#loc94)
-        cal.set(%t0: !cal.state_ref<i32>, %t29: i32)
-        %t30 = arith.constant 1 : i1
-        scf.yield %t30 : i1
+      %t30 = fifo.pop(%Trigger: !fifo.output_port<f32> ) : f32 loc(#loc93)
+      %t31 = fifo.pop(%Trigger: !fifo.output_port<f32> ) : f32 loc(#loc93)
+      %t32 = cal.get(%t0: !cal.state_ref<i32>) : i32
+      %t33 = arith.constant 1 : i32 loc(#loc94)
+      %t34 = arith.addi %t32, %t33 : i32 loc(#loc95)
+      cal.set(%t0: !cal.state_ref<i32>, %t34: i32)
+      %t35 = cal.get(%t0: !cal.state_ref<i32>) : i32
+      %t36 = arith.cmpi uge, %t35, %N : i32 loc(#loc96)
+      %t37 = scf.if %t36 -> i1 {
+        %t38 = arith.constant 0 : i32 loc(#loc97)
+        cal.set(%t0: !cal.state_ref<i32>, %t38: i32)
+        %t39 = arith.constant 1 : i1
+        scf.yield %t39 : i1
       } else {
-        %t31 = arith.constant 0 : i1
-        scf.yield %t31 : i1
+        %t40 = arith.constant 0 : i1
+        scf.yield %t40 : i1
       }
-      %t32 = cal.get(%t5: !cal.state_ref<memref<?xf32>>) : memref<?xf32>
-      %t33 = cal.get(%t0: !cal.state_ref<i32>) : i32
-      %t34 = cal.get(%t0: !cal.state_ref<i32>) : i32
-      %t35 = arith.index_cast %t34 : i32 to index
-      %t36 = memref.load %t32[%t35] : memref<?xf32> loc(#loc95)
-      fifo.push(%W: !fifo.input_port<f32>, %t36: f32)
-    } loc(#loc96)
-  } loc(#loc97)
+      %t41 = cal.get(%t5: !cal.state_ref<memref<128xf32>>) : memref<128xf32>
+      %t42 = cal.get(%t0: !cal.state_ref<i32>) : i32
+      %t43 = cal.get(%t0: !cal.state_ref<i32>) : i32
+      %t44 = arith.index_cast %t43 : i32 to index
+      %t45 = memref.load %t41[%t44] : memref<128xf32> loc(#loc98)
+      fifo.push(%W: !fifo.input_port<f32>, %t45: f32)
+    } loc(#loc99)
+  } loc(#loc100)
   cal.actor @fft__Radix2Cell__T_f32()
     in_names ["X0", "X1", "W"]
     out_names ["Y0", "Y1"]
@@ -333,17 +344,17 @@ module {
     ports_out(%Y0: !fifo.input_port<f32>, %Y1: !fifo.input_port<f32>)
   {
     cal.action "$untagged0" priority=0 {
-      %t0 = fifo.pop(%X0: !fifo.output_port<f32> ) : f32 loc(#loc98)
-      %t1 = fifo.pop(%X1: !fifo.output_port<f32> ) : f32 loc(#loc99)
-      %t2 = fifo.pop(%W: !fifo.output_port<f32> ) : f32 loc(#loc100)
-      %t3 = arith.addf %t0, %t1 : f32 loc(#loc101)
+      %t0 = fifo.pop(%X0: !fifo.output_port<f32> ) : f32 loc(#loc101)
+      %t1 = fifo.pop(%X1: !fifo.output_port<f32> ) : f32 loc(#loc102)
+      %t2 = fifo.pop(%W: !fifo.output_port<f32> ) : f32 loc(#loc103)
+      %t3 = arith.addf %t0, %t1 : f32 loc(#loc104)
       fifo.push(%Y0: !fifo.input_port<f32>, %t3: f32)
-      %t4 = arith.subf %t0, %t1 : f32 loc(#loc102)
-      %t5 = arith.mulf %t4, %t2 : f32 loc(#loc102)
+      %t4 = arith.subf %t0, %t1 : f32 loc(#loc105)
+      %t5 = arith.mulf %t4, %t2 : f32 loc(#loc105)
       fifo.push(%Y1: !fifo.input_port<f32>, %t5: f32)
-    } loc(#loc103)
-  } loc(#loc104)
-} loc(#loc105)
+    } loc(#loc106)
+  } loc(#loc107)
+} loc(#loc108)
 #loc0 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/Top.cal":8:10)
 #loc1 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/Top.cal":10:4)
 #loc2 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/Top.cal":8:3)
@@ -430,23 +441,26 @@ module {
 #loc83 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":9:13)
 #loc84 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":11:15)
 #loc85 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":11:14)
-#loc86 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:82)
-#loc87 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:86)
-#loc88 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:85)
-#loc89 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:52)
-#loc90 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":15:10)
-#loc91 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":17:13)
-#loc92 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":17:9)
-#loc93 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":18:7)
-#loc94 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":19:10)
-#loc95 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":15:36)
-#loc96 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":15:3)
-#loc97 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":7:2)
-#loc98 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:10)
-#loc99 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:20)
-#loc100 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:30)
-#loc101 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:46)
-#loc102 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:61)
-#loc103 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:3)
-#loc104 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":3:2)
-#loc105 = loc("/Users/endrix/git/streamblocks/langium-cal/examples/fft/Top.cal":1:1)
+#loc86 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:120)
+#loc87 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:125)
+#loc88 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:131)
+#loc89 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:84)
+#loc90 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:88)
+#loc91 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:87)
+#loc92 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":13:54)
+#loc93 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":15:10)
+#loc94 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":17:13)
+#loc95 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":17:9)
+#loc96 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":18:7)
+#loc97 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":19:10)
+#loc98 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":15:36)
+#loc99 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":15:3)
+#loc100 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/TwiddleGenerator.cal":7:2)
+#loc101 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:10)
+#loc102 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:20)
+#loc103 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:30)
+#loc104 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:46)
+#loc105 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:61)
+#loc106 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":5:3)
+#loc107 = loc("file:///Users/endrix/git/streamblocks/langium-cal/examples/fft/butterfly/Radix2Cell.cal":3:2)
+#loc108 = loc("./examples/fft/Top.cal":1:1)

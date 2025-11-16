@@ -1609,10 +1609,8 @@ public:
     // in later passes, we only perform this aggressive pruning when no
     // symbolic construction ops remain in the module.
     if (!top.empty()) {
-      // Default behavior change: aggressive top-only pruning is now always
-      // performed when a top network name is provided (no hidden token needed).
-      // We retain the same remark string for backward compatibility with
-      // existing tests expecting "forced top pruning".
+      // Aggressive top-only pruning: always keep exactly the named top network.
+      // Required downstream (lower-cal-to-llvm) which assumes a single surviving network.
       SmallVector<NetworkOp> eraseOthers;
       module.walk([&](NetworkOp net) { if (net.getSymName() != top) eraseOthers.push_back(net); });
       if (emitStats) statPrunedNetworks += eraseOthers.size();
