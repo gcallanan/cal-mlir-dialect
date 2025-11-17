@@ -166,6 +166,7 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::createConvertIndexToLLVMPass());
         // Convert remaining unrealized_casts (always needed).
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+        pm.addPass(mlir::createCanonicalizerPass());
       });
 }
 

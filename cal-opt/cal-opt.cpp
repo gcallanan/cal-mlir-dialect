@@ -71,6 +71,46 @@
 namespace mlir { namespace cal { void forceRegisterLegacyMergeSimpleCalActorsPass(); }}
 
 int main(int argc, char **argv) {
+  // Pre-scan argv for cal-network-elab helper flag and translate it into
+  // an environment variable consumed by the registered pipeline. This avoids
+  // introducing RTTI/command-line dependencies into the pipeline library and
+  // keeps the user-facing interface to a single flag.
+  std::vector<char *> filtered;
+  filtered.reserve(argc);
+  auto takeValue = [](llvm::StringRef a) -> std::string {
+    size_t eq = a.find('=');
+    return (eq == llvm::StringRef::npos) ? std::string() : a.drop_front(eq + 1).str();
+  };
+  for (int i = 0; i < argc; ++i) {
+    llvm::StringRef arg(argv[i]);
+    // Accept the simplified separate-top flag.
+    if (arg.starts_with("--cal-network-elab-top=")) {
+      std::string v = takeValue(arg);
+      if (!v.empty()) ::setenv("CAL_NETWORK_ELAB_TOP", v.c_str(), /*overwrite=*/1);
+      continue; // drop from argv
+    }
+    // Back-compat/alias: support inline pipeline-style form
+    //   --cal-network-elab=top=<sym>
+    // or
+    //   -cal-network-elab=top=<sym>
+    if (arg.starts_with("--cal-network-elab=top=") || arg.starts_with("-cal-network-elab=top=")) {
+      // Extract <sym> after the last '='
+      std::string v = takeValue(arg);
+      if (!v.empty()) ::setenv("CAL_NETWORK_ELAB_TOP", v.c_str(), /*overwrite=*/1);
+      // Ensure the pipeline itself is enabled. Replace the inline form with the
+      // bare pipeline switch so MLIR sees the pipeline request.
+      filtered.push_back(const_cast<char*>("-cal-network-elab"));
+      continue; // handled
+    }
+    // Track explicit pipeline flag if present; forward as-is.
+    if (arg == "-cal-network-elab" || arg == "--cal-network-elab") {
+      filtered.push_back(argv[i]);
+      continue;
+    }
+    filtered.push_back(argv[i]);
+  }
+  // Ensure argv ends with null terminator pointer as expected.
+  filtered.push_back(nullptr);
   mlir::registerAllPasses();
   mlir::cal::registerPasses();
   mlir::registerCalConversionPasses();
@@ -155,6 +195,8 @@ int main(int argc, char **argv) {
   // will be *parsed* by the tool, not the one generated
   // registerAllDialects(registry);
 
+  int newArgc = static_cast<int>(filtered.size()) - 1;
+  char **newArgv = filtered.data();
   return mlir::asMainReturnCode(
-      mlir::MlirOptMain(argc, argv, "Cal optimizer driver\n", registry));
+    mlir::MlirOptMain(newArgc, newArgv, "Cal optimizer driver\n", registry));
 }

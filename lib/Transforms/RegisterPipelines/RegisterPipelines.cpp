@@ -63,6 +63,9 @@ static void buildCalElaborateStage1Pipeline(OpPassManager &pm) {
 }
 
 void registerCalGenericTransformationsPipelines() {
+  // Lightweight knob for the cal-network-elab pipeline without introducing
+  // LLVM cl::opt/RTTI dependencies: configuration is passed via env vars from
+  // the tool front-end.
   PassPipelineRegistration<> calStructElab(
       "cal-structural-elaboration",
       "Const-evaluate and elaborate structural scf constructs in CAL networks",
@@ -98,6 +101,12 @@ void registerCalGenericTransformationsPipelines() {
     // This pipeline now only wires the fixed sequence; option forwarding
     // relies on individual pass registrations.
     auto buildCalNetworkElabPipeline = [](OpPassManager &pm) {
+    // Read the top symbol (if any) from env.
+    auto localGetenvStr = [](const char *name) -> std::string {
+      const char *v = ::getenv(name);
+      return v ? std::string(v) : std::string();
+    };
+    const std::string calTop = localGetenvStr("CAL_NETWORK_ELAB_TOP");
     // Ensure initial ordering up to network-elements-elab as requested:
     // const-jit-resolve, cal-param-specialize, canonicalize,
     // const-jit-resolve, canonicalize,
@@ -120,7 +129,15 @@ void registerCalGenericTransformationsPipelines() {
     pm.addPass(createElaborateCalEntitiesPass());
     pm.addPass(mlir::createCanonicalizerPass());
     // E: flatten (now on elaborated IR) with forwarded options
-    FlattenCalNetworksPassOptions flOpts; // use defaults; user may still push options via pass pipeline string
+    FlattenCalNetworksPassOptions flOpts; // default options
+    // Forward top symbol if provided; when set, default to pruning all
+    // non-top networks by appending the hidden token understood by
+    // FlattenCalNetworks.
+    if (!calTop.empty()) {
+      std::string topOpt = calTop;
+      topOpt.append(",force-top-only");
+      flOpts.top = topOpt;
+    }
     pm.addPass(createFlattenCalNetworksPass(std::move(flOpts)));
     // NOTE: Force pruning of non-top networks removed due to build issues.
     // TODO: Reintroduce via a dedicated pass source file with proper cloning semantics.

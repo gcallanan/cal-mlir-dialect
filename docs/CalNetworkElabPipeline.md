@@ -55,6 +55,21 @@ For targeted shape inference only:
 cal-opt input.mlir -infer-cal-instance-array-shape
 ```
 
+### Simplified top selection
+
+To select a top network and prune non-top networks automatically, use a single flag:
+
+```
+cal-opt input.mlir -cal-network-elab --cal-network-elab-top=MyTop
+```
+
+Notes:
+- When `--cal-network-elab-top` is present, pruning to that top (force-top-only) is enabled by default.
+- For power users, equivalent explicit pass-pipeline usage is still supported:
+  `-pass-pipeline='builtin.module(flatten-cal-networks{top=MyTop,force-top-only})'`.
+- If you prefer the inline style, this tool also accepts the alias form and will translate it for you:
+  `--cal-network-elab=top=MyTop` (equivalent to `-cal-network-elab --cal-network-elab-top=MyTop`).
+
 ## Test Coverage Map
 
 | Feature | Test File |
