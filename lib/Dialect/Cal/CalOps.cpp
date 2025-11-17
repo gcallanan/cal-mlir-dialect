@@ -1078,6 +1078,10 @@ ParseResult NetworkOp::parse(OpAsmParser &parser, OperationState &result) {
   entryArgs.append(inVals.begin(), inVals.end());
   entryArgs.append(outVals.begin(), outVals.end());
 
+  // Optionally parse an attribute dictionary with a keyword for additional markers (e.g., cal.top).
+  // Using the keyword avoids ambiguity with the following region '{'.
+  (void)parser.parseOptionalAttrDictWithKeyword(result.attributes);
+
   Region &bodyRegion = *result.addRegion();
   if (parser.parseRegion(bodyRegion, entryArgs, /*enableNameShadowing=*/true))
     return failure();
@@ -1151,6 +1155,13 @@ void NetworkOp::print(OpAsmPrinter &printer) {
   collectAndPrintArgumentsByType<mlir::fifo::InputPortType>(
       printer, getBody().getArguments(), "ports_out");
   printer.decreaseIndent();
+
+  // Print any additional attributes (e.g., cal.top) excluding the ones
+  // already spelled structurally or implied by syntax. Use the 'attributes'
+  // keyword to keep parsing unambiguous before the region.
+  printer.printOptionalAttrDictWithKeyword(op->getAttrs(),
+                                           {SymbolTable::getSymbolAttrName(),
+                                            "inPortNames", "outPortNames"});
 
   printer.printNewline();
   printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,

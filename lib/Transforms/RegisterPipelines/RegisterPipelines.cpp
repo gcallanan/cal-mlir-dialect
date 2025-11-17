@@ -63,9 +63,6 @@ static void buildCalElaborateStage1Pipeline(OpPassManager &pm) {
 }
 
 void registerCalGenericTransformationsPipelines() {
-  // Lightweight knob for the cal-network-elab pipeline without introducing
-  // LLVM cl::opt/RTTI dependencies: configuration is passed via env vars from
-  // the tool front-end.
   PassPipelineRegistration<> calStructElab(
       "cal-structural-elaboration",
       "Const-evaluate and elaborate structural scf constructs in CAL networks",
@@ -76,37 +73,8 @@ void registerCalGenericTransformationsPipelines() {
       "Parent-aware const-parameter specialization + SCF-first elaboration + flatten + late const-eval (Stage 1)",
       [](OpPassManager &pm) { buildCalElaborateStage1Pipeline(pm); });
 
-  // New unified full elaboration pipeline (WORK IN PROGRESS): cal-network-elab
-  // Target ordering (final goal):
-  //   A  ConstJITResolvePass          (always JIT – replaces CalConstEval)
-  //   B  ParamSpecializePass          (stable cloning of cal.actor/network)
-  //   C  NetworkElementsElabPass      (entity/array structuralization: extract arrays from loops, fold const scf.if)
-  //   E  NetworkFlattenPass           (symbolic flatten only)
-  //   Fanout InsertFanoutAfterFlatten (mandatory symbolic fanout synthesis)
-  //   D  NetworkElaboratePass         (materialize fifo.create + cal.create_instance)
-  //   F  ReachabilityPruneAndVerify   (pruning + port + connectivity checks)
-  //   G  (later conversion pipeline, not part of this transform pipeline)
-  // Until the new passes land we approximate with existing ones:
-  //   - CalConstEvalPass stands in for A
-  //   - (no separate B yet)
-  //   - ElaborateScfStructuresPass approximates C
-  //   - FlattenCalNetworksPass approximates E (still performs some concrete work today)
-  //   - InsertFanoutOnMultiSinkPass acts as Fanout (multi-sink normalization)
-  //   - ElaborateCalEntitiesPass approximates D (entity elaboration)
-  //   - VerifyConnectPortsPass + VerifyInstanceArrayFillsPass partially cover F
-  // NOTE: As refactors land, replace these with the dedicated passes and adjust ordering.
-    // NOTE: Removed PassPipelineOptions usage to avoid RTTI dependency in
-    // non-RTTI LLVM builds. Users should pass per-pass options directly, e.g.:
-    //   -pass-pipeline='builtin.module(flatten-cal-networks{top=MyTop,force-top-only})'
-    // This pipeline now only wires the fixed sequence; option forwarding
-    // relies on individual pass registrations.
+
     auto buildCalNetworkElabPipeline = [](OpPassManager &pm) {
-    // Read the top symbol (if any) from env.
-    auto localGetenvStr = [](const char *name) -> std::string {
-      const char *v = ::getenv(name);
-      return v ? std::string(v) : std::string();
-    };
-    const std::string calTop = localGetenvStr("CAL_NETWORK_ELAB_TOP");
     // Ensure initial ordering up to network-elements-elab as requested:
     // const-jit-resolve, cal-param-specialize, canonicalize,
     // const-jit-resolve, canonicalize,
@@ -125,18 +93,19 @@ void registerCalGenericTransformationsPipelines() {
     pm.addPass(mlir::createCanonicalizerPass());
     // C: network elements elaboration (entities/arrays only)
     pm.addPass(createNetworkElementsElabPass());
+    pm.addPass(createInsertFanoutOnMultiSinkPass());
     // D: elaborate concrete entities prior to flatten so pruning can proceed
-    pm.addPass(createElaborateCalEntitiesPass());
+    //pm.addPass(createElaborateCalEntitiesPass());
     pm.addPass(mlir::createCanonicalizerPass());
     // E: flatten (now on elaborated IR) with forwarded options
-    FlattenCalNetworksPassOptions flOpts; // default options
-    // Forward top symbol if provided; when set, default to pruning all
-    // non-top networks by appending the hidden token understood by
-    // FlattenCalNetworks.
-    if (!calTop.empty()) {
-      std::string topOpt = calTop;
-      topOpt.append(",force-top-only");
-      flOpts.top = topOpt;
+    // Forward top selection from environment (set by cal-opt when users pass
+    // --cal-network-elab=top=<sym> or --cal-network-elab-top=<sym>).
+    // This avoids adding RTTI/CL opts to the pipeline lib and keeps a simple UX.
+    FlattenCalNetworksPassOptions flOpts; // defaults unless env provided
+    if (const char *topEnv = ::getenv("CAL_NETWORK_ELAB_TOP")) {
+      if (topEnv && *topEnv) {
+        flOpts.top = std::string(topEnv);
+      }
     }
     pm.addPass(createFlattenCalNetworksPass(std::move(flOpts)));
     // NOTE: Force pruning of non-top networks removed due to build issues.

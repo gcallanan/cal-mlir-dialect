@@ -143,6 +143,26 @@ public:
     module.walk([&](NetworkOp net) {
       nameToOp[StringAttr::get(net.getContext(), net.getSymName())] = net;
     });
+
+    // If a 'top' network is specified via pass option, annotate it explicitly
+    // with a canonical attribute so downstream passes (e.g., CalToFunc) can
+    // unambiguously pick it as the program entry. Clear any prior top markers
+    // to avoid multiple-top ambiguity.
+    if (!top.empty()) {
+      // Remove prior markers from all networks.
+      for (auto &kv : nameToOp) {
+        kv.second->removeAttr("cal.top");
+        kv.second->removeAttr("isTop");
+        kv.second->removeAttr("top");
+      }
+      StringAttr topName = StringAttr::get(module.getContext(), top);
+      if (auto it = nameToOp.find(topName); it != nameToOp.end()) {
+        it->second->setAttr("cal.top", UnitAttr::get(module.getContext()));
+      } else {
+        module.emitRemark() << "flatten-cal-networks: top='" << top
+                            << "' not found; cannot set cal.top attribute";
+      }
+    }
     module.walk([&](CreateInstanceOp inst) {
       if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
               inst, inst.getActorRefAttr())) {
@@ -1563,7 +1583,7 @@ public:
       }
     }
 
-  // 5. Dead network pruning (unless disabled by option)
+    // 5. Dead network pruning (unless disabled by option)
     if (!disablePruning) {
       llvm::SmallDenseSet<StringAttr, 16> referenced;
       module.walk([&](CreateInstanceOp inst) {
@@ -1573,6 +1593,12 @@ public:
       });
       SmallVector<NetworkOp> toErase;
       module.walk([&](NetworkOp net) {
+        // Always preserve the designated top network if present, even if it
+        // appears empty at this stage. Subsequent passes (or later iterations)
+        // may still populate it. This avoids erasing the only entry network
+        // before aggressive top-only pruning below has a chance to run.
+        if (net->hasAttr("cal.top") || (!top.empty() && net.getSymName() == top))
+          return;
         auto name = StringAttr::get(net.getContext(), net.getSymName());
         if (!referenced.contains(name)) {
           bool hasActorInstance = false;

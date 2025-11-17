@@ -81,6 +81,16 @@ int main(int argc, char **argv) {
     size_t eq = a.find('=');
     return (eq == llvm::StringRef::npos) ? std::string() : a.drop_front(eq + 1).str();
   };
+  auto takeTopValue = [](llvm::StringRef a) -> std::string {
+    // Extract the payload after the substring "top=". If not present, fall back to
+    // taking the generic value after the first '='.
+    size_t pos = a.find("top=");
+    if (pos != llvm::StringRef::npos)
+      return a.drop_front(pos + /*len("top=")*/4).str();
+    // Fallback: value after first '='
+    size_t eq = a.find('=');
+    return (eq == llvm::StringRef::npos) ? std::string() : a.drop_front(eq + 1).str();
+  };
   for (int i = 0; i < argc; ++i) {
     llvm::StringRef arg(argv[i]);
     // Accept the simplified separate-top flag.
@@ -94,13 +104,25 @@ int main(int argc, char **argv) {
     // or
     //   -cal-network-elab=top=<sym>
     if (arg.starts_with("--cal-network-elab=top=") || arg.starts_with("-cal-network-elab=top=")) {
-      // Extract <sym> after the last '='
-      std::string v = takeValue(arg);
+      // Extract the symbol after the "top=" segment, not after the first '='.
+      std::string v = takeTopValue(arg);
       if (!v.empty()) ::setenv("CAL_NETWORK_ELAB_TOP", v.c_str(), /*overwrite=*/1);
       // Ensure the pipeline itself is enabled. Replace the inline form with the
       // bare pipeline switch so MLIR sees the pipeline request.
       filtered.push_back(const_cast<char*>("-cal-network-elab"));
       continue; // handled
+    }
+    // Also support the space-separated form: --cal-network-elab top=<sym>
+    if ((arg == "--cal-network-elab" || arg == "-cal-network-elab") && i + 1 < argc) {
+      llvm::StringRef next(argv[i + 1]);
+      if (next.consume_front("top=")) {
+        std::string v = next.str();
+        if (!v.empty()) ::setenv("CAL_NETWORK_ELAB_TOP", v.c_str(), /*overwrite=*/1);
+        // Push only the pipeline flag and skip the consumed value argument.
+        filtered.push_back(argv[i]);
+        ++i; // skip value token
+        continue;
+      }
     }
     // Track explicit pipeline flag if present; forward as-is.
     if (arg == "-cal-network-elab" || arg == "--cal-network-elab") {

@@ -609,16 +609,73 @@ public:
       }
     }
 
-    // 4) Lower each network to a main-like func with a cooperative loop.
+    // 4) Lower exactly one network (the one marked as top) to a main-like func
+    //    with a cooperative loop. Fallbacks:
+    //    - If multiple networks exist and none is marked top -> error.
+    //    - If exactly one network exists and none is marked top -> lower that one.
     {
       IRRewriter rewriter(&getContext());
       SmallVector<cal::NetworkOp, 4> networks;
       module->walk([&](cal::NetworkOp net) { networks.push_back(net); });
-      for (cal::NetworkOp net : networks) {
-        Location loc = net.getLoc();
-        Region &netRegion = net.getBody();
+
+      // Helper to detect if a network has a top attribute. We accept several
+      // spellings for robustness: "cal.top", "isTop", "top". Any present
+      // UnitAttr means true; BoolAttr must be true; StringAttr "true"/"1" is
+      // treated as true.
+      auto isMarkedTop = [](cal::NetworkOp n) -> bool {
+        static constexpr llvm::StringLiteral keys[] = {"cal.top", "isTop", "top"};
+        for (auto key : keys) {
+          if (!n->hasAttr(key))
+            continue;
+          Attribute a = n->getAttr(key);
+          if (!a)
+            continue;
+          if (isa<UnitAttr>(a))
+            return true;
+          if (auto b = dyn_cast<BoolAttr>(a))
+            return b.getValue();
+          if (auto s = dyn_cast<StringAttr>(a)) {
+            StringRef v = s.getValue();
+            if (v.equals_insensitive("true") || v == "1")
+              return true;
+          }
+          // Any other attribute type present is considered marking as top.
+          return true;
+        }
+        return false;
+      };
+
+      cal::NetworkOp topNet = nullptr;
+      for (cal::NetworkOp n : networks) {
+        if (isMarkedTop(n)) {
+          if (topNet) {
+            module->emitError("Multiple cal.network ops are marked as top; please ensure only one is annotated.");
+            signalPassFailure();
+            return;
+          }
+          topNet = n;
+        }
+      }
+
+      if (!topNet) {
+        if (networks.empty()) {
+          // Nothing to lower; ok.
+        } else if (networks.size() == 1) {
+          topNet = networks.front();
+        } else {
+          module->emitError("Multiple cal.network ops found but none marked as top. Annotate the desired top network with attribute 'cal.top'.");
+          signalPassFailure();
+          return;
+        }
+      }
+
+      if (topNet) {
+        Location loc = topNet.getLoc();
+        Region &netRegion = topNet.getBody();
+        rewriter.setInsertionPoint(topNet);
+
+        // Create main signature mirroring network region arguments and return i32 (0).
         if (netRegion.empty()) {
-          rewriter.setInsertionPoint(net);
           auto i32Ty = rewriter.getI32Type();
           auto fnTy = rewriter.getFunctionType({}, {i32Ty});
           auto fn = rewriter.create<func::FuncOp>(loc, "main", fnTy);
@@ -626,121 +683,117 @@ public:
           rewriter.setInsertionPointToStart(entry);
           auto c0 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
           rewriter.create<func::ReturnOp>(loc, ValueRange{c0.getResult()});
-          rewriter.replaceOp(net, fn);
-          continue;
-        }
+          rewriter.replaceOp(topNet, fn);
+        } else {
+          Block &networkBody = netRegion.front();
+          SmallVector<Type, 8> argTypes(networkBody.getArgumentTypes().begin(),
+                                        networkBody.getArgumentTypes().end());
+          auto i32Ty = rewriter.getI32Type();
+          auto fnTy = rewriter.getFunctionType(argTypes, {i32Ty});
+          auto fn = rewriter.create<func::FuncOp>(loc, "main", fnTy);
+          Block *entry = fn.addEntryBlock();
+          rewriter.setInsertionPointToStart(entry);
 
-        Block &networkBody = netRegion.front();
-        SmallVector<Type, 8> argTypes(networkBody.getArgumentTypes().begin(),
-                                      networkBody.getArgumentTypes().end());
-        rewriter.setInsertionPoint(net);
-  auto i32Ty2 = rewriter.getI32Type();
-  auto fnTy = rewriter.getFunctionType(argTypes, {i32Ty2});
-        auto fn = rewriter.create<func::FuncOp>(loc, "main", fnTy);
-        Block *entry = fn.addEntryBlock();
-        rewriter.setInsertionPointToStart(entry);
+          IRMapping map;
+          map.map(networkBody.getArguments(), fn.getArguments());
 
-        IRMapping map;
-        map.map(networkBody.getArguments(), fn.getArguments());
-
-        // Clone one-time ops into entry, skip calls from create_instance.
-        // Also drop structural instance-array ops which must not persist.
-        for (Operation &inner : llvm::make_early_inc_range(networkBody)) {
-          if (auto call = dyn_cast<func::CallOp>(&inner)) {
-            if (call->hasAttr("from_create_instance"))
+          // Clone one-time ops into entry, skip calls from create_instance.
+          // Also drop structural instance-array ops which must not persist.
+          for (Operation &inner : llvm::make_early_inc_range(networkBody)) {
+            if (auto call = dyn_cast<func::CallOp>(&inner)) {
+              if (call->hasAttr("from_create_instance"))
+                continue;
+            }
+            if (isa<cal::InstanceArrayInitOp, cal::InstanceArraySetOp,
+                    cal::InstanceArrayLiteralOp, cal::InstanceArrayConcatOp,
+                    cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp,
+                    cal::InstanceAtOp>(&inner)) {
               continue;
-          }
-    if (isa<cal::InstanceArrayInitOp, cal::InstanceArraySetOp,
-      cal::InstanceArrayLiteralOp, cal::InstanceArrayConcatOp,
-      cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp,
-      cal::InstanceAtOp>(&inner)) {
-            continue;
-          }
-          Operation *cloned = rewriter.clone(inner, map);
-          for (auto [orig, neu] : llvm::zip(inner.getResults(), cloned->getResults()))
-            map.map(orig, neu);
-        }
-
-        // Build while loop skeleton with i1 carried flag.
-        auto trueVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
-        SmallVector<Type, 1> carriedTypes{rewriter.getI1Type()};
-        auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{carriedTypes},
-                                                     ValueRange{trueVal});
-
-        // Condition block: continue while carried flag true.
-        Block *cond = rewriter.createBlock(&whileOp.getBefore(), {}, carriedTypes, SmallVector<Location, 1>{loc});
-        rewriter.setInsertionPointToStart(cond);
-        Value condArg = cond->getArgument(0);
-        rewriter.create<scf::ConditionOp>(loc, condArg, ValueRange{condArg});
-
-        // Body block: call actor functions and OR their results.
-        Block *body = rewriter.createBlock(&whileOp.getAfter(), {}, carriedTypes, SmallVector<Location, 1>{loc});
-        rewriter.setInsertionPointToStart(body);
-        auto falseVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
-        Value progress = falseVal.getResult();
-        for (Operation &inner : networkBody) {
-          auto call = dyn_cast<func::CallOp>(&inner);
-          if (!call)
-            continue;
-          if (!call->hasAttr("from_create_instance"))
-            continue;
-
-          // Always single-step once per outer iteration to seed both
-          // progress computation and (for draining) the inner loop.
-          Operation *firstStep = rewriter.clone(*call, map);
-          Value firstResult = nullptr;
-          if (auto firstOp = dyn_cast<func::CallOp>(firstStep)) {
-            if (firstOp.getNumResults() == 1 &&
-                firstOp.getResult(0).getType().isInteger(1))
-              firstResult = firstOp.getResult(0);
-          }
-          if (firstResult) {
-            auto newProg = rewriter.create<arith::OrIOp>(loc, firstResult, progress);
-            progress = newProg.getResult();
+            }
+            Operation *cloned = rewriter.clone(inner, map);
+            for (auto [orig, neu] : llvm::zip(inner.getResults(), cloned->getResults()))
+              map.map(orig, neu);
           }
 
-          // If marked non-preemptive or globally enabled, keep invoking while last call fired.
-          bool drainByDefault = this->non_preemptive_default;
-          if (call->hasAttr("cal.non_preemptive") || drainByDefault) {
+          // Build while loop skeleton with i1 carried flag.
+          auto trueVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
+          SmallVector<Type, 1> carriedTypes{rewriter.getI1Type()};
+          auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{carriedTypes},
+                                                       ValueRange{trueVal});
+
+          // Condition block: continue while carried flag true.
+          Block *cond = rewriter.createBlock(&whileOp.getBefore(), {}, carriedTypes, SmallVector<Location, 1>{loc});
+          rewriter.setInsertionPointToStart(cond);
+          Value condArg = cond->getArgument(0);
+          rewriter.create<scf::ConditionOp>(loc, condArg, ValueRange{condArg});
+
+          // Body block: call actor functions and OR their results.
+          Block *body = rewriter.createBlock(&whileOp.getAfter(), {}, carriedTypes, SmallVector<Location, 1>{loc});
+          rewriter.setInsertionPointToStart(body);
+          auto falseVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+          Value progress = falseVal.getResult();
+          for (Operation &inner : networkBody) {
+            auto call = dyn_cast<func::CallOp>(&inner);
+            if (!call)
+              continue;
+            if (!call->hasAttr("from_create_instance"))
+              continue;
+
+            // Always single-step once per outer iteration.
+            Operation *firstStep = rewriter.clone(*call, map);
+            Value firstResult = nullptr;
+            if (auto firstOp = dyn_cast<func::CallOp>(firstStep)) {
+              if (firstOp.getNumResults() == 1 &&
+                  firstOp.getResult(0).getType().isInteger(1))
+                firstResult = firstOp.getResult(0);
+            }
             if (firstResult) {
-              SmallVector<Type, 1> drainCarried{rewriter.getI1Type()};
-              auto drainWhile = rewriter.create<scf::WhileOp>(loc, TypeRange{drainCarried}, ValueRange{firstResult});
+              auto newProg = rewriter.create<arith::OrIOp>(loc, firstResult, progress);
+              progress = newProg.getResult();
+            }
 
-              // Condition region: continue while carried flag is true.
-              Block *drainCond = rewriter.createBlock(&drainWhile.getBefore(), {}, drainCarried, SmallVector<Location, 1>{loc});
-              rewriter.setInsertionPointToStart(drainCond);
-              Value drainArg = drainCond->getArgument(0);
-              rewriter.create<scf::ConditionOp>(loc, drainArg, ValueRange{drainArg});
+            // If marked non-preemptive or globally enabled, keep invoking while last call fired.
+            bool drainByDefault = this->non_preemptive_default;
+            if (call->hasAttr("cal.non_preemptive") || drainByDefault) {
+              if (firstResult) {
+                SmallVector<Type, 1> drainCarried{rewriter.getI1Type()};
+                auto drainWhile = rewriter.create<scf::WhileOp>(loc, TypeRange{drainCarried}, ValueRange{firstResult});
 
-              // Body region: call actor once; yield result as next condition (continue if fired).
-              Block *drainBody = rewriter.createBlock(&drainWhile.getAfter(), {}, drainCarried, SmallVector<Location, 1>{loc});
-              rewriter.setInsertionPointToStart(drainBody);
-              Operation *drainCall = rewriter.clone(*call, map);
-              if (auto drainCallOp = dyn_cast<func::CallOp>(drainCall)) {
-                if (drainCallOp.getNumResults() == 1 && drainCallOp.getResult(0).getType().isInteger(1)) {
-                  Value fired = drainCallOp.getResult(0);
-                  rewriter.create<scf::YieldOp>(loc, ValueRange{fired});
+                // Condition region.
+                Block *drainCond = rewriter.createBlock(&drainWhile.getBefore(), {}, drainCarried, SmallVector<Location, 1>{loc});
+                rewriter.setInsertionPointToStart(drainCond);
+                Value drainArg = drainCond->getArgument(0);
+                rewriter.create<scf::ConditionOp>(loc, drainArg, ValueRange{drainArg});
+
+                // Body region.
+                Block *drainBody = rewriter.createBlock(&drainWhile.getAfter(), {}, drainCarried, SmallVector<Location, 1>{loc});
+                rewriter.setInsertionPointToStart(drainBody);
+                Operation *drainCall = rewriter.clone(*call, map);
+                if (auto drainCallOp = dyn_cast<func::CallOp>(drainCall)) {
+                  if (drainCallOp.getNumResults() == 1 && drainCallOp.getResult(0).getType().isInteger(1)) {
+                    Value fired = drainCallOp.getResult(0);
+                    rewriter.create<scf::YieldOp>(loc, ValueRange{fired});
+                  } else {
+                    auto drainFalse = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+                    rewriter.create<scf::YieldOp>(loc, ValueRange{drainFalse.getResult()});
+                  }
                 } else {
                   auto drainFalse = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
                   rewriter.create<scf::YieldOp>(loc, ValueRange{drainFalse.getResult()});
                 }
-              } else {
-                auto drainFalse = rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
-                rewriter.create<scf::YieldOp>(loc, ValueRange{drainFalse.getResult()});
+                rewriter.setInsertionPointAfter(drainWhile);
               }
-              // No need to adjust `progress` here; it already accounts for firstResult.
-              rewriter.setInsertionPointAfter(drainWhile);
             }
           }
+          rewriter.create<scf::YieldOp>(loc, ValueRange{progress});
+
+          // Return from main (0).
+          rewriter.setInsertionPointToEnd(entry);
+          auto c0b = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+          rewriter.create<func::ReturnOp>(loc, ValueRange{c0b.getResult()});
+
+          rewriter.replaceOp(topNet, fn);
         }
-        rewriter.create<scf::YieldOp>(loc, ValueRange{progress});
-
-  // Return from main (0).
-  rewriter.setInsertionPointToEnd(entry);
-  auto c0b = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-  rewriter.create<func::ReturnOp>(loc, ValueRange{c0b.getResult()});
-
-        rewriter.replaceOp(net, fn);
       }
     }
 

@@ -14,7 +14,6 @@
 // MLIR Conversions
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
 #include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
-// Complex dialect lowering (replace direct LLVM lowering with Standard lowering)
 #include "mlir/Conversion/ComplexToStandard/ComplexToStandard.h"
 
 // MLIR Dialects and Transforms
@@ -84,22 +83,23 @@ void registerLowerCalToLLVMPipeline() {
       "lower-cal-to-llvm",
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect.",
       [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
-  // 1. FIFO/CAL-specific lowering
+        // 1. FIFO/CAL-specific lowering
 
         // First lower any cal.fsm schedules into a unified cal.execution_body.
         // Keep the standalone pass available separately; this just integrates
         // it into the default pipeline so users don't need to spell it out.
         pm.addPass(mlir::cal::lowerCalFsmToExecutionBody());
 
-  pm.addPass(mlir::cal::insertCalPortPredicates());
+        pm.addPass(mlir::cal::insertCalPortPredicates());
         // Convert any remaining cal.action-based actors (non-FSM actors)
         // into execution bodies.
-  pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
+        pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
-  pm.addPass(mlir::cal::hoistCalStateOutOfActor());
+        pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
-  // Honor pipeline option to drain actors by default (non-preemptive).
-  pm.addPass(mlir::createConvertCalToFuncPass(options.nonPreemptiveDefault));
+        // Honor pipeline option to drain actors by default (non-preemptive).
+        pm.addPass(
+            mlir::createConvertCalToFuncPass(options.nonPreemptiveDefault));
 
         // We add this pass as we often get functions that are the same but with
         // different names.
@@ -122,7 +122,8 @@ void registerLowerCalToLLVMPipeline() {
           pm.addPass(mlir::createHoistAllocsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         // BufferDeallocation is a function-only pass; add it as a nested pass
-        pm.addNestedPass<mlir::func::FuncOp>(mlir::bufferization::createBufferDeallocationPass());
+        pm.addNestedPass<mlir::func::FuncOp>(
+            mlir::bufferization::createBufferDeallocationPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertLinalgToLoopsPass());
         pm.addPass(mlir::createCanonicalizerPass());
@@ -154,7 +155,8 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::memref::createExpandStridedMetadataPass());
         // The expansion may create affine expressions. Get rid of them.
         pm.addPass(mlir::createLowerAffinePass());
-        // Convert MemRef to LLVM (always needed) – keep before func/cf/arithmetic.
+        // Convert MemRef to LLVM (always needed) – keep before
+        // func/cf/arithmetic.
         pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
         // Convert Func to LLVM (always needed).
         pm.addPass(mlir::createConvertFuncToLLVMPass());
@@ -182,7 +184,7 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
       "actors are SDF and CSDF actors and statically schedules the execution "
       "order.",
       [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
-  // 1. FIFO/CAL-specific lowering
+        // 1. FIFO/CAL-specific lowering
 
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertCalToFuncWithStaticSchedulePass());
@@ -214,7 +216,8 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
           pm.addPass(mlir::createHoistAllocsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         // BufferDeallocation operates on func.func; must be nested.
-        pm.addNestedPass<mlir::func::FuncOp>(mlir::bufferization::createBufferDeallocationPass());
+        pm.addNestedPass<mlir::func::FuncOp>(
+            mlir::bufferization::createBufferDeallocationPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertLinalgToLoopsPass());
         pm.addPass(mlir::createCanonicalizerPass());
@@ -300,7 +303,8 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   // the program to crash when deallocating. TODO: Fix this bug
   if (options.disableHoistAllocs)
     // Nested because the pass is restricted to func.func.
-    pm.addNestedPass<mlir::func::FuncOp>(mlir::bufferization::createBufferDeallocationPass());
+    pm.addNestedPass<mlir::func::FuncOp>(
+        mlir::bufferization::createBufferDeallocationPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createConvertLinalgToParallelLoopsPass());
   pm.addPass(mlir::createCanonicalizerPass());
