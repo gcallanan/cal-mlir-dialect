@@ -12,7 +12,8 @@ set(LIBS
         MLIROptLib
         MLIRCal
         MLIRFifo
-        CalGenericTransformsPipelines
+        InsertFanoutOnMultiSinkPass
+        MLIRVerifyInstanceArrayFills
         #MLIRFifoAtomicize
         #FlattenNetworksPass
         )

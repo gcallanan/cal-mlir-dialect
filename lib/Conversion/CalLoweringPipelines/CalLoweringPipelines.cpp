@@ -7,6 +7,7 @@
 #include "mlir/InitAllPasses.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
@@ -354,3 +355,46 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
 }
 
 } // namespace mlir::cal
+
+// Migrate pipeline registration from former RegisterPipelines.cpp.
+// We keep the original function name so existing callers (e.g. cal-opt) continue to work.
+namespace mlir {
+void registerCalGenericTransformationsPipelines() {
+  // Only expose unified network elaboration pipeline.
+  auto buildCalNetworkElabPipeline = [](OpPassManager &pm) {
+    // Initial ordering up to network-elements-elab:
+    // const-jit-resolve, cal-param-specialize, canonicalize,
+    // const-jit-resolve, canonicalize,
+    // infer-cal-instance-array-shape, canonicalize,
+    // network-elements-elab
+    pm.addPass(createConstJITResolvePass());
+    pm.addPass(createParamSpecializePass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createConstJITResolvePass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createInferCalInstanceArrayShapePass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createNetworkElementsElabPass());
+    pm.addPass(createInsertFanoutOnMultiSinkPass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    // Flatten with forwarded top selection via CAL_NETWORK_ELAB_TOP env var.
+    FlattenCalNetworksPassOptions flOpts; // defaults unless env provided
+    if (const char *topEnv = ::getenv("CAL_NETWORK_ELAB_TOP")) {
+      if (topEnv && *topEnv) {
+        flOpts.top = std::string(topEnv);
+      }
+    }
+    pm.addPass(createFlattenCalNetworksPass(std::move(flOpts)));
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createInsertFanoutOnMultiSinkPass());
+    pm.addPass(createVerifyInstanceArrayFillsPass());
+    pm.addPass(createVerifyConnectPortsPass());
+    pm.addPass(createVerifyInstanceArrayStaticUsagePass());
+  };
+
+  PassPipelineRegistration<> calNetworkElab(
+      "cal-network-elab",
+      "Unified full CAL network elaboration (experimental skeleton – options removed to avoid RTTI; configure individual passes directly)",
+      buildCalNetworkElabPipeline);
+}
+} // namespace mlir
