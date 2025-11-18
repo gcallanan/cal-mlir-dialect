@@ -6,6 +6,7 @@
 
 namespace mlir {
 std::unique_ptr<Pass> createFlattenCalNetworksPass();
+std::unique_ptr<Pass> createElaborateCalConnectionsPass();
 } // namespace mlir
 
 #endif // CAL_TRANSFORMS_FLATTENNETWORKS_H

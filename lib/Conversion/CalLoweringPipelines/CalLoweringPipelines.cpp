@@ -46,6 +46,11 @@
 #include "Dialect/Fifo/FifoPasses.h"
 
 // Project-specific conversions and transformations
+#define GEN_PASS_DECL_ELABORATECALCONNECTIONSPASS
+#define GEN_PASS_DECL_FLATTENCALNETWORKSPASS
+#include "Transforms/Passes.h.inc"
+#undef GEN_PASS_DECL_ELABORATECALCONNECTIONSPASS
+#undef GEN_PASS_DECL_FLATTENCALNETWORKSPASS
 #include "Conversion/Passes.h"
 #include "Transforms/Passes.h"
 
@@ -375,21 +380,26 @@ void registerCalGenericTransformationsPipelines() {
     pm.addPass(createInferCalInstanceArrayShapePass());
     pm.addPass(mlir::createCanonicalizerPass());
     pm.addPass(createNetworkElementsElabPass());
-    pm.addPass(createInsertFanoutOnMultiSinkPass());
+
     pm.addPass(mlir::createCanonicalizerPass());
+
     // Flatten with forwarded top selection via CAL_NETWORK_ELAB_TOP env var.
     FlattenCalNetworksPassOptions flOpts; // defaults unless env provided
+    ElaborateCalConnectionsPassOptions elabOpts;
     if (const char *topEnv = ::getenv("CAL_NETWORK_ELAB_TOP")) {
       if (topEnv && *topEnv) {
-        flOpts.top = std::string(topEnv);
+        std::string topValue(topEnv);
+        flOpts.top = topValue;
+        elabOpts.top = topValue;
       }
     }
+
     pm.addPass(createFlattenCalNetworksPass(std::move(flOpts)));
     pm.addPass(mlir::createCanonicalizerPass());
     pm.addPass(createInsertFanoutOnMultiSinkPass());
-    pm.addPass(createVerifyInstanceArrayFillsPass());
-    pm.addPass(createVerifyConnectPortsPass());
-    pm.addPass(createVerifyInstanceArrayStaticUsagePass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createElaborateCalConnectionsPass(std::move(elabOpts)));
+    pm.addPass(mlir::createCanonicalizerPass());
   };
 
   PassPipelineRegistration<> calNetworkElab(

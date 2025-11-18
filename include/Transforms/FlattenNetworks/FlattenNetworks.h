@@ -5,6 +5,7 @@
 
 namespace mlir {
 
+#define GEN_PASS_DECL_ELABORATECALCONNECTIONSPASS
 #define GEN_PASS_DECL_FLATTENCALNETWORKSPASS
 #include "Transforms/Passes.h.inc"
 

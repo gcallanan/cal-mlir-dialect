@@ -28,6 +28,7 @@ std::unique_ptr<mlir::Pass> createVerifyConnectPortsPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayFillsPass();
 std::unique_ptr<mlir::Pass> createInferCalInstanceArrayShapePass();
 std::unique_ptr<mlir::Pass> createElaborateCalEntitiesPass();
+std::unique_ptr<mlir::Pass> createElaborateCalConnectionsPass();
 std::unique_ptr<mlir::Pass> createInsertFanoutOnMultiSinkPass();
 std::unique_ptr<mlir::Pass> createNetworkElementsElabPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayStaticUsagePass();

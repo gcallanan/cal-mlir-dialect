@@ -17,7 +17,17 @@
 // STL
 #include <algorithm>
 #include <climits>
+#include <memory>
 #include <numeric>
+#include <optional>
+#include <string>
+#include <utility>
+
+#define GEN_PASS_DECL_ELABORATECALCONNECTIONSPASS
+#define GEN_PASS_DECL_FLATTENCALNETWORKSPASS
+#include "Transforms/Passes.h.inc"
+#undef GEN_PASS_DECL_ELABORATECALCONNECTIONSPASS
+#undef GEN_PASS_DECL_FLATTENCALNETWORKSPASS
 
 #include "Transforms/FlattenNetworks/FlattenNetworks.h"
 #include "Transforms/Passes.h"
@@ -27,100 +37,175 @@ using namespace mlir::cal;
 
 namespace mlir {
 
+#define GEN_PASS_DEF_ELABORATECALCONNECTIONSPASS
 #define GEN_PASS_DEF_FLATTENCALNETWORKSPASS
 #include "Transforms/Passes.h.inc"
 
 namespace {
+
+struct NetworkProcessingOptions {
+  bool disablePruning = false;
+  bool emitStats = false;
+  bool allowPartialConnectivity = false;
+  bool allowDynamicIndices = false;
+  std::string top;
+  bool performFlattening = true;
+};
+
+static LogicalResult runNetworkProcessing(ModuleOp module,
+                                          const NetworkProcessingOptions &opts);
+
 class FlattenCalNetworksPass
     : public impl::FlattenCalNetworksPassBase<FlattenCalNetworksPass> {
 public:
   using Base = impl::FlattenCalNetworksPassBase<FlattenCalNetworksPass>;
   FlattenCalNetworksPass() = default;
   FlattenCalNetworksPass(const FlattenCalNetworksPass &other) = default;
-  // Constructor required by generated createFlattenCalNetworksPass(options) (correct non-impl qualified options type)
   explicit FlattenCalNetworksPass(FlattenCalNetworksPassOptions options)
-    : Base(std::move(options)) {}
-  void runOnOperation() override {
-    ModuleOp module = getOperation();
-    SymbolTableCollection symbolTable;
-    // Track whether the user requested aggressive pruning via the hidden
-    // "force-top-only" (or shorthand "force") token bundled into the
-    // comma-separated option workaround. This must be captured BEFORE we
-    // sanitize the 'top' string because sanitization strips the extra
-    // tokens. We propagate this flag to the pruning logic later instead of
-    // trying to re-parse the already-cleaned 'top' value.
-    bool forceTopOnly = false;
-    // Compatibility shim: Users sometimes pass comma-separated options inside
-    // the pass braces, e.g. `{top=Foo,emit-stats=true}`. MLIR's pass pipeline
-    // grammar expects space-separated options inside braces. If we detect a
-    // comma in the 'top' option value (a common failure mode where the entire
-    // string gets parsed into 'top'), split and re-parse here to set the
-    // corresponding flags and clean up 'top'. Emit a gentle remark to steer
-    // users toward the space-separated form.
-    if (!top.empty()) {
-      StringRef topRef(top);
-      if (topRef.contains(',')) {
-        SmallVector<StringRef, 4> parts;
-        topRef.split(parts, ',');
-        std::string newTop;
-        auto parseBool = [](StringRef v) -> std::optional<bool> {
-          StringRef t = v.trim();
-          if (t.empty()) return true; // flag form treated as true
-          if (t.equals_insensitive("true") || t == "1") return true;
-          if (t.equals_insensitive("false") || t == "0") return false;
-          return std::nullopt;
-        };
-        auto parseKV = [&](StringRef kv) {
-          StringRef k = kv, v;
-          size_t eq = kv.find('=');
-          if (eq != StringRef::npos) {
-            k = kv.take_front(eq);
-            v = kv.drop_front(eq + 1);
-          }
-          k = k.trim(); v = v.trim();
-          if (k.empty()) return;
-          if (k == "top") {
-            if (!v.empty()) newTop = v.str();
-            return;
-          }
-          if (k == "emit-stats") {
-            auto b = parseBool(v); emitStats = b ? *b : true; return;
-          }
-          if (k == "disable-pruning") {
-            auto b = parseBool(v); disablePruning = b ? *b : true; return;
-          }
-          if (k == "allow-partial-connectivity") {
-            auto b = parseBool(v); allowPartialConnectivity = b ? *b : true; return;
-          }
-          if (k == "allow-dynamic-indices") {
-            auto b = parseBool(v); allowDynamicIndices = b ? *b : true; return;
-          }
-          // Hidden aggressive pruning tokens: "force-top-only" or "force".
-          // Treat these as flags and record them; ignore all other unknown keys.
-          if (k.equals_insensitive("force-top-only") || k.equals_insensitive("force")) {
-            forceTopOnly = true; return;
-          }
-          // Unknown key: ignore silently.
-        };
-        if (!parts.empty()) {
-          // First piece may be "Foo" (bare top value) or a k=v pair.
-          if (parts[0].contains('=')) parseKV(parts[0]);
-          else newTop = parts[0].trim().str();
-          for (size_t i = 1; i < parts.size(); ++i)
-            parseKV(parts[i]);
-          if (!newTop.empty()) top = newTop;
-          module.emitRemark() << "flatten-cal-networks: parsed comma-separated options inside braces; prefer space-separated form (e.g., {top=Foo emit-stats})";
+      : Base(std::move(options)) {}
+
+  void runOnOperation() override;
+};
+
+class ElaborateCalConnectionsPass
+    : public impl::ElaborateCalConnectionsPassBase<ElaborateCalConnectionsPass> {
+public:
+  using Base = impl::ElaborateCalConnectionsPassBase<ElaborateCalConnectionsPass>;
+  ElaborateCalConnectionsPass() = default;
+  ElaborateCalConnectionsPass(const ElaborateCalConnectionsPass &other) = default;
+  explicit ElaborateCalConnectionsPass(ElaborateCalConnectionsPassOptions options)
+      : Base(std::move(options)) {}
+
+  void runOnOperation() override;
+};
+
+} // namespace
+
+void FlattenCalNetworksPass::runOnOperation() {
+  NetworkProcessingOptions opts;
+  opts.disablePruning = disablePruning;
+  opts.emitStats = emitStats;
+  opts.allowPartialConnectivity = allowPartialConnectivity;
+  opts.allowDynamicIndices = allowDynamicIndices;
+  opts.top = top;
+  opts.performFlattening = true;
+
+  if (failed(runNetworkProcessing(getOperation(), opts)))
+    signalPassFailure();
+}
+
+void ElaborateCalConnectionsPass::runOnOperation() {
+  NetworkProcessingOptions opts;
+  opts.emitStats = emitStats;
+  opts.allowPartialConnectivity = allowPartialConnectivity;
+  opts.allowDynamicIndices = allowDynamicIndices;
+  opts.top = top;
+  opts.performFlattening = false;
+
+  if (failed(runNetworkProcessing(getOperation(), opts)))
+    signalPassFailure();
+}
+
+namespace {
+
+static LogicalResult runNetworkProcessing(
+  ModuleOp module, const NetworkProcessingOptions &opts) {
+  SymbolTableCollection symbolTable;
+  bool forceTopOnly = false;
+  bool emitStats = opts.emitStats;
+  bool disablePruning = opts.disablePruning;
+  bool allowPartialConnectivity = opts.allowPartialConnectivity;
+  bool allowDynamicIndices = opts.allowDynamicIndices;
+  bool performFlattening = opts.performFlattening;
+  std::string top = opts.top;
+
+  // Track whether the user requested aggressive pruning via the hidden
+  // "force-top-only" (or shorthand "force") token bundled into the
+  // comma-separated option workaround. This must be captured BEFORE we
+  // sanitize the 'top' string because sanitization strips the extra tokens.
+  if (!top.empty()) {
+    StringRef topRef(top);
+    if (topRef.contains(',')) {
+      SmallVector<StringRef, 4> parts;
+      topRef.split(parts, ',');
+      std::string newTop;
+      auto parseBool = [](StringRef v) -> std::optional<bool> {
+        StringRef t = v.trim();
+        if (t.empty())
+          return true; // flag form treated as true
+        if (t.equals_insensitive("true") || t == "1")
+          return true;
+        if (t.equals_insensitive("false") || t == "0")
+          return false;
+        return std::nullopt;
+      };
+      auto parseKV = [&](StringRef kv) {
+        StringRef k = kv, v;
+        size_t eq = kv.find('=');
+        if (eq != StringRef::npos) {
+          k = kv.take_front(eq);
+          v = kv.drop_front(eq + 1);
         }
+        k = k.trim();
+        v = v.trim();
+        if (k.empty())
+          return;
+        if (k == "top") {
+          if (!v.empty())
+            newTop = v.str();
+          return;
+        }
+        if (k == "emit-stats") {
+          auto b = parseBool(v);
+          emitStats = b ? *b : true;
+          return;
+        }
+        if (k == "disable-pruning") {
+          auto b = parseBool(v);
+          disablePruning = b ? *b : true;
+          return;
+        }
+        if (k == "allow-partial-connectivity") {
+          auto b = parseBool(v);
+          allowPartialConnectivity = b ? *b : true;
+          return;
+        }
+        if (k == "allow-dynamic-indices") {
+          auto b = parseBool(v);
+          allowDynamicIndices = b ? *b : true;
+          return;
+        }
+        if (k.equals_insensitive("force-top-only") ||
+            k.equals_insensitive("force")) {
+          forceTopOnly = true;
+          return;
+        }
+        // Unknown key: ignore silently.
+      };
+      if (!parts.empty()) {
+        if (parts[0].contains('='))
+          parseKV(parts[0]);
+        else
+          newTop = parts[0].trim().str();
+        for (size_t i = 1; i < parts.size(); ++i)
+          parseKV(parts[i]);
+        if (!newTop.empty())
+          top = newTop;
+        module.emitRemark()
+            << "flatten-cal-networks: parsed comma-separated options inside braces; "
+            << "prefer space-separated form (e.g., {top=Foo emit-stats})";
       }
     }
-    // Precompute interface conformance map: entity -> set of interfaces it implements.
-    // Store by StringRef for lightweight lookups using symbol names from ops.
-    DenseMap<StringRef, SmallVector<StringRef>> entityImplements;
-    module.walk([&](cal::ImplementsOp impl){
-      auto iface = impl.getIfaceRefAttr().getRootReference().getValue();
-      auto ent = impl.getEntityRefAttr().getRootReference().getValue();
-      entityImplements[ent].push_back(iface);
-    });
+  }
+
+  // Precompute interface conformance map: entity -> set of interfaces it implements.
+  DenseMap<StringRef, SmallVector<StringRef>> entityImplements;
+  module.walk([&](cal::ImplementsOp impl) {
+    auto iface = impl.getIfaceRefAttr().getRootReference().getValue();
+    auto ent = impl.getEntityRefAttr().getRootReference().getValue();
+    entityImplements[ent].push_back(iface);
+  });
+
   // Statistics (conditionally reported when emitStats option is set)
   uint64_t statFlattenedInstances = 0;
   uint64_t statPrunedNetworks = 0;
@@ -131,155 +216,151 @@ public:
   uint64_t statSkippedConnectInterfaceTyped = 0;    // connects skipped due to interface-typed endpoints
   uint64_t statSkippedPartialInstance = 0;          // instances skipped due to partial connectivity when allowed
 
-    // 1. Build StringAttr-based call graph of network -> referenced networks.
-    DenseMap<StringAttr, SmallVector<StringAttr>> adjacency;
-    // Also build an instantiate-only adjacency that only considers symbolic
-    // cal.instantiate and cal.instantiate_array ops (not cal.create_instance).
-    // This is used to derive a stricter "actually used from top" set for
-    // enforcing connectivity, preferring specialized clones selected by
-    // upstream passes.
-    DenseMap<StringAttr, SmallVector<StringAttr>> instOnlyAdjacency;
-    DenseMap<StringAttr, NetworkOp> nameToOp;
-    module.walk([&](NetworkOp net) {
-      nameToOp[StringAttr::get(net.getContext(), net.getSymName())] = net;
-    });
+  // 1. Build StringAttr-based call graph of network -> referenced networks.
+  DenseMap<StringAttr, SmallVector<StringAttr>> adjacency;
+  // Also build an instantiate-only adjacency that only considers symbolic
+  // cal.instantiate and cal.instantiate_array ops (not cal.create_instance).
+  DenseMap<StringAttr, SmallVector<StringAttr>> instOnlyAdjacency;
+  DenseMap<StringAttr, NetworkOp> nameToOp;
+  module.walk([&](NetworkOp net) {
+    nameToOp[StringAttr::get(net.getContext(), net.getSymName())] = net;
+  });
 
-    // If a 'top' network is specified via pass option, annotate it explicitly
-    // with a canonical attribute so downstream passes (e.g., CalToFunc) can
-    // unambiguously pick it as the program entry. Clear any prior top markers
-    // to avoid multiple-top ambiguity.
-    if (!top.empty()) {
-      // Remove prior markers from all networks.
-      for (auto &kv : nameToOp) {
-        kv.second->removeAttr("cal.top");
-        kv.second->removeAttr("isTop");
-        kv.second->removeAttr("top");
-      }
-      StringAttr topName = StringAttr::get(module.getContext(), top);
-      if (auto it = nameToOp.find(topName); it != nameToOp.end()) {
-        it->second->setAttr("cal.top", UnitAttr::get(module.getContext()));
-      } else {
-        module.emitRemark() << "flatten-cal-networks: top='" << top
-                            << "' not found; cannot set cal.top attribute";
-      }
-    }
-    module.walk([&](CreateInstanceOp inst) {
-      if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
-              inst, inst.getActorRefAttr())) {
-        if (auto parentNet = dyn_cast_or_null<NetworkOp>(inst->getParentOp())) {
-          auto parentName = StringAttr::get(parentNet.getContext(), parentNet.getSymName());
-          auto childName = StringAttr::get(target.getContext(), target.getSymName());
-            adjacency[parentName].push_back(childName);
-        }
-      }
-    });
-    // Also record symbolic instantiation edges prior to elaboration.
-    module.walk([&](InstantiateOp inst) {
-      if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr())) {
-        if (auto parentNet = dyn_cast_or_null<NetworkOp>(inst->getParentOp())) {
-          auto parentName = StringAttr::get(parentNet.getContext(), parentNet.getSymName());
-          auto childName = StringAttr::get(target.getContext(), target.getSymName());
-          adjacency[parentName].push_back(childName);
-          instOnlyAdjacency[parentName].push_back(childName);
-        }
-      }
-    });
-    module.walk([&](InstantiateArrayOp instArr) {
-      if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(instArr, instArr.getActorRefAttr())) {
-        if (auto parentNet = dyn_cast_or_null<NetworkOp>(instArr->getParentOp())) {
-          auto parentName = StringAttr::get(parentNet.getContext(), parentNet.getSymName());
-          auto childName = StringAttr::get(target.getContext(), target.getSymName());
-          // Only the instantiate-only graph should record array-based edges.
-          instOnlyAdjacency[parentName].push_back(childName);
-        }
-      }
-    });
-
-    // 2. Detect cycles via DFS.
-    enum class VisitState { NotVisited, Visiting, Visited };
-    DenseMap<StringAttr, VisitState> visit;
-    SmallVector<StringAttr> stack;
-    bool cycleFound = false;
-    std::function<void(StringAttr)> dfs = [&](StringAttr cur) {
-      if (cycleFound)
-        return;
-      VisitState &st = visit[cur];
-      if (st == VisitState::Visiting) {
-        // produce cycle path from first occurrence
-        auto it = llvm::find(stack, cur);
-        std::string msg = "cycle detected in cal.network hierarchy: [";
-        bool first = true;
-        for (auto cycIt = it; cycIt != stack.end(); ++cycIt) {
-          if (!first) msg += " -> ";
-          msg += cycIt->str();
-          first = false;
-        }
-        msg += " -> ";
-        msg += cur.str();
-        msg += "]";
-        if (auto it2 = nameToOp.find(cur); it2 != nameToOp.end())
-          it2->second.emitOpError(msg);
-        else
-          module.emitError(msg);
-        cycleFound = true;
-        return;
-      }
-      if (st == VisitState::Visited)
-        return;
-      st = VisitState::Visiting;
-      stack.push_back(cur);
-      for (auto child : adjacency[cur])
-        dfs(child);
-      stack.pop_back();
-      st = VisitState::Visited;
-    };
+  // If a 'top' network is specified via pass option, annotate it explicitly
+  // with a canonical attribute so downstream passes can unambiguously pick it
+  // as the program entry. Clear any prior top markers to avoid ambiguity.
+  if (!top.empty()) {
     for (auto &kv : nameToOp) {
-      if (visit[kv.first] == VisitState::NotVisited)
-        dfs(kv.first);
-      if (cycleFound) {
-        signalPassFailure();
-        return; // abort flattening
-      }
+      kv.second->removeAttr("cal.top");
+      kv.second->removeAttr("isTop");
+      kv.second->removeAttr("top");
     }
+    StringAttr topName = StringAttr::get(module.getContext(), top);
+    if (auto it = nameToOp.find(topName); it != nameToOp.end()) {
+      it->second->setAttr("cal.top", UnitAttr::get(module.getContext()));
+    } else {
+      module.emitRemark() << "flatten-cal-networks: top='" << top
+                          << "' not found; cannot set cal.top attribute";
+    }
+  }
 
-    // If a 'top' network is specified, compute the set of networks reachable
-    // from it and restrict elaboration/flattening to that set. This avoids
-    // failing on unrelated (possibly partially wired) library networks.
-    llvm::SmallDenseSet<StringAttr, 16> reachable;
-    // Additionally, compute a stricter set of networks that are reachable
-    // from 'top' following only symbolic instantiate edges. This set better
-    // reflects the networks actually used after specialization (e.g., $spec
-    // clones) and is used to gate strict connectivity errors.
-    llvm::SmallDenseSet<StringAttr, 16> instReachable;
-    if (!top.empty()) {
-      StringAttr topName = StringAttr::get(module.getContext(), top);
-      if (nameToOp.count(topName)) {
-        SmallVector<StringAttr, 16> worklist;
-        worklist.push_back(topName);
-        reachable.insert(topName);
-        while (!worklist.empty()) {
-          StringAttr cur = worklist.pop_back_val();
-          for (StringAttr child : adjacency[cur]) {
-            if (reachable.insert(child).second)
-              worklist.push_back(child);
-          }
-        }
-        // Instantiate-only traversal
-        SmallVector<StringAttr, 16> wl2;
-        wl2.push_back(topName);
-        instReachable.insert(topName);
-        while (!wl2.empty()) {
-          StringAttr cur = wl2.pop_back_val();
-          for (StringAttr child : instOnlyAdjacency[cur]) {
-            if (instReachable.insert(child).second)
-              wl2.push_back(child);
-          }
-        }
-      } else {
-        module.emitRemark() << "flatten-cal-networks: top='" << top
-                            << "' not found; proceeding without reachability filter";
+  module.walk([&](CreateInstanceOp inst) {
+    if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
+            inst, inst.getActorRefAttr())) {
+      if (auto parentNet = dyn_cast_or_null<NetworkOp>(inst->getParentOp())) {
+        auto parentName =
+            StringAttr::get(parentNet.getContext(), parentNet.getSymName());
+        auto childName =
+            StringAttr::get(target.getContext(), target.getSymName());
+        adjacency[parentName].push_back(childName);
       }
     }
+  });
+  // Also record symbolic instantiation edges prior to elaboration.
+  module.walk([&](InstantiateOp inst) {
+    if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
+            inst, inst.getActorRefAttr())) {
+      if (auto parentNet = dyn_cast_or_null<NetworkOp>(inst->getParentOp())) {
+        auto parentName =
+            StringAttr::get(parentNet.getContext(), parentNet.getSymName());
+        auto childName =
+            StringAttr::get(target.getContext(), target.getSymName());
+        adjacency[parentName].push_back(childName);
+        instOnlyAdjacency[parentName].push_back(childName);
+      }
+    }
+  });
+  module.walk([&](InstantiateArrayOp instArr) {
+    if (auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
+            instArr, instArr.getActorRefAttr())) {
+      if (auto parentNet = dyn_cast_or_null<NetworkOp>(instArr->getParentOp())) {
+        auto parentName =
+            StringAttr::get(parentNet.getContext(), parentNet.getSymName());
+        auto childName =
+            StringAttr::get(target.getContext(), target.getSymName());
+        // Only the instantiate-only graph should record array-based edges.
+        instOnlyAdjacency[parentName].push_back(childName);
+      }
+    }
+  });
+
+  // 2. Detect cycles via DFS.
+  enum class VisitState { NotVisited, Visiting, Visited };
+  DenseMap<StringAttr, VisitState> visit;
+  SmallVector<StringAttr> stack;
+  bool cycleFound = false;
+  std::function<void(StringAttr)> dfs = [&](StringAttr cur) {
+    if (cycleFound)
+      return;
+    VisitState &st = visit[cur];
+    if (st == VisitState::Visiting) {
+      auto it = llvm::find(stack, cur);
+      std::string msg = "cycle detected in cal.network hierarchy: [";
+      bool first = true;
+      for (auto cycIt = it; cycIt != stack.end(); ++cycIt) {
+        if (!first)
+          msg += " -> ";
+        msg += cycIt->str();
+        first = false;
+      }
+      msg += " -> ";
+      msg += cur.str();
+      msg += "]";
+      if (auto it2 = nameToOp.find(cur); it2 != nameToOp.end())
+        it2->second.emitOpError(msg);
+      else
+        module.emitError(msg);
+      cycleFound = true;
+      return;
+    }
+    if (st == VisitState::Visited)
+      return;
+    st = VisitState::Visiting;
+    stack.push_back(cur);
+    for (auto child : adjacency[cur])
+      dfs(child);
+    stack.pop_back();
+    st = VisitState::Visited;
+  };
+  for (auto &kv : nameToOp) {
+    if (visit[kv.first] == VisitState::NotVisited)
+      dfs(kv.first);
+    if (cycleFound)
+      return failure();
+  }
+
+  // If a 'top' network is specified, compute the sets reachable from it to
+  // scope elaboration/flattening to relevant networks only.
+  llvm::SmallDenseSet<StringAttr, 16> reachable;
+  llvm::SmallDenseSet<StringAttr, 16> instReachable;
+  if (!top.empty()) {
+    StringAttr topName = StringAttr::get(module.getContext(), top);
+    if (nameToOp.count(topName)) {
+      SmallVector<StringAttr, 16> worklist;
+      worklist.push_back(topName);
+      reachable.insert(topName);
+      while (!worklist.empty()) {
+        StringAttr cur = worklist.pop_back_val();
+        for (StringAttr child : adjacency[cur]) {
+          if (reachable.insert(child).second)
+            worklist.push_back(child);
+        }
+      }
+      SmallVector<StringAttr, 16> wl2;
+      wl2.push_back(topName);
+      instReachable.insert(topName);
+      while (!wl2.empty()) {
+        StringAttr cur = wl2.pop_back_val();
+        for (StringAttr child : instOnlyAdjacency[cur]) {
+          if (instReachable.insert(child).second)
+            wl2.push_back(child);
+        }
+      }
+    } else {
+      module.emitRemark() << "flatten-cal-networks: top='" << top
+                          << "' not found; proceeding without reachability filter";
+    }
+  }
 
     // 3. Elaborate symbolic network ops inside each cal.network into
     //    concrete fifo.create + cal.create_instance wiring, so the subsequent
@@ -1484,10 +1565,8 @@ public:
           }
         }
         unsigned before = countCreateInstancesIn(net);
-        if (failed(elaborateNetwork(net))) {
-          signalPassFailure();
-          return;
-        }
+        if (failed(elaborateNetwork(net)))
+          return failure();
         unsigned after = countCreateInstancesIn(net);
         if (after > before)
           anyChange = true;
@@ -1496,152 +1575,140 @@ public:
         break;
     }
 
-    // 4. Perform iterative flattening once confirmed acyclic.
-    bool changed = true;
-    unsigned iteration = 0;
-    // Soft limit: if we iterate more than (number_of_networks * 8) we likely
-    // missed a cyclic pattern (e.g. dynamic pattern not in initial static graph).
-    unsigned softLimit = std::max<unsigned>(nameToOp.size() * 8, 32);
-    while (changed) {
-      changed = false;
-      if (++iteration > softLimit) {
-        module.emitError("flatten-cal-networks exceeded iteration limit (" +
-                         Twine(softLimit) +
-                         ") – possible undetected network cycle");
-        signalPassFailure();
-        return;
+    if (performFlattening) {
+      // 4. Perform iterative flattening once confirmed acyclic.
+      bool changed = true;
+      unsigned iteration = 0;
+      // Soft limit: if we iterate more than (number_of_networks * 8) we likely
+      // missed a cyclic pattern (e.g. dynamic pattern not in initial static graph).
+      unsigned softLimit = std::max<unsigned>(nameToOp.size() * 8, 32);
+      while (changed) {
+        changed = false;
+        if (++iteration > softLimit) {
+          module.emitError("flatten-cal-networks exceeded iteration limit (" +
+                           Twine(softLimit) +
+                           ") – possible undetected network cycle");
+          return failure();
+        }
+        statIterations = iteration;
+
+        // Collect all network instances to inline this iteration.
+        SmallVector<CreateInstanceOp> networkInstances;
+        module.walk([&](CreateInstanceOp inst) {
+          if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
+            networkInstances.push_back(inst);
+        });
+        if (networkInstances.empty())
+          break; // Nothing left to flatten.
+
+        // Deterministic ordering: sort by referenced symbol name (and insertion order fallback via pointer address).
+        llvm::sort(networkInstances, [](CreateInstanceOp a, CreateInstanceOp b) {
+          auto an = a.getActorRefAttr().getRootReference().getValue();
+          auto bn = b.getActorRefAttr().getRootReference().getValue();
+          if (an == bn)
+            return a.getOperation() < b.getOperation();
+          return an < bn;
+        });
+
+        for (CreateInstanceOp inst : networkInstances) {
+          auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
+              inst, inst.getActorRefAttr());
+          if (!target)
+            continue; // Not a network.
+          auto parentNetwork = dyn_cast<NetworkOp>(inst->getParentOp());
+          if (!parentNetwork)
+            continue; // Only flatten inside networks.
+
+          // If 'top' is set, only inline instances whose target is reachable.
+          if (!reachable.empty()) {
+            StringAttr tName = StringAttr::get(target.getContext(), target.getSymName());
+            if (!reachable.contains(tName))
+              continue;
+          }
+
+          // Guard against self-recursive instantiation which indicates a cycle
+          // missed by earlier static detection (should be very rare).
+          if (target == parentNetwork) {
+            inst.emitOpError(
+                "self-recursive network instantiation detected (cycle)");
+            return failure();
+          }
+
+          // Map operands to formal arguments.
+          IRMapping mapping;
+          auto operands = inst.getOperands();
+          auto formalArgs = target.getBody().getArguments();
+          if (operands.size() != formalArgs.size()) {
+            inst.emitOpError(
+                "cannot inline network: operand/formal arity mismatch after prior verification");
+            return failure();
+          }
+          for (auto it : llvm::zip(formalArgs, operands))
+            mapping.map(std::get<0>(it), std::get<1>(it));
+
+          // Clone the target body operations (skip nested networks/actors)
+          Block &targetBody = target.getBody().front();
+          OpBuilder builder(inst);
+          for (Operation &op : targetBody.getOperations()) {
+            if (isa<NetworkOp>(op) || isa<ActorOp>(op))
+              continue;
+            builder.clone(op, mapping);
+          }
+          inst.erase();
+          changed = true;
+          ++statFlattenedInstances;
+        }
       }
-      statIterations = iteration;
 
-      // Collect all network instances to inline this iteration.
-      SmallVector<CreateInstanceOp> networkInstances;
-      module.walk([&](CreateInstanceOp inst) {
-        if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
-          networkInstances.push_back(inst);
-      });
-      if (networkInstances.empty())
-        break; // Nothing left to flatten.
-
-      // Deterministic ordering: sort by referenced symbol name (and insertion order fallback via pointer address).
-      llvm::sort(networkInstances, [](CreateInstanceOp a, CreateInstanceOp b) {
-        auto an = a.getActorRefAttr().getRootReference().getValue();
-        auto bn = b.getActorRefAttr().getRootReference().getValue();
-        if (an == bn)
-          return a.getOperation() < b.getOperation();
-        return an < bn;
-      });
-
-      for (CreateInstanceOp inst : networkInstances) {
-        auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
-            inst, inst.getActorRefAttr());
-        if (!target)
-          continue; // Not a network.
-        auto parentNetwork = dyn_cast<NetworkOp>(inst->getParentOp());
-        if (!parentNetwork)
-          continue; // Only flatten inside networks.
-
-        // If 'top' is set, only inline instances whose target is reachable.
-        if (!reachable.empty()) {
-          StringAttr tName = StringAttr::get(target.getContext(), target.getSymName());
-          if (!reachable.contains(tName))
-            continue;
-        }
-
-        // Guard against self-recursive instantiation which indicates a cycle
-        // missed by earlier static detection (should be very rare).
-        if (target == parentNetwork) {
-          inst.emitOpError(
-              "self-recursive network instantiation detected (cycle)");
-          signalPassFailure();
-          return;
-        }
-
-        // Map operands to formal arguments.
-        IRMapping mapping;
-        auto operands = inst.getOperands();
-        auto formalArgs = target.getBody().getArguments();
-        if (operands.size() != formalArgs.size()) {
-          inst.emitOpError(
-              "cannot inline network: operand/formal arity mismatch after prior verification");
-          signalPassFailure();
-          return;
-        }
-        for (auto it : llvm::zip(formalArgs, operands))
-          mapping.map(std::get<0>(it), std::get<1>(it));
-
-        // Clone the target body operations (skip nested networks/actors)
-        Block &targetBody = target.getBody().front();
-        OpBuilder builder(inst);
-        for (Operation &op : targetBody.getOperations()) {
-          if (isa<NetworkOp>(op) || isa<ActorOp>(op))
-            continue;
-          builder.clone(op, mapping);
-        }
-        inst.erase();
-        changed = true;
-        ++statFlattenedInstances;
+      // 5. Dead network pruning (unless disabled by option)
+      if (!disablePruning) {
+        llvm::SmallDenseSet<StringAttr, 16> referenced;
+        module.walk([&](CreateInstanceOp inst) {
+          if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
+            referenced.insert(StringAttr::get(module.getContext(),
+                                              inst.getActorRefAttr().getRootReference().getValue()));
+        });
+        SmallVector<NetworkOp> toErase;
+        module.walk([&](NetworkOp net) {
+          if (net->hasAttr("cal.top") || (!top.empty() && net.getSymName() == top))
+            return;
+          auto name = StringAttr::get(net.getContext(), net.getSymName());
+          if (!referenced.contains(name)) {
+            bool hasActorInstance = false;
+            bool hasSymbolicOps = false;
+            net.walk([&](CreateInstanceOp ci) {
+              if (symbolTable.lookupNearestSymbolFrom<ActorOp>(ci, ci.getActorRefAttr()))
+                hasActorInstance = true;
+            });
+            net.walk([&](Operation *op) {
+              if (isa<InstantiateOp, InstantiateArrayOp, InstantiateArrayIfaceOp, ConnectOp, InstanceAtOp>(op))
+                hasSymbolicOps = true;
+            });
+            if (!hasActorInstance && !hasSymbolicOps)
+              toErase.push_back(net);
+          }
+        });
+        statPrunedNetworks = toErase.size();
+        for (auto n : toErase)
+          n.erase();
       }
-    }
 
-    // 5. Dead network pruning (unless disabled by option)
-    if (!disablePruning) {
-      llvm::SmallDenseSet<StringAttr, 16> referenced;
-      module.walk([&](CreateInstanceOp inst) {
-        if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
-          referenced.insert(StringAttr::get(module.getContext(),
-                                            inst.getActorRefAttr().getRootReference().getValue()));
-      });
-      SmallVector<NetworkOp> toErase;
-      module.walk([&](NetworkOp net) {
-        // Always preserve the designated top network if present, even if it
-        // appears empty at this stage. Subsequent passes (or later iterations)
-        // may still populate it. This avoids erasing the only entry network
-        // before aggressive top-only pruning below has a chance to run.
-        if (net->hasAttr("cal.top") || (!top.empty() && net.getSymName() == top))
-          return;
-        auto name = StringAttr::get(net.getContext(), net.getSymName());
-        if (!referenced.contains(name)) {
-          bool hasActorInstance = false;
-          bool hasSymbolicOps = false;
-          net.walk([&](CreateInstanceOp ci) {
-            if (symbolTable.lookupNearestSymbolFrom<ActorOp>(ci, ci.getActorRefAttr()))
-              hasActorInstance = true;
-          });
-          // Preserve networks with unresolved symbolic operations (including interface arrays)
-          net.walk([&](Operation *op) {
-            if (isa<InstantiateOp, InstantiateArrayOp, InstantiateArrayIfaceOp, ConnectOp, InstanceAtOp>(op))
-              hasSymbolicOps = true;
-          });
-          if (!hasActorInstance && !hasSymbolicOps)
-            toErase.push_back(net);
-        }
-      });
-      statPrunedNetworks = toErase.size();
-      for (auto n : toErase)
-        n.erase();
-    }
-
-    // 6. Optional aggressive pruning: keep only the designated top network.
-    // If the 'top' option is provided (non-empty), erase all cal.network
-    // symbols whose name does not match. This is stronger than the default
-    // dead network pruning above and is intended for users who want to
-    // retain exactly one (top) network definition in the module after
-    // flattening.
-    //
-    // Important: When running multiple flatten-cal-networks passes in a single
-    // pipeline, pruning to only 'top' too early can remove specialized
-    // networks (e.g., $spec_* clones) that subsequent passes still reference
-    // via symbolic cal.instantiate handles. To avoid symbol resolution issues
-    // in later passes, we only perform this aggressive pruning when no
-    // symbolic construction ops remain in the module.
-    if (!top.empty()) {
-      // Aggressive top-only pruning: always keep exactly the named top network.
-      // Required downstream (lower-cal-to-llvm) which assumes a single surviving network.
-      SmallVector<NetworkOp> eraseOthers;
-      module.walk([&](NetworkOp net) { if (net.getSymName() != top) eraseOthers.push_back(net); });
-      if (emitStats) statPrunedNetworks += eraseOthers.size();
-      for (auto n : eraseOthers) n.erase();
-      module.emitRemark() << "flatten-cal-networks: forced top pruning active; kept only '" << top << "'";
+      // 6. Optional aggressive pruning: keep only the designated top network.
+      if (!top.empty()) {
+        SmallVector<NetworkOp> eraseOthers;
+        module.walk([&](NetworkOp net) {
+          if (net.getSymName() != top)
+            eraseOthers.push_back(net);
+        });
+        if (emitStats)
+          statPrunedNetworks += eraseOthers.size();
+        for (auto n : eraseOthers)
+          n.erase();
+        module.emitRemark()
+            << "flatten-cal-networks: forced top pruning active"
+            << (forceTopOnly ? " (force option)" : "")
+            << "; kept only '" << top << "'";
+      }
     }
 
     // 7. Final cleanup: erase any remaining symbolic construction ops that are
@@ -1687,11 +1754,8 @@ public:
                           << ", ifaceEndpointConnects=" << statSkippedConnectInterfaceTyped
                           << ", partialInstances=" << statSkippedPartialInstance;
     }
+    return success();
   }
-};
 } // namespace
-
-// Factory is generated by TableGen; registering the pass class above is enough.
-// (No out-of-line factory definition to avoid duplicate symbol.)
 
 } // namespace mlir

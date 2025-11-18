@@ -234,6 +234,42 @@ def FifoMemrefAtomicizePass : Pass<"fifo-memref-atomicize"> {
     ];
 }
 
+def ElaborateCalConnectionsPass : Pass<"elaborate-cal-connections", "mlir::ModuleOp"> {
+  let summary = "Resolve cal.connect and symbolic instance handles into concrete channels and cal.create_instance ops";
+  let description = [{
+    This structural elaboration pass materializes CAL network connectivity before
+    hierarchical flattening. It converts symbolic instantiation and connection
+    constructs—such as `cal.instantiate`, instance arrays, `cal.instance_at`, and
+    `cal.connect`—into concrete `fifo.create` and `cal.create_instance` operations
+    with fully wired FIFO SSA values. Duplicate port connections are diagnosed,
+    capacities are propagated, and optional guard rails exist for partially wired
+    graphs.
+
+    The pass performs only the connectivity elaboration portion of the legacy
+    flattening pipeline, leaving hierarchical `cal.network` instances in place.
+    A subsequent `flatten-cal-networks` invocation may inline networks once
+    connectivity has been legalized.
+  }];
+
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cal::CalDialect",
+    "mlir::fifo::FifoDialect"
+  ];
+
+  let options = [
+    Option<"emitStats", "emit-stats", "bool", /*default=*/"false",
+      "Emit a remark summarizing elaboration statistics (iterations, partially skipped instances, etc.).">,
+    Option<"allowPartialConnectivity", "allow-partial-connectivity", "bool", /*default=*/"false",
+      "Allow elaboration to proceed even if some instances are not fully connected. Fully wired instances are materialized while partially wired ones remain symbolic.">,
+    Option<"allowDynamicIndices", "allow-dynamic-indices", "bool", /*default=*/"false",
+      "Permit dynamic indices in instance array access. Such connections are skipped with a remark instead of failing the pass.">,
+    Option<"top", "top", "std::string", /*default=*/"\"\"",
+      "If set, mark the specified `cal.network` symbol as the designated top and limit elaboration to networks reachable from it." >
+  ];
+}
+
  def FlattenCalNetworksPass : Pass<"flatten-cal-networks", "mlir::ModuleOp"> {
     let summary = "Inline (flatten) hierarchical cal.network instantiations so only actors remain";
     let description = [{
