@@ -293,10 +293,13 @@ struct InsertFanoutOnMultiSinkPass
           cal::ConnectOp oldC = it.value();
           builder.setInsertionPoint(oldC);
           StringAttr fanOutName = StringAttr::get(ctx, ("out" + std::to_string(it.index())).c_str());
+          // Preserve the original capacity hint on each branch so downstream
+          // materialization uses the intended fifo depth (avoids defaulting to 1).
+          IntegerAttr branchCap = oldC.getCapacityAttr();
           builder.create<cal::ConnectOp>(oldC.getLoc(),
                                          /*src*/ fanHandle.getResult(), /*srcIdx*/ ValueRange{}, fanOutName,
                                          /*dst*/ oldC.getDst(), /*dstIdx*/ oldC.getDstIndices(), oldC.getDstPortAttr(),
-                                         /*capacity*/ IntegerAttr());
+                                         /*capacity*/ branchCap);
           toErase.push_back(oldC);
         }
         for (cal::ConnectOp old : toErase) old.erase();
