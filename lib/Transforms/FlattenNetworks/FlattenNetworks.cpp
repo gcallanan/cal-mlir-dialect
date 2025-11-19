@@ -65,6 +65,7 @@ struct NetworkProcessingOptions {
   std::string top;
   bool performFlattening = true;
   bool prepOnly = false; // When true, run planning/validation only (no materialization of channels/instances)
+  bool allowSourcePortMultiConnect = false; // Defer duplicate-source diagnostic (fanout will normalize later)
 };
 
 static LogicalResult runNetworkProcessing(ModuleOp module,
@@ -104,6 +105,7 @@ void FlattenCalNetworksPass::runOnOperation() {
   opts.allowDynamicIndices = allowDynamicIndices;
   opts.top = top;
   opts.performFlattening = true;
+  opts.allowSourcePortMultiConnect = allowSourcePortMultiConnect;
 
   if (failed(runNetworkProcessing(getOperation(), opts)))
     signalPassFailure();
@@ -136,6 +138,7 @@ public:
     opts.top = top;
     opts.performFlattening = false; // planning path only
     opts.prepOnly = true;
+    opts.allowSourcePortMultiConnect = allowSourcePortMultiConnect;
     if (failed(runNetworkProcessing(getOperation(), opts)))
       signalPassFailure();
   }
@@ -155,6 +158,7 @@ public:
     opts.top = top;
     opts.performFlattening = false; // full materialization
     opts.prepOnly = false;
+    opts.allowSourcePortMultiConnect = allowSourcePortMultiConnect;
     if (failed(runNetworkProcessing(getOperation(), opts)))
       signalPassFailure();
   }
@@ -173,6 +177,8 @@ static LogicalResult runNetworkProcessing(
   bool performFlattening = opts.performFlattening;
   bool prepOnly = opts.prepOnly;
   std::string top = opts.top;
+  // Enable multi-connect tolerance automatically during prep phase so fanout pass can normalize later.
+  bool allowSourcePortMultiConnect = opts.allowSourcePortMultiConnect || (prepOnly && !performFlattening);
 
   // Track whether the user requested aggressive pruning via the hidden
   // "force-top-only" (or shorthand "force") token bundled into the
@@ -1205,7 +1211,10 @@ static LogicalResult runNetworkProcessing(
           // Multiple connections from the same source port are permitted when
           // auto-fanout insertion is enabled. Otherwise, emit a duplicate-source
           // diagnostic (legacy behavior).
-          if (seenOut[srcPlan][*srcOutIdx]) {
+          if (!seenOut[srcPlan][*srcOutIdx]) {
+            seenOut[srcPlan][*srcOutIdx] = true;
+            firstOutConn[srcPlan][*srcOutIdx] = conn;
+          } else if (!allowSourcePortMultiConnect) {
             auto diag = conn.emitOpError("source port already connected");
             std::string entityLabel;
             std::string entityName;
@@ -1223,9 +1232,6 @@ static LogicalResult runNetworkProcessing(
             if (Operation *first = firstOutConn[srcPlan][*srcOutIdx])
               first->emitRemark("first connection to this port was here");
             return failure();
-          } else {
-            seenOut[srcPlan][*srcOutIdx] = true;
-            firstOutConn[srcPlan][*srcOutIdx] = conn;
           }
           e.srcPlan = srcPlan; e.srcOutIdx = *srcOutIdx;
         } else {

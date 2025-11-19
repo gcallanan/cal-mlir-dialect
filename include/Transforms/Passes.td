@@ -307,7 +307,9 @@ def ElaborateCalConnectionsPrepPass : Pass<"elaborate-cal-connections-prep", "ml
     Option<"allowDynamicIndices", "allow-dynamic-indices", "bool", /*default=*/"false",
       "Permit dynamic indices during prep; such connects are skipped with a remark.">,
     Option<"top", "top", "std::string", /*default=*/"\"\"",
-      "Limit prep to networks reachable from this top symbol (same semantics as finalize)." >
+      "Limit prep to networks reachable from this top symbol (same semantics as finalize)." >,
+    Option<"allowSourcePortMultiConnect", "allow-source-port-multiconnect", "bool", /*default=*/"false",
+      "Permit multiple cal.connect edges from the same source instance+port during prep (defer duplicate-source diagnostics for later fanout normalization).">,
   ];
 }
 
@@ -335,7 +337,9 @@ def ElaborateCalConnectionsFinalizePass : Pass<"elaborate-cal-connections-finali
     Option<"allowDynamicIndices", "allow-dynamic-indices", "bool", /*default=*/"false",
       "Permit dynamic indices; such connects are skipped with a remark instead of failing.">,
     Option<"top", "top", "std::string", /*default=*/"\"\"",
-      "Limit finalization to networks reachable from this top symbol." >
+      "Limit finalization to networks reachable from this top symbol." >,
+    Option<"allowSourcePortMultiConnect", "allow-source-port-multiconnect", "bool", /*default=*/"false",
+      "Permit multiple cal.connect edges from the same source instance+port during finalize planning (defer duplicate-source diagnostics for prior fanout normalization).">,
   ];
 }
 
@@ -393,6 +397,8 @@ def ElaborateCalConnectionsFinalizePass : Pass<"elaborate-cal-connections-finali
      "Permit dynamic indices in cal.instance_at or cal.connect array sugar. Such connections are skipped during elaboration with a remark (to be handled by later passes). When disabled (default), dynamic indices cause a failure.">
    , Option<"top", "top", "std::string", /*default=*/"\"\"",
       "If set, keep only the cal.network with this symbol name after flattening and erase all others. Useful to retain only the designated top network definition for downstream pipelines.">
+     , Option<"allowSourcePortMultiConnect", "allow-source-port-multiconnect", "bool", /*default=*/"false",
+        "Permit multiple cal.connect edges originating from the same source instance+port (multi-sink) without error. Used when a later fanout normalization pass will synthesize fanout actors. When false (default) a duplicate source port connection triggers a diagnostic." >
   ];
 }
 
