@@ -13,6 +13,7 @@ set(LIBS
         MLIRCal
         MLIRFifo
         InsertFanoutOnMultiSinkPass
+        NormalizeConnectsPass
         MLIRVerifyInstanceArrayFills
         #MLIRFifoAtomicize
         #FlattenNetworksPass

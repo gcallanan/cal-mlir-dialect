@@ -22,5 +22,7 @@ add_mlir_conversion_library(CalLoweringPipelines
         NetworkElementsElabPass
         InferCalInstanceArrayShapePass
         InsertFanoutOnMultiSinkPass
+        NormalizeConnectsPass
         MLIRVerifyInstanceArrayFills
+        PruneUnusedNetworksPass
 )

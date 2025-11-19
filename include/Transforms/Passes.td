@@ -270,6 +270,75 @@ def ElaborateCalConnectionsPass : Pass<"elaborate-cal-connections", "mlir::Modul
   ];
 }
 
+// Phase-split elaboration (Option 1): A prep pass that performs only planning
+// and connectivity validation, leaving symbolic cal.connect / cal.instantiate
+// ops intact so downstream transformations (flatten + fanout) can still
+// operate on the full symbolic graph. This pass intentionally skips channel
+// and instance materialization.
+def ElaborateCalConnectionsPrepPass : Pass<"elaborate-cal-connections-prep", "mlir::ModuleOp"> {
+  let summary = "Preparation phase for CAL connection elaboration (no materialization)";
+  let description = [{
+    Performs the planning and validation subset of connection elaboration:
+    - Collects instance plans (single + arrays + ND arrays)
+    - Resolves constant instance_at indices where possible
+    - Parses and validates cal.connect endpoints (duplicate port checks, capacity conflicts)
+    - Computes fully-wired vs partially-wired plans and emits diagnostics (strict / partial modes)
+
+    It deliberately DOES NOT:
+    - Create fifo.create ops
+    - Create cal.create_instance ops
+    - Erase cal.connect / cal.instantiate symbolic ops
+
+    This enables running passes such as flattening or fanout insertion on a
+    validated but still symbolic hierarchy. A follow-up finalize pass will
+    perform the actual materialization.
+  }];
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cal::CalDialect",
+    "mlir::fifo::FifoDialect"
+  ];
+  let options = [
+    Option<"emitStats", "emit-stats", "bool", /*default=*/"false",
+      "Emit a remark summarizing elaboration prep statistics.">,
+    Option<"allowPartialConnectivity", "allow-partial-connectivity", "bool", /*default=*/"false",
+      "Allow prep to proceed even if some instances are not fully connected (diagnostics only).">,
+    Option<"allowDynamicIndices", "allow-dynamic-indices", "bool", /*default=*/"false",
+      "Permit dynamic indices during prep; such connects are skipped with a remark.">,
+    Option<"top", "top", "std::string", /*default=*/"\"\"",
+      "Limit prep to networks reachable from this top symbol (same semantics as finalize)." >
+  ];
+}
+
+// Finalization phase: performs full materialization of channels and instances
+// after optional flatten + fanout transformations.
+def ElaborateCalConnectionsFinalizePass : Pass<"elaborate-cal-connections-finalize", "mlir::ModuleOp"> {
+  let summary = "Finalize CAL connection elaboration (materialize channels & instances)";
+  let description = [{
+    Consumes the symbolic connectivity produced by the prep pass (or legacy
+    IR) and materializes fifo.create + cal.create_instance operations, erasing
+    the corresponding symbolic cal.connect / cal.instantiate constructs.
+    Safe to run after additional symbolic rewrites (e.g. fanout insertion).
+  }];
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cal::CalDialect",
+    "mlir::fifo::FifoDialect"
+  ];
+  let options = [
+    Option<"emitStats", "emit-stats", "bool", /*default=*/"false",
+      "Emit a remark summarizing finalize statistics.">,
+    Option<"allowPartialConnectivity", "allow-partial-connectivity", "bool", /*default=*/"false",
+      "Allow partially wired instances to remain symbolic (skipped materialization).">,
+    Option<"allowDynamicIndices", "allow-dynamic-indices", "bool", /*default=*/"false",
+      "Permit dynamic indices; such connects are skipped with a remark instead of failing.">,
+    Option<"top", "top", "std::string", /*default=*/"\"\"",
+      "Limit finalization to networks reachable from this top symbol." >
+  ];
+}
+
  def FlattenCalNetworksPass : Pass<"flatten-cal-networks", "mlir::ModuleOp"> {
     let summary = "Inline (flatten) hierarchical cal.network instantiations so only actors remain";
     let description = [{
@@ -603,6 +672,75 @@ def InsertFanoutOnMultiSinkPass : Pass<"insert-fanout-on-multisink", "mlir::Modu
     "mlir::fifo::FifoDialect",
     "mlir::arith::ArithDialect"
   ];
+}
+
+// Normalize connect endpoints by lowering any array-indexed instance endpoints
+// into scalar instance handles via explicit cal.instance_at operations. This
+// removes the need for downstream passes (e.g., finalize elaboration) to handle
+// array-index sugar on connects and helps ensure full per-port coverage checks
+// operate on scalar endpoints.
+def NormalizeCalConnectsPass : Pass<"normalize-cal-connects", "mlir::ModuleOp"> {
+  let summary = "Lower array-indexed cal.connect endpoints to scalar instance handles";
+  let description = [{
+    Rewrites `cal.connect` operations that reference instance arrays with index
+    operands (e.g., `%arr[%i]`) into equivalent connects that reference scalar
+    instance handles produced by `cal.instance_at`. This normalization step
+    simplifies downstream elaboration and verification by ensuring both ends of
+    each connect refer to scalar entities or network ports.
+
+    Example:
+      cal.connect %arr[%c0] "Out" -> %m "In"
+    becomes
+      %h = cal.instance_at %arr[%c0] : !cal.instance.array<@A,[2]> -> !cal.instance<@A>
+      cal.connect %h "Out" -> %m "In"
+  }];
+  let constructor = "mlir::createNormalizeCalConnectsPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
+// Post-elaboration pruning of unused cal.network symbols. Performs a reachability
+// analysis (BFS) starting from the designated top network (attribute `cal.top` or
+// unique network if only one exists) and erases any network symbols not reachable
+// via instantiation edges. This pass is intended to run AFTER connection finalization
+// so that only networks still structurally referenced remain; generic template or
+// parametric networks left over from specialization but not reachable are removed.
+// It deliberately does NOT prune actors (they may be referenced by remaining networks)
+// and skips pruning if more than one top candidate exists and none is explicitly marked.
+def PruneUnusedNetworksPass : Pass<"prune-unused-networks", "mlir::ModuleOp"> {
+  let summary = "Prune cal.network symbols unreachable from top";
+  let description = [{
+    Performs a symbol graph traversal beginning at the designated top network and
+    erases any other `cal.network` symbols not reachable through instantiation edges.
+    Edges are discovered from:
+      - `cal.create_instance` whose target symbol is a network (nested networks that
+         survived flattening or were intentionally retained)
+      - `cal.instantiate` whose target symbol is a network (symbolic form pre-finalization)
+
+    Top network detection:
+      1. If exactly one network has the `cal.top` attribute -> use it.
+      2. Else if exactly one network exists overall -> treat it as top.
+      3. Else if an explicit `--top` option is provided -> use that symbol.
+      4. Otherwise, emit a diagnostic and skip pruning (ambiguous tops).
+
+    Safety: Before erasing a network, the pass verifies no remaining instantiate
+    operations refer to it (defensive check); if such a reference exists the network
+    is retained and a remark is emitted.
+
+    Stats (optional): When `--emit-stats` is set, the pass emits a remark summarizing
+    the number of networks kept vs pruned.
+  }];
+  let options = [
+    Option<"emitStats", "emit-stats", "bool", /*default=*/"false",
+      "Emit a remark summarizing pruning statistics (kept vs pruned).">,
+    Option<"top", "top", "std::string", /*default=*/"\"\"",
+      "Explicit top network symbol name to start reachability; overrides attribute autodetection.">
+  ];
+  let dependentDialects = ["mlir::cal::CalDialect"];
+  // Provide constructor so createPruneUnusedNetworksPass() is emitted in Passes.h.inc
+  let constructor = "mlir::createPruneUnusedNetworksPass()";
 }
 
 #endif // CAL_TRANSFORM_PASSES

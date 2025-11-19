@@ -141,7 +141,31 @@ struct InsertFanoutOnMultiSinkPass
       for (auto &kv : groups) {
         if (kv.second.size() > 1) multiSinkGroups.push_back(kv.second);
       }
+      // If no groups were found via the DenseMap approach attempt a fallback naive scan.
+      if (multiSinkGroups.empty()) {
+        SmallVector<cal::ConnectOp> allConnects;
+        net.walk([&](cal::ConnectOp c){ allConnects.push_back(c); });
+        llvm::SmallDenseSet<Operation*> used;
+        for (cal::ConnectOp c : allConnects) {
+          if (used.contains(c.getOperation())) continue;
+          SmallVector<cal::ConnectOp> group;
+          group.push_back(c);
+          for (cal::ConnectOp d : allConnects) {
+            if (d == c) continue;
+            if (used.contains(d.getOperation())) continue;
+            if (d.getSrc() == c.getSrc() && d.getSrcPortAttr() == c.getSrcPortAttr())
+              group.push_back(d);
+          }
+          if (group.size() > 1) {
+            multiSinkGroups.push_back(group);
+            for (cal::ConnectOp g : group) used.insert(g.getOperation());
+          }
+        }
+        if (!multiSinkGroups.empty())
+          net.emitRemark() << "[fanout] fallback grouping found " << multiSinkGroups.size() << " multi-sink groups";
+      }
       if (multiSinkGroups.empty()) continue;
+      // Fallback: if map-based grouping produced no multi-sink groups, attempt a naive O(n^2) scan.
 
   OpBuilder builder(net.getContext());
   builder.setInsertionPointToStart(&net.getBody().front());
@@ -150,6 +174,9 @@ struct InsertFanoutOnMultiSinkPass
         // All connects share same source & srcPort. Verify element types and collect sinks.
         Value src = connects.front().getSrc();
         StringAttr srcPort = connects.front().getSrcPortAttr();
+        // Debug remark: announce candidate multi-sink group prior to type inference.
+        net.emitRemark() << "[fanout] candidate group src port '" << srcPort.getValue()
+                         << "' with " << connects.size() << " sinks";
         // Determine element type T for the channel carried by srcPort.
         auto inferElemType = [&](Value srcV, StringAttr sPort, Value dstV, StringAttr dPort) -> Type {
           // 1) If src is a network fifo output port, use its element type directly.
@@ -209,7 +236,11 @@ struct InsertFanoutOnMultiSinkPass
           elemType = inferElemType(src, srcPort, c.getDst(), c.getDstPortAttr());
           if (elemType) break;
         }
-        if (!elemType) continue; // cannot resolve type; skip gracefully
+        if (!elemType) {
+          net.emitRemark() << "[fanout] skipping group for src port '" << srcPort.getValue() << "' (could not resolve element type)";
+          continue; // cannot resolve type; skip gracefully
+        }
+        net.emitRemark() << "[fanout] inserting fanout for src port '" << srcPort.getValue() << "' (elemType resolved)";
 
         unsigned numSinks = connects.size();
         // Capacity aggregation.

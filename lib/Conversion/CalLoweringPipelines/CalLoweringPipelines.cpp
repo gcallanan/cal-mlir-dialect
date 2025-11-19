@@ -53,6 +53,11 @@
 #undef GEN_PASS_DECL_FLATTENCALNETWORKSPASS
 #include "Conversion/Passes.h"
 #include "Transforms/Passes.h"
+#define GEN_PASS_DECL_ELABORATECALCONNECTIONSPREPPASS
+#define GEN_PASS_DECL_ELABORATECALCONNECTIONSFINALIZEPASS
+#include "Transforms/Passes.h.inc"
+#undef GEN_PASS_DECL_ELABORATECALCONNECTIONSPREPPASS
+#undef GEN_PASS_DECL_ELABORATECALCONNECTIONSFINALIZEPASS
 
 namespace mlir::cal {
 
@@ -365,8 +370,35 @@ void registerLowerCalToLLVMWithGPUTensorsPipeline() {
 // We keep the original function name so existing callers (e.g. cal-opt) continue to work.
 namespace mlir {
 void registerCalGenericTransformationsPipelines() {
-  // Only expose unified network elaboration pipeline.
-  auto buildCalNetworkElabPipeline = [](OpPassManager &pm) {
+  // Re-expose unified network elaboration pipeline with an explicit 'top'
+  // option (restoring prior interface: --cal-network-elab=top=<symbol>). If
+  // the option is omitted we fall back to CAL_NETWORK_ELAB_TOP env var for
+  // convenience. The pipeline performs two-phase connection elaboration and
+  // a double flatten (first without pruning, second with pruning) to fully
+  // inline hierarchy while preserving specialized network symbols until
+  // final materialization.
+  struct CalNetworkElabOptions : public PassPipelineOptions<CalNetworkElabOptions> {
+    Option<std::string> top{*this, "top",
+                            llvm::cl::desc("Symbol name of the top cal.network to elaborate/retain; if empty, falls back to CAL_NETWORK_ELAB_TOP env var."),
+                            llvm::cl::init("")};
+    Option<bool> disableSecondFlatten{*this, "disable-second-flatten",
+                                      llvm::cl::desc("Disable the second flatten+prune phase (for debugging incremental elaboration)."),
+                                      llvm::cl::init(false)};
+  };
+
+  // Internal lightweight marker pass used for temporary sequencing diagnostics.
+  struct PipelineMarkerPass : public PassWrapper<PipelineMarkerPass, OperationPass<ModuleOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PipelineMarkerPass)
+    std::string marker;
+    PipelineMarkerPass() = default;
+    PipelineMarkerPass(StringRef m) { marker = m.str(); }
+    StringRef getArgument() const final { return "_pipeline-marker"; }
+    StringRef getDescription() const final { return "Emits a diagnostic remark identifying pipeline sequencing"; }
+    void runOnOperation() override { getOperation().emitRemark() << "[pipeline] " << marker; }
+  };
+  auto createPipelineMarkerPass = [&](StringRef m){ return std::make_unique<PipelineMarkerPass>(m); };
+
+  auto buildCalNetworkElabPipeline = [&](OpPassManager &pm, const CalNetworkElabOptions &opts) {
     // Initial ordering up to network-elements-elab:
     // const-jit-resolve, cal-param-specialize, canonicalize,
     // const-jit-resolve, canonicalize,
@@ -383,28 +415,74 @@ void registerCalGenericTransformationsPipelines() {
 
     pm.addPass(mlir::createCanonicalizerPass());
 
-    // Flatten with forwarded top selection via CAL_NETWORK_ELAB_TOP env var.
-    FlattenCalNetworksPassOptions flOpts; // defaults unless env provided
-    ElaborateCalConnectionsPassOptions elabOpts;
-    if (const char *topEnv = ::getenv("CAL_NETWORK_ELAB_TOP")) {
-      if (topEnv && *topEnv) {
-        std::string topValue(topEnv);
-        flOpts.top = topValue;
-        elabOpts.top = topValue;
+    // Determine top selection via option or CAL_NETWORK_ELAB_TOP env var.
+    std::string topValue = opts.top;
+    if (topValue.empty()) {
+      if (const char *topEnv = ::getenv("CAL_NETWORK_ELAB_TOP")) {
+        if (topEnv && *topEnv)
+          topValue = std::string(topEnv);
       }
     }
 
-    pm.addPass(createFlattenCalNetworksPass(std::move(flOpts)));
+    // Forward top selection to passes via options structures.
+    // Mandatory ordering: flatten the hierarchy first, insert fanout helpers
+    // on the flattened topology, and finally elaborate symbolic connections.
+    // Updated sequence (prep -> flatten -> fanout -> finalize) keeps symbolic
+    // cal.connect ops available for fanout insertion.
+    FlattenCalNetworksPassOptions flOpts; // defaults unless option/env provided
+    if (!topValue.empty())
+      flOpts.top = topValue;
+
+    // 1. Prep symbolic elaboration (plan/validate only, retain cal.connect)
+    pm.addPass(createElaborateCalConnectionsPrepPass());
     pm.addPass(mlir::createCanonicalizerPass());
+    // 1.5 Scalarize array-indexed connect endpoints early so coverage checks
+    // during flatten/finalize see scalar instance handles.
+    pm.addPass(createNormalizeCalConnectsPass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createPipelineMarkerPass("BEFORE_FANOUT"));
+    // 2. Insert fanout BEFORE initial flatten so multi-sink connects inside
+    // nested networks are normalized early (standalone pass succeeds here).
     pm.addPass(createInsertFanoutOnMultiSinkPass());
     pm.addPass(mlir::createCanonicalizerPass());
-    pm.addPass(createElaborateCalConnectionsPass(std::move(elabOpts)));
+    pm.addPass(createPipelineMarkerPass("AFTER_FANOUT_BEFORE_FLATTEN1"));
+    // 3. Flatten hierarchy (symbolic connects preserved).
+    // In split elaboration mode we must retain nested network symbols until
+    // finalize elaboration materializes channels & instances. Disable pruning
+    // here to avoid erasing referenced network symbols (e.g. specialized FFT
+    // sub-networks) which causes finalize to fail resolving cal.instantiate.
+    flOpts.disablePruning = true; // ensure nested networks survive flatten step
+    pm.addPass(createFlattenCalNetworksPass(std::move(flOpts)));
     pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createPipelineMarkerPass("AFTER_FLATTEN1"));
+    // 4. Finalize elaboration (materialize channels & instances, erase connects)
+    pm.addPass(createElaborateCalConnectionsFinalizePass());
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(createVerifyInstanceArrayFillsPass());
+    pm.addPass(createVerifyConnectPortsPass());
+    pm.addPass(createVerifyInstanceArrayStaticUsagePass());
+    pm.addPass(createPipelineMarkerPass("AFTER_FINALIZE"));
+    // 5. Now that materialization is done, attempt a second flatten to inline
+    //    any remaining network-of-networks into the selected top network.
+    //    Enable pruning here so we can drop now-unreferenced symbols.
+    if (!opts.disableSecondFlatten) {
+      FlattenCalNetworksPassOptions flOpts2;
+      if (!topValue.empty())
+        flOpts2.top = topValue;
+      flOpts2.disablePruning = false;
+      pm.addPass(createFlattenCalNetworksPass(std::move(flOpts2)));
+      pm.addPass(mlir::createCanonicalizerPass());
+      // 6. Prune unreachable network symbols post-second-flatten to drop
+      //    unused generic/template networks (e.g., unreferenced specialized roots).
+      pm.addPass(createPruneUnusedNetworksPass());
+      pm.addPass(mlir::createCanonicalizerPass());
+      pm.addPass(createPipelineMarkerPass("AFTER_FLATTEN2_PRUNE"));
+    }
   };
 
-  PassPipelineRegistration<> calNetworkElab(
+  PassPipelineRegistration<CalNetworkElabOptions> calNetworkElab(
       "cal-network-elab",
-      "Unified full CAL network elaboration (experimental skeleton – options removed to avoid RTTI; configure individual passes directly)",
+      "Unified CAL network elaboration (supports --cal-network-elab=top=<symbol>). Performs specialization, two-phase connection elaboration, fanout insertion, double flatten, and pruning.",
       buildCalNetworkElabPipeline);
 }
 } // namespace mlir

@@ -7,6 +7,7 @@
 #include "Dialect/Cal/CalDialect.h"
 #include "Dialect/Cal/CalOps.h"
 #include "Dialect/Cal/CalTypes.h"
+#include "Dialect/Fifo/FifoDialect.h"
 #include "Dialect/Fifo/FifoOps.h"
 #include "Dialect/Fifo/FifoTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -23,21 +24,34 @@
 #include <string>
 #include <utility>
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Support/raw_ostream.h"
+
 #define GEN_PASS_DECL_ELABORATECALCONNECTIONSPASS
+#define GEN_PASS_DECL_ELABORATECALCONNECTIONSPREPPASS
+#define GEN_PASS_DECL_ELABORATECALCONNECTIONSFINALIZEPASS
 #define GEN_PASS_DECL_FLATTENCALNETWORKSPASS
 #include "Transforms/Passes.h.inc"
 #undef GEN_PASS_DECL_ELABORATECALCONNECTIONSPASS
+#undef GEN_PASS_DECL_ELABORATECALCONNECTIONSPREPPASS
+#undef GEN_PASS_DECL_ELABORATECALCONNECTIONSFINALIZEPASS
 #undef GEN_PASS_DECL_FLATTENCALNETWORKSPASS
 
 #include "Transforms/FlattenNetworks/FlattenNetworks.h"
-#include "Transforms/Passes.h"
-
 using namespace mlir;
 using namespace mlir::cal;
 
 namespace mlir {
 
 #define GEN_PASS_DEF_ELABORATECALCONNECTIONSPASS
+#define GEN_PASS_DEF_ELABORATECALCONNECTIONSPREPPASS
+#define GEN_PASS_DEF_ELABORATECALCONNECTIONSFINALIZEPASS
 #define GEN_PASS_DEF_FLATTENCALNETWORKSPASS
 #include "Transforms/Passes.h.inc"
 
@@ -50,6 +64,7 @@ struct NetworkProcessingOptions {
   bool allowDynamicIndices = false;
   std::string top;
   bool performFlattening = true;
+  bool prepOnly = false; // When true, run planning/validation only (no materialization of channels/instances)
 };
 
 static LogicalResult runNetworkProcessing(ModuleOp module,
@@ -101,10 +116,49 @@ void ElaborateCalConnectionsPass::runOnOperation() {
   opts.allowDynamicIndices = allowDynamicIndices;
   opts.top = top;
   opts.performFlattening = false;
+  opts.prepOnly = false; // legacy full elaboration
 
   if (failed(runNetworkProcessing(getOperation(), opts)))
     signalPassFailure();
 }
+
+class ElaborateCalConnectionsPrepPass : public impl::ElaborateCalConnectionsPrepPassBase<ElaborateCalConnectionsPrepPass> {
+public:
+  using Base = impl::ElaborateCalConnectionsPrepPassBase<ElaborateCalConnectionsPrepPass>;
+  ElaborateCalConnectionsPrepPass() = default;
+  ElaborateCalConnectionsPrepPass(const ElaborateCalConnectionsPrepPass &other) = default;
+  explicit ElaborateCalConnectionsPrepPass(ElaborateCalConnectionsPrepPassOptions options) : Base(std::move(options)) {}
+  void runOnOperation() override {
+    NetworkProcessingOptions opts;
+    opts.emitStats = emitStats;
+    opts.allowPartialConnectivity = allowPartialConnectivity;
+    opts.allowDynamicIndices = allowDynamicIndices;
+    opts.top = top;
+    opts.performFlattening = false; // planning path only
+    opts.prepOnly = true;
+    if (failed(runNetworkProcessing(getOperation(), opts)))
+      signalPassFailure();
+  }
+};
+
+class ElaborateCalConnectionsFinalizePass : public impl::ElaborateCalConnectionsFinalizePassBase<ElaborateCalConnectionsFinalizePass> {
+public:
+  using Base = impl::ElaborateCalConnectionsFinalizePassBase<ElaborateCalConnectionsFinalizePass>;
+  ElaborateCalConnectionsFinalizePass() = default;
+  ElaborateCalConnectionsFinalizePass(const ElaborateCalConnectionsFinalizePass &other) = default;
+  explicit ElaborateCalConnectionsFinalizePass(ElaborateCalConnectionsFinalizePassOptions options) : Base(std::move(options)) {}
+  void runOnOperation() override {
+    NetworkProcessingOptions opts;
+    opts.emitStats = emitStats;
+    opts.allowPartialConnectivity = allowPartialConnectivity;
+    opts.allowDynamicIndices = allowDynamicIndices;
+    opts.top = top;
+    opts.performFlattening = false; // full materialization
+    opts.prepOnly = false;
+    if (failed(runNetworkProcessing(getOperation(), opts)))
+      signalPassFailure();
+  }
+};
 
 namespace {
 
@@ -117,6 +171,7 @@ static LogicalResult runNetworkProcessing(
   bool allowPartialConnectivity = opts.allowPartialConnectivity;
   bool allowDynamicIndices = opts.allowDynamicIndices;
   bool performFlattening = opts.performFlattening;
+  bool prepOnly = opts.prepOnly;
   std::string top = opts.top;
 
   // Track whether the user requested aggressive pruning via the hidden
@@ -362,16 +417,14 @@ static LogicalResult runNetworkProcessing(
     }
   }
 
-    // 3. Elaborate symbolic network ops inside each cal.network into
-    //    concrete fifo.create + cal.create_instance wiring, so the subsequent
-    //    flattening only needs to inline nested networks. This step replaces
-    //    the following ops within network bodies:
-    //      - cal.instantiate            -> materialized via cal.create_instance
-    //      - cal.instantiate_array      -> expanded to N create_instance ops
-    //      - cal.instance_at            -> resolved to a specific instance
-    //      - cal.connect                -> fifo.create + operand threading
-    //    Current limitation: instance_at indices must be constant. Dynamic
-    //    indices will cause a pass failure with a diagnostic.
+    // 3. (Optional) Elaborate symbolic connections. We now restrict
+    // elaboration to the ElaborateCalConnectionsPass only. When
+    // 'performFlattening' is true (FlattenCalNetworksPass), we skip this
+    // entire section so that flattening operates on purely symbolic
+    // constructs (cal.instantiate / cal.connect, etc.).
+    // When 'performFlattening' is false (ElaborateCalConnectionsPass), we run
+    // the original elaboration logic to materialize fifo.create and
+    // cal.create_instance ops.
 
     auto suggestClosest = [&](StringRef input, ArrayRef<StringRef> choices) -> std::string {
       // Simple Levenshtein distance (bounded) for small sets; fallback to prefix match.
@@ -410,9 +463,11 @@ static LogicalResult runNetworkProcessing(
       if (name.starts_with(prefix)) {
         StringRef tail = name.drop_front(prefix.size());
         if (tail.empty()) {
-          // Only accept generic alias ("in"/"out") for single-port groups when there are no declared names.
-          if (max == 1 && (!declaredNames || declaredNames.empty()))
-            return 0u; // single-port alias permitted (no declared names to conflict)
+          // Allow the generic alias ("in"/"out") for single-port groups even when
+          // symbolic names are declared. This maintains compatibility with older
+          // IR that always used the alias for boundary ports.
+          if (max == 1)
+            return 0u;
           // Otherwise, treat as ambiguous/disallowed; fall through.
         } else {
           unsigned idx = 0;
@@ -435,8 +490,9 @@ static LogicalResult runNetworkProcessing(
       }
 
       // 3) As a final convenience, accept the group alias for single-port groups even
-      // if it wasn't written with the prefix — but only when there are no declared names.
-      if (max == 1 && (!declaredNames || declaredNames.empty()) && (name == (isDst ? "in" : "out")))
+      // if it wasn't written with the prefix. This helps with legacy IR where
+      // explicit symbolic names coexist with alias usage.
+      if (max == 1 && (name == (isDst ? "in" : "out")))
         return 0u;
 
       return failure();
@@ -477,7 +533,15 @@ static LogicalResult runNetworkProcessing(
   // a serialized ND index key "i0,i1,...". This avoids requiring static shapes.
   DenseMap<Value, llvm::StringMap<InstPlan*>> arrayElemPlans;
 
-  for (Operation &op : llvm::make_early_inc_range(body.getOperations())) {
+      // Skip collecting plans entirely if we are in flatten-only mode; we
+      // just return success without modifying the network. The flatten step
+      // (later) will rely on elaboration having already occurred in a prior
+      // pass.
+      if (performFlattening) {
+        return success();
+      }
+
+      for (Operation &op : llvm::make_early_inc_range(body.getOperations())) {
         if (auto inst = dyn_cast<InstantiateOp>(&op)) {
           ActorOp actor = symbolTable.lookupNearestSymbolFrom<ActorOp>(&op, inst.getActorRefAttr());
           NetworkOp net  = symbolTable.lookupNearestSymbolFrom<NetworkOp>(&op, inst.getActorRefAttr());
@@ -1336,6 +1400,12 @@ static LogicalResult runNetworkProcessing(
             }
       }
 
+      // Early exit for prep-only mode: skip materialization of channels/instances
+      if (prepOnly) {
+        // Leave symbolic ops intact for downstream flatten/fanout.
+        return success();
+      }
+
       // Materialize edges: if both endpoints are plans, create fifo and assign;
       // if one endpoint is a network port, wire the plan port directly to it.
       for (auto &e : edges) {
@@ -1531,7 +1601,8 @@ static LogicalResult runNetworkProcessing(
 
       // Erase symbolic ops: remove only connects we elaborated and defs we replaced.
       for (Operation *op : toErase)
-        op->erase();
+        if (op && op->use_empty())
+          op->erase();
       for (InstanceAtOp at : instanceAtOps)
         if (at.use_empty()) at.erase();
       for (Operation *op : defsToErase)
@@ -1540,48 +1611,761 @@ static LogicalResult runNetworkProcessing(
       return success();
     };
 
-    // Elaborate networks with a small fixed-point: newly materialized FIFOs and
-    // instances can make additional instantiates fully wired. Iterate up to 3
-    // times or until no new create_instance ops are introduced.
-    auto countCreateInstancesIn = [&](NetworkOp net) -> unsigned {
-      unsigned c = 0;
-      net.walk([&](CreateInstanceOp) { ++c; });
-      return c;
-    };
-
-    for (int iter = 0; iter < 3; ++iter) {
-      bool anyChange = false;
-      for (NetworkOp net : llvm::make_early_inc_range(module.getOps<NetworkOp>())) {
-        if (!reachable.empty() || !instReachable.empty()) {
-          StringAttr n = StringAttr::get(net.getContext(), net.getSymName());
-          // Prefer the instantiate-only reachability when available since it
-          // reflects the actually used networks after specialization.
-          if (!instReachable.empty()) {
-            if (!instReachable.contains(n))
-              continue;
-          } else if (!reachable.empty()) {
-            if (!reachable.contains(n))
-              continue;
+    // Run elaboration fixed-point only in elaboration mode.
+    if (!performFlattening) {
+      auto countCreateInstancesIn = [&](NetworkOp net) -> unsigned {
+        unsigned c = 0;
+        net.walk([&](CreateInstanceOp) { ++c; });
+        return c;
+      };
+      for (int iter = 0; iter < 3; ++iter) {
+        bool anyChange = false;
+        for (NetworkOp net : llvm::make_early_inc_range(module.getOps<NetworkOp>())) {
+          if (!reachable.empty() || !instReachable.empty()) {
+            StringAttr n = StringAttr::get(net.getContext(), net.getSymName());
+            if (!instReachable.empty()) {
+              if (!instReachable.contains(n))
+                continue;
+            } else if (!reachable.empty()) {
+              if (!reachable.contains(n))
+                continue;
+            }
           }
+          unsigned before = countCreateInstancesIn(net);
+          if (failed(elaborateNetwork(net)))
+            return failure();
+          unsigned after = countCreateInstancesIn(net);
+          if (after > before)
+            anyChange = true;
         }
-        unsigned before = countCreateInstancesIn(net);
-        if (failed(elaborateNetwork(net)))
-          return failure();
-        unsigned after = countCreateInstancesIn(net);
-        if (after > before)
-          anyChange = true;
+        if (!anyChange)
+          break;
       }
-      if (!anyChange)
-        break;
     }
 
     if (performFlattening) {
+      auto getConstIndex = [&](Value idx) -> std::optional<int64_t> {
+        if (auto cst = idx.getDefiningOp<arith::ConstantOp>()) {
+          if (auto intAttr = dyn_cast<IntegerAttr>(cst.getValue()))
+            return intAttr.getInt();
+        }
+        return std::nullopt;
+      };
+
+      auto expandNetworkInstanceArrays = [&]() -> LogicalResult {
+        SmallVector<InstantiateArrayOp, 8> arrays;
+        module.walk([&](InstantiateArrayOp arr) { arrays.push_back(arr); });
+
+        for (InstantiateArrayOp arr : arrays) {
+          auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
+              arr, arr.getActorRefAttr());
+          if (!target)
+            continue;
+
+          auto parentNet = arr->getParentOfType<NetworkOp>();
+          if (!parentNet)
+            continue;
+
+          if (!reachable.empty()) {
+            StringAttr parentName =
+                StringAttr::get(parentNet.getContext(), parentNet.getSymName());
+            if (!reachable.contains(parentName))
+              continue;
+            StringAttr targetName =
+                StringAttr::get(target.getContext(), target.getSymName());
+            if (!reachable.contains(targetName))
+              continue;
+          }
+
+          uint64_t count = arr.getCount();
+          if (count == 0)
+            continue;
+
+          auto arrayType = arr.getHandlesArray().getType();
+
+          struct ConnectTransform {
+            cal::ConnectOp op;
+            std::optional<int64_t> srcIndex;
+            std::optional<int64_t> dstIndex;
+          };
+
+          DenseMap<Operation *, ConnectTransform> connTransforms;
+          SmallVector<std::pair<cal::InstanceAtOp, int64_t>, 8> atInfo;
+          bool skip = false;
+
+          for (OpOperand &use : arr.getHandlesArray().getUses()) {
+            Operation *user = use.getOwner();
+            if (auto at = dyn_cast<cal::InstanceAtOp>(user)) {
+              if (at.getArray() != arr.getHandlesArray())
+                continue;
+              if (at.getIndices().size() != 1) {
+                if (allowDynamicIndices) {
+                  skip = true;
+                  break;
+                }
+                at.emitOpError("only single constant index is supported for cal.instance_at on network arrays during flattening");
+                return failure();
+              }
+              auto maybeIdx = getConstIndex(*at.getIndices().begin());
+              if (!maybeIdx.has_value()) {
+                if (allowDynamicIndices) {
+                  skip = true;
+                  break;
+                }
+                at.emitOpError("dynamic index not supported for cal.instance_at during flattening");
+                return failure();
+              }
+              atInfo.emplace_back(at, *maybeIdx);
+              continue;
+            }
+
+            if (auto conn = dyn_cast<cal::ConnectOp>(user)) {
+              auto &transform = connTransforms[conn.getOperation()];
+              transform.op = conn;
+
+              if (conn.getSrc() == arr.getHandlesArray()) {
+                auto srcIdxs = conn.getSrcIndices();
+                if (srcIdxs.size() != 1) {
+                  if (allowDynamicIndices) {
+                    skip = true;
+                    break;
+                  }
+                  conn.emitOpError("expected exactly one static index when connecting from cal.instantiate_array result during flattening");
+                  return failure();
+                }
+                auto maybeIdx = getConstIndex(srcIdxs.front());
+                if (!maybeIdx.has_value()) {
+                  if (allowDynamicIndices) {
+                    skip = true;
+                    break;
+                  }
+                  conn.emitOpError("dynamic index on connect source is not supported during flattening");
+                  return failure();
+                }
+                transform.srcIndex = *maybeIdx;
+              }
+
+              if (conn.getDst() == arr.getHandlesArray()) {
+                auto dstIdxs = conn.getDstIndices();
+                if (dstIdxs.size() != 1) {
+                  if (allowDynamicIndices) {
+                    skip = true;
+                    break;
+                  }
+                  conn.emitOpError("expected exactly one static index when connecting into cal.instantiate_array result during flattening");
+                  return failure();
+                }
+                auto maybeIdx = getConstIndex(dstIdxs.front());
+                if (!maybeIdx.has_value()) {
+                  if (allowDynamicIndices) {
+                    skip = true;
+                    break;
+                  }
+                conn.emitOpError("dynamic index on connect destination is not supported during flattening");
+                return failure();
+                }
+                transform.dstIndex = *maybeIdx;
+              }
+              continue;
+            }
+
+            // Unsupported use (e.g., array comprehension) – defer to future elaboration.
+            skip = true;
+            break;
+          }
+
+          if (skip)
+            continue;
+
+          if (atInfo.empty() && connTransforms.empty())
+            continue;
+
+          OpBuilder arrayBuilder(arr);
+          SmallVector<Value, 8> params(arr.getParams().begin(), arr.getParams().end());
+          SmallVector<Value, 8> handles;
+          handles.reserve(count);
+          MLIRContext *ctx = module.getContext();
+          auto elemTy = cal::InstanceType::get(ctx, arrayType.getActorRef());
+
+          for (uint64_t idx = 0; idx < count; ++idx) {
+            OperationState st(arr.getLoc(), cal::InstantiateOp::getOperationName());
+            st.addTypes(elemTy);
+            st.addAttribute("actorRef", arr.getActorRefAttr());
+            if (auto base = arr.getBaseNameAttr()) {
+              std::string instName = (Twine(base.getValue()) + "[" + Twine(idx) + "]").str();
+              st.addAttribute("instanceName", StringAttr::get(ctx, instName));
+            }
+            st.addOperands(params);
+            Operation *created = Operation::create(st);
+            arrayBuilder.insert(created);
+            auto inst = cast<cal::InstantiateOp>(created);
+            handles.push_back(inst.getHandle());
+          }
+
+          SmallVector<Operation *, 8> toErase;
+          for (auto [at, idx] : atInfo) {
+            if (idx < 0 || static_cast<uint64_t>(idx) >= handles.size()) {
+              at.emitOpError("index out of bounds for instantiate_array expansion during flattening");
+              return failure();
+            }
+            at.replaceAllUsesWith(handles[static_cast<size_t>(idx)]);
+            toErase.push_back(at.getOperation());
+          }
+
+          for (auto &entry : connTransforms) {
+            auto &info = entry.second;
+            cal::ConnectOp conn = info.op;
+
+            SmallVector<Value, 4> newSrcIndices(conn.getSrcIndices().begin(),
+                                                conn.getSrcIndices().end());
+            SmallVector<Value, 4> newDstIndices(conn.getDstIndices().begin(),
+                                                conn.getDstIndices().end());
+            Value newSrc = conn.getSrc();
+            Value newDst = conn.getDst();
+
+            if (info.srcIndex) {
+              int64_t idx = *info.srcIndex;
+              if (idx < 0 || static_cast<uint64_t>(idx) >= handles.size()) {
+                conn.emitOpError("source index out of bounds for instantiate_array expansion during flattening");
+                return failure();
+              }
+              newSrc = handles[static_cast<size_t>(idx)];
+              newSrcIndices.clear();
+            }
+
+            if (info.dstIndex) {
+              int64_t idx = *info.dstIndex;
+              if (idx < 0 || static_cast<uint64_t>(idx) >= handles.size()) {
+                conn.emitOpError("destination index out of bounds for instantiate_array expansion during flattening");
+                return failure();
+              }
+              newDst = handles[static_cast<size_t>(idx)];
+              newDstIndices.clear();
+            }
+
+            OpBuilder connBuilder(conn);
+            OperationState st(conn.getLoc(), cal::ConnectOp::getOperationName());
+            SmallVector<Value, 8> operands;
+            operands.push_back(newSrc);
+            operands.append(newSrcIndices.begin(), newSrcIndices.end());
+            operands.push_back(newDst);
+            operands.append(newDstIndices.begin(), newDstIndices.end());
+            st.addOperands(operands);
+
+            NamedAttrList attrs(conn->getAttrDictionary());
+            SmallVector<int32_t, 4> segments = {
+                1, static_cast<int32_t>(newSrcIndices.size()),
+                1, static_cast<int32_t>(newDstIndices.size())};
+            attrs.set(connBuilder.getStringAttr("operand_segment_sizes"),
+                      connBuilder.getI32VectorAttr(segments));
+            st.addAttributes(attrs);
+
+            Operation *created = Operation::create(st);
+            connBuilder.insert(created);
+            conn.erase();
+          }
+
+          for (Operation *op : toErase)
+            op->erase();
+
+          if (arr.getHandlesArray().use_empty())
+            arr.erase();
+        }
+
+        return success();
+      };
+
+      if (failed(expandNetworkInstanceArrays()))
+        return failure();
+
       // 4. Perform iterative flattening once confirmed acyclic.
       bool changed = true;
       unsigned iteration = 0;
       // Soft limit: if we iterate more than (number_of_networks * 8) we likely
       // missed a cyclic pattern (e.g. dynamic pattern not in initial static graph).
       unsigned softLimit = std::max<unsigned>(nameToOp.size() * 8, 32);
+
+      auto inlineSymbolicNetwork = [&](InstantiateOp inst) -> LogicalResult {
+        auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
+            inst, inst.getActorRefAttr());
+        if (!target)
+          return success(); // Not a network instantiate.
+
+        // Some specialisation paths can materialise both an actor and a
+        // network with related symbol names. If this reference resolves to an
+        // actor definition we must treat it as a leaf instance and skip
+        // network flattening attempts; otherwise we risk destroying the
+        // instantiate while actor-level connections still use it.
+        if (symbolTable.lookupNearestSymbolFrom<ActorOp>(inst,
+                                                         inst.getActorRefAttr()))
+          return success();
+
+        llvm::errs() << "[flatten] considering instantiate of "
+                     << inst.getActorRefAttr().getValue() << "\n";
+
+        auto parentNetwork = dyn_cast<NetworkOp>(inst->getParentOp());
+        if (!parentNetwork)
+          return success();
+
+        if (!reachable.empty()) {
+          StringAttr tName =
+              StringAttr::get(target.getContext(), target.getSymName());
+          if (!reachable.contains(tName))
+            return success();
+        }
+
+        if (target == parentNetwork) {
+          inst.emitOpError(
+              "self-recursive network instantiation detected (cycle)");
+          return failure();
+        }
+
+        Block &targetBody = target.getBody().front();
+        unsigned totalArgs = targetBody.getNumArguments();
+        unsigned inDeg = target.inDegree();
+        unsigned outDeg = target.outDegree();
+        unsigned paramCount = totalArgs - inDeg - outDeg;
+        if (inst.getNumOperands() != paramCount) {
+          inst.emitOpError(
+              "cannot inline network: operand/formal arity mismatch after prior verification");
+          return failure();
+        }
+
+        SmallVector<cal::ConnectOp, 8> connectUsers;
+        SmallVector<cal::InstanceCastOp, 4> castUsers;
+        SmallVector<cal::InstanceArraySetOp, 4> arraySetsToDrop;
+        llvm::SmallPtrSet<Operation *, 8> seenConnects;
+        llvm::SmallPtrSet<Operation *, 8> seenCasts;
+        llvm::SmallPtrSet<Operation *, 8> seenArraySets;
+        SmallVector<Value, 4> worklist;
+        llvm::DenseSet<Value> derivedSet;
+        auto enqueueDerived = [&](Value v) {
+          if (derivedSet.insert(v).second) {
+            worklist.push_back(v);
+          }
+        };
+
+        enqueueDerived(inst.getResult());
+        while (!worklist.empty()) {
+          Value cur = worklist.pop_back_val();
+          for (Operation *user : cur.getUsers()) {
+            if (auto cast = dyn_cast<cal::InstanceCastOp>(user)) {
+              if (seenCasts.insert(cast).second) {
+                castUsers.push_back(cast);
+                enqueueDerived(cast.getResult());
+              }
+              continue;
+            }
+            if (auto conn = dyn_cast<cal::ConnectOp>(user)) {
+              if (seenConnects.insert(conn.getOperation()).second)
+                connectUsers.push_back(conn);
+
+              // A connect does not yield new derived handles beyond the one
+              // already visited (`cur`). Avoid enqueuing its other operands,
+              // which may be unrelated actor instances.
+              continue;
+            }
+            if (auto arraySet = dyn_cast<cal::InstanceArraySetOp>(user)) {
+              if (arraySet.getArray() == cur || arraySet.getValue() == cur)
+                enqueueDerived(arraySet.getResult());
+              if (arraySet.getValue() == cur && seenArraySets.insert(arraySet).second)
+                arraySetsToDrop.push_back(arraySet);
+              continue;
+            }
+            if (auto arrayLiteral = dyn_cast<cal::InstanceArrayLiteralOp>(user)) {
+              if (llvm::is_contained(arrayLiteral.getInputs(), cur))
+                enqueueDerived(arrayLiteral.getResult());
+              continue;
+            }
+            if (auto arrayConcat = dyn_cast<cal::InstanceArrayConcatOp>(user)) {
+              if (arrayConcat.getLhs() == cur || arrayConcat.getRhs() == cur)
+                enqueueDerived(arrayConcat.getResult());
+              continue;
+            }
+            if (auto instAt = dyn_cast<cal::InstanceAtOp>(user)) {
+              if (instAt.getArray() == cur)
+                enqueueDerived(instAt.getResult());
+              continue;
+            }
+            if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+              auto iterOperands = forOp.getInitArgs();
+              for (auto [idx, operand] : llvm::enumerate(iterOperands)) {
+                if (operand == cur) {
+                  enqueueDerived(forOp.getRegionIterArgs()[idx]);
+                  enqueueDerived(forOp.getResults()[idx]);
+                }
+              }
+              continue;
+            }
+            if (auto yield = dyn_cast<scf::YieldOp>(user)) {
+              Operation *parent = yield->getParentOp();
+              if (auto parentFor = dyn_cast<scf::ForOp>(parent)) {
+                for (auto [idx, operand] : llvm::enumerate(yield.getOperands())) {
+                  if (operand == cur) {
+                    enqueueDerived(parentFor.getRegionIterArgs()[idx]);
+                    enqueueDerived(parentFor.getResults()[idx]);
+                  }
+                }
+                continue;
+              }
+              if (auto parentIf = dyn_cast<scf::IfOp>(parent)) {
+                for (auto [idx, operand] : llvm::enumerate(yield.getOperands())) {
+                  if (operand == cur)
+                    enqueueDerived(parentIf.getResult(idx));
+                }
+                continue;
+              }
+            }
+            // Unsupported symbolic use (e.g. stored in array). Defer flattening.
+            return success();
+          }
+        }
+
+        auto isDerivedHandle = [&](Value v) { return derivedSet.contains(v); };
+
+        SmallVector<Value> inputBindings(inDeg);
+        SmallVector<Value> outputBindings(outDeg);
+        SmallVector<Operation *, 8> opsToErase;
+
+        auto resolvePortIndex = [&](StringAttr portName, ArrayAttr explicitNames,
+                                    unsigned deg, StringRef defaultPrefix,
+                                    cal::ConnectOp conn,
+                                    StringRef direction) -> FailureOr<unsigned> {
+          if (deg == 0)
+            return failure();
+
+          if (explicitNames && explicitNames.size() == deg) {
+            for (auto [idx, attr] : llvm::enumerate(explicitNames)) {
+              if (auto str = dyn_cast<StringAttr>(attr)) {
+                if (str == portName)
+                  return static_cast<unsigned>(idx);
+              }
+            }
+          }
+
+          StringRef raw = portName.getValue();
+          StringRef s = raw;
+          if (s == defaultPrefix) {
+            if (deg == 1)
+              return 0u;
+          }
+          if (s.consume_front(defaultPrefix)) {
+            if (s.empty()) {
+              if (deg == 1)
+                return 0u;
+            } else {
+              unsigned idx = 0;
+              if (!s.consumeInteger(10, idx) && idx < deg)
+                return idx;
+            }
+          }
+          if (deg == 1) {
+            if (raw.empty())
+              return 0u;
+            if (raw.equals_insensitive("in") || raw.equals_insensitive("out"))
+              return 0u;
+          }
+
+          conn.emitError("unable to resolve " + direction +
+                          " port '" + raw +
+                          "' to an index when flattening symbolic network");
+          return failure();
+        };
+
+        for (cal::ConnectOp conn : connectUsers) {
+          const bool srcDerived = isDerivedHandle(conn.getSrc());
+          const bool dstDerived = isDerivedHandle(conn.getDst());
+          llvm::errs() << "[flatten] connect analyze srcDerived=" << srcDerived
+                       << " dstDerived=" << dstDerived << " srcType="
+                       << conn.getSrc().getType() << " dstType="
+                       << conn.getDst().getType() << "\n";
+
+          // If both (or neither) endpoints are derived from the instance, the
+          // connect represents an internal connection that should remain intact
+          // after cloning the target network. We only rewrite bridge connects
+          // where exactly one endpoint is derived (connecting instance port to
+          // an external SSA value).
+          if (srcDerived == dstDerived) {
+            if (srcDerived) {
+              // Internal connect between derived handles: leave untouched.
+              continue;
+            }
+            // Neither endpoint originates from the instance; conservative bail.
+            return success();
+          }
+
+          // Only treat as a rewriteable bridge when the non-derived endpoint
+          // is a network boundary port. If it is another instance handle (e.g.,
+          // an actor-specialized cal.instance), skip flattening this instantiate
+          // entirely to avoid erasing connects that still tie external actors.
+          auto isNetOut = [&](Value v) { return v.getType().isa<fifo::OutputPortType>(); };
+          auto isNetIn  = [&](Value v) { return v.getType().isa<fifo::InputPortType>(); };
+          if (srcDerived) {
+            // Non-derived endpoint is the destination.
+            if (!isNetIn(conn.getDst())) {
+              llvm::errs() << "[flatten] skipping instance flatten: bridge dst is not a network port\n";
+              return success();
+            }
+          } else { // dstDerived
+            // Non-derived endpoint is the source.
+            if (!isNetOut(conn.getSrc())) {
+              llvm::errs() << "[flatten] skipping instance flatten: bridge src is not a network port\n";
+              return success();
+            }
+          }
+
+          if (srcDerived) {
+            if (!conn.getSrcIndices().empty())
+              return success();
+
+            FailureOr<unsigned> idx = failure();
+            StringAttr chosenPort;
+
+            // Prefer resolving via the network boundary (dst) when it is a
+            // materialized port to handle cases where the actor port carries
+            // a distinct symbolic name (e.g. "Trigger").
+            if (conn.getDst().getType().isa<fifo::InputPortType>()) {
+              if (StringAttr dstPort = conn.getDstPortAttr()) {
+                auto tryIdx = resolvePortIndex(dstPort, target.getOutPortNamesAttr(),
+                                               outDeg, "out", conn, "output");
+                if (succeeded(tryIdx)) {
+                  idx = tryIdx;
+                  chosenPort = dstPort;
+                }
+              }
+            }
+
+            // Fallback to the original derived-side lookup if the boundary
+            // lacked an explicit name (maintains previous behaviour).
+            if (failed(idx)) {
+              if (StringAttr srcPort = conn.getSrcPortAttr()) {
+                auto tryIdx = resolvePortIndex(srcPort, target.getOutPortNamesAttr(),
+                                               outDeg, "out", conn, "output");
+                if (succeeded(tryIdx)) {
+                  idx = tryIdx;
+                  chosenPort = srcPort;
+                }
+              }
+            }
+
+            if (failed(idx))
+              continue;
+            unsigned pos = *idx;
+            if (outputBindings[pos]) {
+              if (outputBindings[pos] != conn.getDst()) {
+                conn.emitError(
+                    "multiple connections from same output port during flattening");
+                return failure();
+              }
+            } else {
+              outputBindings[pos] = conn.getDst();
+            }
+            llvm::errs() << "[flatten] scheduling erase conn (src) "
+                         << (chosenPort ? chosenPort.getValue() : "<unknown>")
+                         << "\n";
+            opsToErase.push_back(conn);
+          } else {
+            if (!conn.getDstIndices().empty())
+              return success();
+
+            FailureOr<unsigned> idx = failure();
+            StringAttr chosenPort;
+
+            // Prefer resolving against the network-side source port when it is
+            // available (common for bridges from a network input to an actor
+            // port named differently).
+            if (conn.getSrc().getType().isa<fifo::OutputPortType>()) {
+              if (StringAttr srcPort = conn.getSrcPortAttr()) {
+                auto tryIdx = resolvePortIndex(srcPort, target.getInPortNamesAttr(),
+                                               inDeg, "in", conn, "input");
+                if (succeeded(tryIdx)) {
+                  idx = tryIdx;
+                  chosenPort = srcPort;
+                }
+              }
+            }
+
+            // Retain the original behaviour as a fallback in case the source
+            // name is absent (e.g. legacy IR without explicit port aliases).
+            if (failed(idx)) {
+              if (StringAttr dstPort = conn.getDstPortAttr()) {
+                auto tryIdx = resolvePortIndex(dstPort, target.getInPortNamesAttr(),
+                                               inDeg, "in", conn, "input");
+                if (succeeded(tryIdx)) {
+                  idx = tryIdx;
+                  chosenPort = dstPort;
+                }
+              }
+            }
+
+            if (failed(idx))
+              continue;
+            unsigned pos = *idx;
+            if (inputBindings[pos]) {
+              if (inputBindings[pos] != conn.getSrc()) {
+                conn.emitError(
+                    "multiple connections into same input port during flattening");
+                return failure();
+              }
+            } else {
+              inputBindings[pos] = conn.getSrc();
+            }
+            llvm::errs() << "[flatten] scheduling erase conn (dst) "
+                         << (chosenPort ? chosenPort.getValue() : "<unknown>")
+                         << "\n";
+            opsToErase.push_back(conn);
+          }
+        }
+
+        // Any array writes that simply inserted this instance handle can be
+        // replaced by forwarding the incoming array operand. This avoids
+        // leaving dangling uses on the soon-to-be-erased instantiate result.
+        for (cal::InstanceArraySetOp arraySet : arraySetsToDrop) {
+          if (!arraySet)
+            continue;
+          Value passthrough = arraySet.getArray();
+          arraySet.getResult().replaceAllUsesWith(passthrough);
+          opsToErase.push_back(arraySet);
+        }
+
+        IRMapping mapping;
+        auto operands = inst.getOperands();
+        for (auto it : llvm::enumerate(targetBody.getArguments().take_front(paramCount)))
+          mapping.map(it.value(), operands[it.index()]);
+
+        bool missingBinding = false;
+        for (unsigned i = 0; i < inDeg; ++i) {
+          BlockArgument arg = targetBody.getArgument(paramCount + i);
+          Value replacement = inputBindings[i];
+          if (!replacement) {
+            missingBinding = true;
+            break;
+          }
+          mapping.map(arg, replacement);
+        }
+        if (missingBinding)
+          return success();
+
+        for (unsigned i = 0; i < outDeg; ++i) {
+          BlockArgument arg =
+              targetBody.getArgument(paramCount + inDeg + i);
+          Value replacement = outputBindings[i];
+          if (!replacement) {
+            missingBinding = true;
+            break;
+          }
+          mapping.map(arg, replacement);
+        }
+        if (missingBinding)
+          return success();
+
+        OpBuilder builder(inst);
+        for (Operation &op : targetBody.getOperations()) {
+          if (isa<NetworkOp>(op) || isa<ActorOp>(op))
+            continue;
+          builder.clone(op, mapping);
+        }
+
+        auto dumpRemainingUses = [&](StringRef when) {
+          if (inst.getResult().use_empty())
+            return;
+          llvm::errs() << "[flatten] residual uses " << when
+                       << " for instantiate @"
+                       << inst.getActorRefAttr().getValue() << '\n';
+          for (OpOperand &use : inst.getResult().getUses()) {
+            llvm::errs() << "    user: ";
+            use.getOwner()->print(llvm::errs());
+            llvm::errs() << "\n";
+          }
+        };
+
+        dumpRemainingUses("before-bridge-erase");
+        for (Operation *eraseOp : opsToErase)
+          eraseOp->erase();
+        dumpRemainingUses("after-bridge-erase");
+        llvm::errs() << "[flatten] erased " << opsToErase.size() << " bridges\n";
+
+        for (cal::InstanceCastOp cast : castUsers)
+          if (cast && cast->use_empty())
+            cast.erase();
+
+        dumpRemainingUses("pre-inst-erase");
+        unsigned useCount = 0;
+        for (OpOperand &use : inst.getResult().getUses()) {
+          (void)use;
+          ++useCount;
+        }
+        llvm::errs() << "[flatten] inst use count before erase: " << useCount
+               << " for actorRef="
+               << inst.getActorRefAttr().getValue() << "\n";
+        if (!inst.use_empty()) {
+          auto diag = inst.emitError(
+              "flattening bug: residual uses remain after rewriting symbolic "
+              "network instantiate");
+          llvm::errs() << "[flatten] residual users for instantiate '"
+                        << inst.getActorRefAttr().getValue() << "'\n";
+          for (Operation *user : inst.getResult().getUsers()) {
+            llvm::errs() << "[flatten]   user: ";
+            user->print(llvm::errs());
+            llvm::errs() << "\n";
+            user->emitError("still references flattened instantiate");
+          }
+          return failure();
+        }
+
+        inst.erase();
+        changed = true;
+        ++statFlattenedInstances;
+        return success();
+      };
+
+      auto inlineConcreteNetwork = [&](CreateInstanceOp inst) -> LogicalResult {
+        auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
+            inst, inst.getActorRefAttr());
+        if (!target)
+          return success(); // Not a network.
+
+        auto parentNetwork = dyn_cast<NetworkOp>(inst->getParentOp());
+        if (!parentNetwork)
+          return success(); // Only flatten inside networks.
+
+        if (!reachable.empty()) {
+          StringAttr tName =
+              StringAttr::get(target.getContext(), target.getSymName());
+          if (!reachable.contains(tName))
+            return success();
+        }
+
+        if (target == parentNetwork) {
+          inst.emitOpError(
+              "self-recursive network instantiation detected (cycle)");
+          return failure();
+        }
+
+        IRMapping mapping;
+        auto operands = inst.getOperands();
+        auto formalArgs = target.getBody().getArguments();
+        if (operands.size() != formalArgs.size()) {
+          inst.emitOpError(
+              "cannot inline network: operand/formal arity mismatch after prior verification");
+          return failure();
+        }
+        for (auto it : llvm::zip(formalArgs, operands))
+          mapping.map(std::get<0>(it), std::get<1>(it));
+
+        Block &targetBody = target.getBody().front();
+        OpBuilder builder(inst);
+        for (Operation &op : targetBody.getOperations()) {
+          if (isa<NetworkOp>(op) || isa<ActorOp>(op))
+            continue;
+          builder.clone(op, mapping);
+        }
+        inst.erase();
+        changed = true;
+        ++statFlattenedInstances;
+        return success();
+      };
+
       while (changed) {
         changed = false;
         if (++iteration > softLimit) {
@@ -1592,71 +2376,43 @@ static LogicalResult runNetworkProcessing(
         }
         statIterations = iteration;
 
-        // Collect all network instances to inline this iteration.
-        SmallVector<CreateInstanceOp> networkInstances;
+        struct InstanceRecord {
+          StringAttr symbol;
+          Operation *op;
+        };
+        SmallVector<InstanceRecord> networkInstances;
+        module.walk([&](InstantiateOp inst) {
+          if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
+            networkInstances.push_back(
+                {inst.getActorRefAttr().getRootReference(), inst.getOperation()});
+        });
         module.walk([&](CreateInstanceOp inst) {
           if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
-            networkInstances.push_back(inst);
+            networkInstances.push_back(
+                {inst.getActorRefAttr().getRootReference(), inst.getOperation()});
         });
         if (networkInstances.empty())
           break; // Nothing left to flatten.
 
-        // Deterministic ordering: sort by referenced symbol name (and insertion order fallback via pointer address).
-        llvm::sort(networkInstances, [](CreateInstanceOp a, CreateInstanceOp b) {
-          auto an = a.getActorRefAttr().getRootReference().getValue();
-          auto bn = b.getActorRefAttr().getRootReference().getValue();
+        // Deterministic ordering: sort by referenced symbol name (and insertion
+        // order fallback via pointer address).
+        llvm::sort(networkInstances, [](const InstanceRecord &a,
+                                        const InstanceRecord &b) {
+          StringRef an = a.symbol.getValue();
+          StringRef bn = b.symbol.getValue();
           if (an == bn)
-            return a.getOperation() < b.getOperation();
+            return a.op < b.op;
           return an < bn;
         });
 
-        for (CreateInstanceOp inst : networkInstances) {
-          auto target = symbolTable.lookupNearestSymbolFrom<NetworkOp>(
-              inst, inst.getActorRefAttr());
-          if (!target)
-            continue; // Not a network.
-          auto parentNetwork = dyn_cast<NetworkOp>(inst->getParentOp());
-          if (!parentNetwork)
-            continue; // Only flatten inside networks.
-
-          // If 'top' is set, only inline instances whose target is reachable.
-          if (!reachable.empty()) {
-            StringAttr tName = StringAttr::get(target.getContext(), target.getSymName());
-            if (!reachable.contains(tName))
-              continue;
+        for (InstanceRecord rec : networkInstances) {
+          if (auto inst = dyn_cast<InstantiateOp>(rec.op)) {
+            if (failed(inlineSymbolicNetwork(inst)))
+              return failure();
+          } else if (auto inst = dyn_cast<CreateInstanceOp>(rec.op)) {
+            if (failed(inlineConcreteNetwork(inst)))
+              return failure();
           }
-
-          // Guard against self-recursive instantiation which indicates a cycle
-          // missed by earlier static detection (should be very rare).
-          if (target == parentNetwork) {
-            inst.emitOpError(
-                "self-recursive network instantiation detected (cycle)");
-            return failure();
-          }
-
-          // Map operands to formal arguments.
-          IRMapping mapping;
-          auto operands = inst.getOperands();
-          auto formalArgs = target.getBody().getArguments();
-          if (operands.size() != formalArgs.size()) {
-            inst.emitOpError(
-                "cannot inline network: operand/formal arity mismatch after prior verification");
-            return failure();
-          }
-          for (auto it : llvm::zip(formalArgs, operands))
-            mapping.map(std::get<0>(it), std::get<1>(it));
-
-          // Clone the target body operations (skip nested networks/actors)
-          Block &targetBody = target.getBody().front();
-          OpBuilder builder(inst);
-          for (Operation &op : targetBody.getOperations()) {
-            if (isa<NetworkOp>(op) || isa<ActorOp>(op))
-              continue;
-            builder.clone(op, mapping);
-          }
-          inst.erase();
-          changed = true;
-          ++statFlattenedInstances;
         }
       }
 
@@ -1665,8 +2421,15 @@ static LogicalResult runNetworkProcessing(
         llvm::SmallDenseSet<StringAttr, 16> referenced;
         module.walk([&](CreateInstanceOp inst) {
           if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
-            referenced.insert(StringAttr::get(module.getContext(),
-                                              inst.getActorRefAttr().getRootReference().getValue()));
+            referenced.insert(StringAttr::get(
+                module.getContext(),
+                inst.getActorRefAttr().getRootReference().getValue()));
+        });
+        module.walk([&](InstantiateOp inst) {
+          if (symbolTable.lookupNearestSymbolFrom<NetworkOp>(inst, inst.getActorRefAttr()))
+            referenced.insert(StringAttr::get(
+                module.getContext(),
+                inst.getActorRefAttr().getRootReference().getValue()));
         });
         SmallVector<NetworkOp> toErase;
         module.walk([&](NetworkOp net) {
@@ -1694,7 +2457,14 @@ static LogicalResult runNetworkProcessing(
       }
 
       // 6. Optional aggressive pruning: keep only the designated top network.
-      if (!top.empty()) {
+      // In split elaboration scenarios we may need all specialized/network symbols
+      // to remain available for the later connection-finalize pass. When pruning
+      // is explicitly disabled (disablePruning=true) we also suppress this forced
+      // top pruning phase to avoid erasing nested specialized networks that
+      // instantiate ops still reference. This allows flatten to run purely
+      // structurally while deferring top-only pruning until a later pass/pipeline
+      // stage.
+      if (!top.empty() && !disablePruning) {
         SmallVector<NetworkOp> eraseOthers;
         module.walk([&](NetworkOp net) {
           if (net.getSymName() != top)
@@ -1708,6 +2478,9 @@ static LogicalResult runNetworkProcessing(
             << "flatten-cal-networks: forced top pruning active"
             << (forceTopOnly ? " (force option)" : "")
             << "; kept only '" << top << "'";
+      } else if (!top.empty() && disablePruning) {
+        module.emitRemark() << "flatten-cal-networks: top='" << top
+                            << "' specified but pruning disabled; retaining nested networks for downstream elaboration";
       }
     }
 
@@ -1718,14 +2491,15 @@ static LogicalResult runNetworkProcessing(
     {
       SmallVector<Operation *, 16> toErase;
       module.walk([&](Operation *op) {
-        if (!isa<cal::InstantiateOp, cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp, cal::InstanceAtOp>(op))
+        if (!isa<cal::InstantiateArrayOp, cal::InstantiateArrayIfaceOp, cal::InstanceAtOp>(op))
           return WalkResult::advance();
         if (op->use_empty())
           toErase.push_back(op);
         return WalkResult::advance();
       });
       for (Operation *op : toErase)
-        op->erase();
+        if (op && op->use_empty())
+          op->erase();
     }
 
     if (emitStats) {
@@ -1759,3 +2533,6 @@ static LogicalResult runNetworkProcessing(
 } // namespace
 
 } // namespace mlir
+
+// Factory functions are generated by TableGen in Passes.h.inc; explicit
+// definitions removed to avoid redefinition now that the header provides them.

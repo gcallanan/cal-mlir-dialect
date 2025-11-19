@@ -29,9 +29,21 @@ std::unique_ptr<mlir::Pass> createVerifyInstanceArrayFillsPass();
 std::unique_ptr<mlir::Pass> createInferCalInstanceArrayShapePass();
 std::unique_ptr<mlir::Pass> createElaborateCalEntitiesPass();
 std::unique_ptr<mlir::Pass> createElaborateCalConnectionsPass();
+// Forward declare split elaboration pass option types (generated in Passes.h.inc)
+class ElaborateCalConnectionsPrepPassOptions;
+class ElaborateCalConnectionsFinalizePassOptions;
+// Forward declare factory functions for split elaboration passes so that
+// inline registration helpers in Passes.h.inc can reference them before their
+// generated definitions.
+std::unique_ptr<mlir::Pass> createElaborateCalConnectionsPrepPass();
+std::unique_ptr<mlir::Pass> createElaborateCalConnectionsPrepPass(ElaborateCalConnectionsPrepPassOptions options);
+std::unique_ptr<mlir::Pass> createElaborateCalConnectionsFinalizePass();
+std::unique_ptr<mlir::Pass> createElaborateCalConnectionsFinalizePass(ElaborateCalConnectionsFinalizePassOptions options);
 std::unique_ptr<mlir::Pass> createInsertFanoutOnMultiSinkPass();
 std::unique_ptr<mlir::Pass> createNetworkElementsElabPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayStaticUsagePass();
+std::unique_ptr<mlir::Pass> createPruneUnusedNetworksPass();
+std::unique_ptr<mlir::Pass> createNormalizeCalConnectsPass();
 
 // Emit registration functions.
 #define GEN_PASS_REGISTRATION
