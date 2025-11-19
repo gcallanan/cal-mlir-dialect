@@ -583,6 +583,39 @@ def VerifyInstanceArrayFillsPass : Pass<"verify-instance-array-fills", "mlir::Mo
   ];
 }
 
+// Visualization: emit a simple instance-level connectivity graph for each
+// concrete `cal.network` using its `cal.create_instance` ops and FIFO SSA
+// values. Nodes are instances (labeled by instance name where available),
+// and edges connect producer and consumer instances that share a FIFO SSA
+// value between `ports_out` and `ports_in`. Intended as a debugging aid for
+// elaborated/flattened networks.
+def CalViewInstancesPass : Pass<"cal-view-instances", "mlir::ModuleOp"> {
+  let summary = "Emit Graphviz DOT for instance-level connectivity in cal.networks";
+  let description = [{
+    This pass walks concrete `cal.network` bodies, finds `cal.create_instance`
+    operations and the FIFO SSA values they connect through `ports_in` and
+    `ports_out`, and emits a Graphviz DOT description of the instance graph.
+
+    For each network, the pass creates one node per instance and connects
+    instances with edges whenever a FIFO SSA value produced in a `ports_out`
+    list is consumed in some other instance's `ports_in` list. Edges are
+    currently unlabeled; node labels use the instance name when present or the
+    referenced actor/network symbol name otherwise.
+
+    The pass is purely diagnostic and does not modify the IR. Its primary use
+    is to visualize elaborated or flattened networks to aid debugging.
+  }];
+  let constructor = "mlir::createCalViewInstancesPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::fifo::FifoDialect"
+  ];
+  let options = [
+    Option<"dotFile", "dot-file", "std::string", /*default=*/"\"op.dot\"",
+      "Output filename for the generated Graphviz DOT (single file; all networks are merged into one digraph).">
+  ];
+}
+
 // Promote (specialize) dynamic instance array construction loops to static
 // arrays by analyzing scf.for (and perfectly nested scf.for) patterns that
 // fill a !cal.instance.array via repeated cal.instantiate + cal.instance.array.set.

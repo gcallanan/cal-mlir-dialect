@@ -44,6 +44,7 @@ std::unique_ptr<mlir::Pass> createNetworkElementsElabPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayStaticUsagePass();
 std::unique_ptr<mlir::Pass> createPruneUnusedNetworksPass();
 std::unique_ptr<mlir::Pass> createNormalizeCalConnectsPass();
+std::unique_ptr<mlir::Pass> createCalViewInstancesPass();
 
 // Emit registration functions.
 #define GEN_PASS_REGISTRATION

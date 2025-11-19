@@ -12,6 +12,7 @@ set(LIBS
         MLIROptLib
         MLIRCal
         MLIRFifo
+        CalViewInstancesPass
         InsertFanoutOnMultiSinkPass
         NormalizeConnectsPass
         MLIRVerifyInstanceArrayFills
