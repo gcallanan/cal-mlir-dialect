@@ -1329,6 +1329,36 @@ LogicalResult CreateStateVarOp::verify() {
   if (refTy.getStateType() != declared)
     return emitOpError() << "state_ref element type (" << refTy.getStateType()
                          << ") does not match declared <" << declared << ">";
+
+  // If dynamic sizes are provided, they must match dynamic dims of the state
+  // type when it is a memref/tensor. If sizes are provided for a scalar or a
+  // fully static shaped type, that is invalid.
+  auto sizes = getSizes();
+  if (!sizes.empty()) {
+    // Only memref or tensor element types can accept dynamic sizes.
+    if (auto mt = declared.dyn_cast<MemRefType>()) {
+      unsigned expected = mt.getNumDynamicDims();
+      if (sizes.size() != expected)
+        return emitOpError()
+               << "expected " << expected
+               << " dynamic size operands for memref type " << mt
+               << ", but got " << sizes.size();
+    } else if (auto tt = declared.dyn_cast<TensorType>()) {
+      unsigned expected = tt.getNumDynamicDims();
+      if (sizes.size() != expected)
+        return emitOpError()
+               << "expected " << expected
+               << " dynamic size operands for tensor type " << tt
+               << ", but got " << sizes.size();
+    } else {
+      return emitOpError()
+             << "dynamic size operands are only valid for memref/tensor state types";
+    }
+  } else {
+    // No sizes provided. For memref/tensor with dynamic dims, this is still
+    // allowed at the dialect level; lowering may require sizes or inference.
+    // No further checks here.
+  }
   return success();
 }
 

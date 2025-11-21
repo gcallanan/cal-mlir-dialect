@@ -539,6 +539,24 @@ public:
       bool hasExecutionBody = false;
       for (Operation &topLevelOp : actorBody.front()) {
         if (!isa<cal::ExecutionBody>(topLevelOp)) {
+          // Special-case memref.alloc with dynamic sizes: reconstruct with
+          // mapped dynamic size operands to avoid losing segment info.
+          if (auto alloc = dyn_cast<memref::AllocOp>(&topLevelOp)) {
+            auto memrefTy = alloc.getType();
+            SmallVector<Value> dynSizes;
+            for (Value sz : alloc.getDynamicSizes()) {
+              dynSizes.push_back(map.lookupOrDefault(sz));
+            }
+            Operation *cloned = nullptr;
+            if (!dynSizes.empty()) {
+              cloned = rewriter.create<memref::AllocOp>(alloc.getLoc(), memrefTy, dynSizes);
+            } else {
+              cloned = rewriter.clone(topLevelOp, map);
+            }
+            for (auto [orig, neu] : llvm::zip(topLevelOp.getResults(), cloned->getResults()))
+              map.map(orig, neu);
+            continue;
+          }
           Operation *cloned = rewriter.clone(topLevelOp, map);
           for (auto [orig, neu] : llvm::zip(topLevelOp.getResults(), cloned->getResults()))
             map.map(orig, neu);

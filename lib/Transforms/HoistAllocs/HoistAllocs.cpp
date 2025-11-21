@@ -252,10 +252,87 @@ struct UpdateCallOpPattern : public OpRewritePattern<func::CallOp> {
     rewriter.setInsertionPointToStart(&entryBlock);
 
     SmallVector<Value, 8> newAllocValues;
+
+    // Helper to decide if an op is a pure, cheap arithmetic op that we
+    // can safely clone at main entry to rebuild size expressions.
+    auto isCloneableSizeOp = [](Operation *op) -> bool {
+      return isa<arith::ConstantOp, arith::IndexCastOp, arith::AddIOp,
+                 arith::SubIOp, arith::MulIOp, arith::DivSIOp, arith::DivUIOp>(op);
+    };
+
+    // Recursively ensure a value is available in the parent function by either
+    // mapping a callee block argument to the corresponding call operand or by
+    // cloning a small, pure arithmetic producer chain.
+    std::function<Value(Value, IRMapping &)> materializeInParent =
+        [&](Value v, IRMapping &map) -> Value {
+          if (Value mapped = map.lookupOrNull(v))
+            return mapped;
+          if (auto barg = dyn_cast<BlockArgument>(v)) {
+            // Map callee arg -> corresponding call operand.
+            auto callee = matchedCallee;
+            Block &entry = callee.getBody().front();
+            unsigned idx = barg.getArgNumber();
+            // Defensive checks.
+            if (&entry != barg.getOwner() || idx >= callOp.getNumOperands())
+              return nullptr;
+            Value callerOperand = callOp.getOperand(idx);
+            map.map(v, callerOperand);
+            return callerOperand;
+          }
+          Operation *def = v.getDefiningOp();
+          if (!def || !isCloneableSizeOp(def))
+            return nullptr;
+          // Materialize all operands first.
+          SmallVector<Value, 4> clonedOperands;
+          clonedOperands.reserve(def->getNumOperands());
+          for (Value opnd : def->getOperands()) {
+            Value m = materializeInParent(opnd, map);
+            if (!m)
+              return nullptr;
+            clonedOperands.push_back(m);
+          }
+          Operation *cloned = rewriter.clone(*def, map);
+          // For ops like IndexCast/AddI the IRMapping used above already
+          // remaps operands; ensure result is mapped for downstream uses.
+          map.map(v, cloned->getResult(0));
+          return cloned->getResult(0);
+        };
+
     for (Operation *allocOp : allocRelatedOps) {
-      Operation *clonedOp = rewriter.clone(*allocOp);
-      for (auto result : clonedOp->getResults()) {
-        newAllocValues.push_back(result);
+      if (auto memAlloc = dyn_cast<memref::AllocOp>(allocOp)) {
+        IRMapping map; // maps callee values -> parent values
+        // Rebuild dynamic sizes in the parent.
+        SmallVector<Value, 4> dynSizes;
+        bool ok = true;
+        for (Value sz : memAlloc.getDynamicSizes()) {
+          Value m = materializeInParent(sz, map);
+          if (!m) {
+            ok = false;
+            break;
+          }
+          dynSizes.push_back(m);
+        }
+        if (!ok) {
+          // Skip hoisting this alloc if we cannot safely reconstruct sizes.
+          continue;
+        }
+        // Create the alloc in the parent with reconstructed sizes.
+        auto newAlloc = rewriter.create<memref::AllocOp>(
+            allocOp->getLoc(), memAlloc.getType(), dynSizes);
+        newAllocValues.push_back(newAlloc.getResult());
+        continue;
+      }
+      if (auto gpuAlloc = dyn_cast<gpu::AllocOp>(allocOp)) {
+        // GPU alloc has no dynamic sizes on the memref type; clone directly.
+        Operation *cloned = rewriter.clone(*gpuAlloc);
+        newAllocValues.append(cloned->result_begin(), cloned->result_end());
+        continue;
+      }
+      if (auto constOp = dyn_cast<arith::ConstantOp>(allocOp)) {
+        // Large dense constants: cloning is fine.
+        Operation *cloned = rewriter.clone(*constOp);
+        newAllocValues.push_back(cloned->getResult(0));
+        continue;
       }
     }
 
@@ -268,8 +345,8 @@ struct UpdateCallOpPattern : public OpRewritePattern<func::CallOp> {
 
     // Create a new callOp with the extended operands
     auto newCallOp =
-        rewriter.create<func::CallOp>(callOp.getLoc(), callOp.getCallee(),
-                                      callOp.getResultTypes(), newOperands);
+      rewriter.create<func::CallOp>(callOp.getLoc(), callOp.getCallee(),
+                      callOp.getResultTypes(), newOperands);
 
     // Replace the old callOp with the new one
     rewriter.replaceOp(callOp, newCallOp.getResults());

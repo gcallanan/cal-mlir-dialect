@@ -416,15 +416,23 @@ def CAL_CreateStateVarOp : Cal_Op<"create_state_var", [MemoryEffects<[MemAlloc]>
     unless explicitly initialized by a subsequent operation.
 
     Arguments:
+    - `sizes` (optional): A variadic list of `index`-typed SSA operands that
+      provide dynamic dimension sizes when the state type is a `memref` or
+      `tensor` with dynamic dimensions. One operand is required per dynamic
+      dimension, in order.
     - `stateType`: A type attribute specifying the element type of the state
-      variable to be created.
+      variable to be created. Supported element types are scalars, tensors and
+      memrefs. For memrefs/tensors with dynamic dimensions, provide matching
+      `sizes` operands.
 
     Results:
     - `stateVarRef`: A reference to the allocated state variable, of
       type `!cal.state_ref<T>`, where `T` matches the given `stateType`.
 
-    Example:
+    Examples:
       %ref0 = cal.create_state_var<i32> : !cal.state_ref<i32>
+      %ref1 = cal.create_state_var<memref<?x4xf32>>(%h : index)
+              : !cal.state_ref<memref<?x4xf32>>
     This allocates a new state variable of type `i32` and returns a reference to
     it that can be used by future state operations.
 
@@ -432,14 +440,15 @@ def CAL_CreateStateVarOp : Cal_Op<"create_state_var", [MemoryEffects<[MemAlloc]>
   }];
 
   let arguments = (ins
-    TypeAttr:$stateType // The type of the state variable
+    Variadic<Index>:$sizes,  // Optional dynamic dimension sizes (in order)
+    TypeAttr:$stateType      // The type of the state variable
   );
 
   let results = (outs
     AnyType:$stateVarRef  // The reference to the created state variable
   );
 
-  let assemblyFormat = "`<` $stateType `>` attr-dict `:` type($stateVarRef)";
+  let assemblyFormat = "`<` $stateType `>` (`(` $sizes `:` type($sizes)^ `)`) ? attr-dict `:` type($stateVarRef)";
 
   let hasVerifier = 1; // Enables verification logic in C++.
 }

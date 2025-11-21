@@ -201,6 +201,39 @@ def LowerCalFsmToExecutionBody: Pass<"lower-cal-fsm-to-execution-body"> {
   ];
 }
 
+def InferCalDynamicStateShapes: Pass<"infer-cal-dynamic-state-shapes"> {
+  let summary = "Infer and specialize dynamic memref state variable shapes when statically known";
+  let description = [{
+    This pass performs a lightweight shape inference over CAL actor state variables
+    defined via `cal.create_state_var` whose element type is a `memref` with one
+    or more dynamic dimensions (currently implemented for rank-1 forms like
+    `memref<?xT>`). When it can prove a fixed extent, it rewrites the state
+    variable type and the corresponding `memref.alloc` to a static sized memref.
+
+    Inference strategy (initial implementation):
+      * Find `cal.create_state_var<memref<?xT>>` with exactly one `cal.set` that
+        stores the result of a `memref.alloc(%sz)` of matching type.
+      * Trace `%sz` through trivial casts (`arith.index_cast`, `arith.sitofp`/`fptosi`
+        are ignored for integer/index forms) to an `arith.constant` integer / index.
+      * If the value is a compile-time constant, replace:
+           - the state var type `memref<?xT>` -> `memref<NxT>`
+           - the alloc result type similarly, dropping the dynamic operand (canonical).
+      * All uses of the old alloc and state var are updated automatically.
+
+    This specialization improves later bufferization and eliminates verifier
+    errors caused by hoisting dynamic allocs without their size operands.
+    Remaining truly dynamic cases are left unchanged for runtime handling.
+
+    Future extensions will handle multi-rank memrefs, loop-derived trip counts,
+    and parameter-based symbolic extents.
+  }];
+  let constructor = "mlir::cal::inferCalDynamicStateShapes()";
+  let dependentDialects = [
+    "cal::CalDialect",
+    "memref::MemRefDialect",
+    "arith::ArithDialect"
+  ];
+}
 // Removed: MergeSimpleCalActors pass (replaced by static scheduling approach)
 
 #endif // CAL_PASS

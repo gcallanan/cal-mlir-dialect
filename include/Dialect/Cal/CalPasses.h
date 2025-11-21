@@ -21,6 +21,8 @@ std::unique_ptr<mlir::Pass> convertCalActionsToExecutionBodies();
 std::unique_ptr<mlir::Pass> hoistCalStateOutOfActor();
 std::unique_ptr<mlir::Pass> insertCalPortPredicates();
 std::unique_ptr<mlir::Pass> lowerCalFsmToExecutionBody();
+// Infers static shapes for dynamic memref state variables where possible.
+std::unique_ptr<mlir::Pass> inferCalDynamicStateShapes();
 
 void populateHoistCalStateOutOfActorPatterns(RewritePatternSet &patterns);
 

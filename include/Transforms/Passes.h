@@ -27,6 +27,7 @@ std::unique_ptr<mlir::Pass> createElaborateScfStructuresPass();
 std::unique_ptr<mlir::Pass> createVerifyConnectPortsPass();
 std::unique_ptr<mlir::Pass> createVerifyInstanceArrayFillsPass();
 std::unique_ptr<mlir::Pass> createInferCalInstanceArrayShapePass();
+std::unique_ptr<mlir::Pass> createInferCalDynamicStateShapesPass();
 std::unique_ptr<mlir::Pass> createElaborateCalEntitiesPass();
 std::unique_ptr<mlir::Pass> createElaborateCalConnectionsPass();
 // Forward declare split elaboration pass option types (generated in Passes.h.inc)

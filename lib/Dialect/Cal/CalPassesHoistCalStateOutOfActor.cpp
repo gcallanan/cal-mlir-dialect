@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
@@ -84,21 +85,50 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
     // blocks argument list and then remove the operation.
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
-      if (!mlir::isa<cal::ExecutionBody>(op) && !mlir::isa<cal::ActionOp>(op) &&
-          !op.hasTrait<mlir::OpTrait::ConstantLike>()) {
+      // Only hoist create_state_var results as actor block arguments when the
+      // op has no dynamic size operands. If sizes are present, keep the
+      // allocation inside the actor to avoid region isolation issues and to
+      // preserve dominance of the size SSA values.
+      if (auto csv = dyn_cast<cal::CreateStateVarOp>(&op)) {
+        // Allow hoisting only when safe:
+        //  - If dynamic size operands are present, ensure all are actor entry
+        //    block arguments (actor parameters), so they can be remapped at
+        //    create_instance sites safely.
+        //  - If no size operands are present, only hoist when the state type
+        //    has a fully static shape (e.g., scalar or statically-shaped
+        //    memref/tensor). For dynamically-shaped memrefs/tensors without
+        //    explicit size operands, keep the state inside the actor so that
+        //    later passes can harvest sizes from initializers.
+        if (!csv.getSizes().empty()) {
+          bool allSizesAreActorArgs = llvm::all_of(csv.getSizes(), [&](Value v) {
+            return v.isa<BlockArgument>() &&
+                   v.cast<BlockArgument>().getOwner() == &entryBlock;
+          });
+          if (!allSizesAreActorArgs)
+            continue;
+        } else {
+          // No explicit size operands: require static shape.
+          bool isStaticShape = true;
+          // The element/state type is encoded on the result type
+          // !cal.state_ref<T>. Prefer using the explicit stateType attribute
+          // if available.
+          Type stateTy = csv.getStateType();
+          if (auto memTy = dyn_cast_or_null<MemRefType>(stateTy))
+            isStaticShape = memTy.hasStaticShape();
+          else if (auto tenTy = dyn_cast_or_null<TensorType>(stateTy))
+            isStaticShape = tenTy.hasStaticShape();
+          // Scalars or other non-shaped types are treated as static.
+          if (!isStaticShape)
+            continue;
+        }
         variableHoisted = true;
-
-        // 1.1 Add an argument to the actorOp for each result in the entry block
         SmallVector<BlockArgument, 4> newArgs;
-        for (Value result : op.getResults()) {
+        for (Value result : csv->getResults()) {
           Type resultType = result.getType();
           BlockArgument newArg =
               entryBlock.addArgument(resultType, actorOp.getLoc());
           newArgs.push_back(newArg);
         }
-
-        // 1.2 Remove these operations and replace their uses with the arguments
-        // instead
         opsToErase.push_back(&op);
         op.replaceAllUsesWith(newArgs);
       }
@@ -167,15 +197,9 @@ struct AddStateAboveCreateInstance
 
     mlir::Region &actorBody = actorOp.getBody();
 
-    // This pattern creates a new CreateInstanceOp which will in turn result
-    // in this pattern running again which can result in an infinite loop. We
-    // need a termination condition. This occurs when the number of operands
-    // of the CreateInstanceOp is greater than the number of arguments in the
-    // actorOp. This means a new CreateInstanceOp has already been
-    // updated and as such we can skip processing them.
-    if (instanceOp.getNumOperands() > actorBody.getArguments().size()) {
+    // Avoid reprocessing an instance we already updated.
+    if (instanceOp->hasAttr("cal.hoisted_state"))
       return failure();
-    }
 
     // An additional termination condition occurs if there are no operations in
     // the actor body that are not cal.execution_body or arith.constant. This
@@ -183,18 +207,12 @@ struct AddStateAboveCreateInstance
     // processing them.
     auto beginIt = actorBody.op_begin();
     auto endIt = actorBody.op_end();
-    bool nonConstantsToHoist = false;
+    bool hasStateVars = false;
     for (auto it = beginIt; it != endIt; ++it) {
-      Operation &op = *it; // reference to the operation
-      if (!mlir::isa<cal::ExecutionBody>(op) && !mlir::isa<cal::ActionOp>(op) &&
-          !op.hasTrait<mlir::OpTrait::ConstantLike>()) {
-        nonConstantsToHoist = true;
-      }
+      Operation &op = *it;
+      if (isa<cal::CreateStateVarOp>(op)) { hasStateVars = true; break; }
     }
-
-    if (!nonConstantsToHoist) {
-      return failure();
-    }
+    if (!hasStateVars) return failure();
 
     mlir::SmallVector<mlir::Value, 4> operands(instanceOp.getOperands().begin(),
                                                instanceOp.getOperands().end());
@@ -214,31 +232,39 @@ struct AddStateAboveCreateInstance
     originalToClonedOperandsMap.map(actorBody.getArguments(),
                                     instanceOp.getOperands());
 
-    // 2. Iterate through the operations in the actor body that execute during
-    // initiaisation and clone them to the new instance above the
-    // CreateInstanceOp.
+    // 2. Clone only create_state_var ops above the instance and append their
+    // results as extra operands. Skip sets/alloc/loops/etc.
     beginIt = actorBody.op_begin();
     endIt = actorBody.op_end();
     bool variableHoisted = false;
 
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
-      if (!mlir::isa<cal::ExecutionBody>(op) && !mlir::isa<cal::ActionOp>(op)) {
+      if (auto csv = dyn_cast<cal::CreateStateVarOp>(&op)) {
+        // Safe hoisting conditions must mirror the actor-arg case above.
+        if (!csv.getSizes().empty()) {
+          Block &entryBlock = actorBody.front();
+          bool allSizesAreActorArgs = llvm::all_of(csv.getSizes(), [&](Value v) {
+            return v.isa<BlockArgument>() &&
+                   v.cast<BlockArgument>().getOwner() == &entryBlock;
+          });
+          if (!allSizesAreActorArgs)
+            continue;
+        } else {
+          // No explicit sizes: only hoist when the state type is fully static.
+          bool isStaticShape = true;
+          Type stateTy = csv.getStateType();
+          if (auto memTy = dyn_cast_or_null<MemRefType>(stateTy))
+            isStaticShape = memTy.hasStaticShape();
+          else if (auto tenTy = dyn_cast_or_null<TensorType>(stateTy))
+            isStaticShape = tenTy.hasStaticShape();
+          if (!isStaticShape)
+            continue;
+        }
         variableHoisted = true;
-
-        // 2.1 Clone the operation and replace the operands of the cloned
-        // operation if they are in the map
-        Operation *clonedOp = rewriter.clone(op, originalToClonedOperandsMap);
-
-        // 2.2 These operands now need to be passed into
-        // the actor as operands. We add them to the list of operands here.
-        for (size_t i = 0; i < op.getResults().size(); i++) {
-          Value resultDst = clonedOp->getResult(i);
-
-          // Remember that we do not pass ConstantOps as parameters to the
-          // CreateInstanceOp.
-          if (!op.hasTrait<mlir::OpTrait::ConstantLike>())
-            operands.push_back(resultDst);
+        Operation *clonedOp = rewriter.clone(*csv, originalToClonedOperandsMap);
+        for (Value res : clonedOp->getResults()) {
+          operands.push_back(res);
         }
       }
     }
@@ -249,9 +275,12 @@ struct AddStateAboveCreateInstance
       // with the same attributes as the original CreateInstanceOp but with the
       // operands list extended with the new operands from the cloned
       // operations.
-      auto newOp = rewriter.create<cal::CreateInstanceOp>(
+        // Mark the new instance so we don't reprocess it.
+        NamedAttrList attrs(instanceOp->getAttrs());
+        attrs.set(StringAttr::get(getContext(), "cal.hoisted_state"), UnitAttr::get(getContext()));
+        auto newOp = rewriter.create<cal::CreateInstanceOp>(
           instanceOp.getLoc(), instanceOp->getResultTypes(), operands,
-          instanceOp->getAttrs());
+          attrs);
       rewriter.replaceOp(instanceOp, newOp);
       return success();
     }

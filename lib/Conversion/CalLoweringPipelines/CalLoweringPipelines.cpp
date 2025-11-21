@@ -11,6 +11,7 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
+#include "Transforms/Passes.h"
 
 // MLIR Conversions
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
@@ -97,11 +98,20 @@ void registerLowerCalToLLVMPipeline() {
         // it into the default pipeline so users don't need to spell it out.
         pm.addPass(mlir::cal::lowerCalFsmToExecutionBody());
 
+        // Early shape inference on dynamic memref state vars: specialize
+        // create_state_var memref types when an initializing value provides
+        // a fully-static shape. This reduces dynamic allocs and surfaces
+        // missing size operand issues earlier.
+        pm.addPass(mlir::createInferCalDynamicStateShapesPass());
+
         pm.addPass(mlir::cal::insertCalPortPredicates());
         // Convert any remaining cal.action-based actors (non-FSM actors)
         // into execution bodies.
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
+        // Hoist actor state init out of actors so state persists across
+        // scheduler iterations; selective rules inside the pass avoid
+        // isolation violations for dynamic-sized states.
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
         // Honor pipeline option to drain actors by default (non-preemptive).

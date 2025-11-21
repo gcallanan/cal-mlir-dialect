@@ -97,14 +97,89 @@ private:
     }
 
     if (allocLocation == AllocLocation::HOST || !isTensor) {
+      // Prefer explicit dynamic size operands on the op when present.
+      if (memrefType.getNumDynamicDims() > 0) {
+        SmallVector<Value> dynSizes;
+        dynSizes.reserve(memrefType.getNumDynamicDims());
+        // If the op provided sizes, use them directly.
+        if (!adaptor.getOperands().empty()) {
+          // Expect exact match with number of dynamic dims; verifier enforces.
+          dynSizes.append(adaptor.getOperands().begin(), adaptor.getOperands().end());
+          auto allocOp = rewriter.create<memref::AllocOp>(loc, memrefType, dynSizes);
+          rewriter.replaceOp(op, allocOp.getResult());
+          return success();
+        }
+
+        // Otherwise, try to harvest sizes from the first cal.set initializer.
+        StateSetOp firstSet = nullptr;
+        for (Operation *user : op->getResult(0).getUsers()) {
+          if (auto s = dyn_cast<StateSetOp>(user)) { firstSet = s; break; }
+        }
+        if (!firstSet) {
+          op.emitError()
+              << "LowerCalStateToMemref: dynamic state memref type " << memrefType
+              << " requires dynamic size operands on cal.create_state_var (preferred) "
+              << "or an initializing cal.set to infer sizes.";
+          return failure();
+        }
+        // Build dynamic size operands using memref.dim on the initializing value.
+        unsigned rank = memrefType.getRank();
+        for (unsigned d = 0; d < rank; ++d) if (memrefType.isDynamicDim(d)) {
+          rewriter.setInsertionPoint(firstSet);
+          auto dimVal = rewriter.create<memref::DimOp>(firstSet.getLoc(), firstSet.getStateValue(), d);
+          dynSizes.push_back(dimVal);
+        }
+        // Insert the alloc right before the first set and replace the create op.
+        rewriter.setInsertionPoint(firstSet);
+        auto allocOp = rewriter.create<memref::AllocOp>(loc, memrefType, dynSizes);
+        rewriter.replaceOp(op, allocOp.getResult());
+        return success();
+      }
       auto allocOp = rewriter.create<memref::AllocOp>(loc, memrefType);
       rewriter.replaceOp(op, allocOp.getResult());
     } else if (allocLocation == AllocLocation::GPU) {
-      auto allocOp = rewriter.create<gpu::AllocOp>(
-          loc, memrefType, /*asyncToken=*/Type(),
-          /*asyncDependencies=*/ValueRange(),
-          /*dynamicSizes=*/ValueRange(), /*symbolOperands=*/ValueRange(),
-          /*hostShared=*/false);
+      if (memrefType.getNumDynamicDims() > 0) {
+        // Prefer explicit dynamic size operands on the op when present.
+        if (!adaptor.getOperands().empty()) {
+          auto allocOp = rewriter.create<gpu::AllocOp>(loc, memrefType, /*asyncToken=*/Type(),
+                                                       /*asyncDependencies=*/ValueRange(),
+                                                       /*dynamicSizes=*/adaptor.getOperands(),
+                                                       /*symbolOperands=*/ValueRange(),
+                                                       /*hostShared=*/false);
+          rewriter.replaceOp(op, allocOp.getResult(0));
+          return success();
+        }
+        // Fallback: derive sizes from first initializer value.
+        StateSetOp firstSet = nullptr;
+        for (Operation *user : op->getResult(0).getUsers()) {
+          if (auto s = dyn_cast<StateSetOp>(user)) { firstSet = s; break; }
+        }
+        if (!firstSet) {
+          op.emitError()
+              << "LowerCalStateToMemref: dynamic state memref type " << memrefType
+              << " requires dynamic size operands on cal.create_state_var (preferred) "
+              << "or an initializing cal.set to infer sizes (GPU path).";
+          return failure();
+        }
+        SmallVector<Value> dynSizes;
+        unsigned rank = memrefType.getRank();
+        for (unsigned d = 0; d < rank; ++d) if (memrefType.isDynamicDim(d)) {
+          rewriter.setInsertionPoint(firstSet);
+          auto dimVal = rewriter.create<memref::DimOp>(firstSet.getLoc(), firstSet.getStateValue(), d);
+          dynSizes.push_back(dimVal);
+        }
+        rewriter.setInsertionPoint(firstSet);
+        auto allocOp = rewriter.create<gpu::AllocOp>(loc, memrefType, /*asyncToken=*/Type(),
+                                                     /*asyncDependencies=*/ValueRange(),
+                                                     /*dynamicSizes=*/dynSizes, /*symbolOperands=*/ValueRange(),
+                                                     /*hostShared=*/false);
+        rewriter.replaceOp(op, allocOp.getResult(0));
+        return success();
+      }
+      auto allocOp = rewriter.create<gpu::AllocOp>(loc, memrefType, /*asyncToken=*/Type(),
+                                                   /*asyncDependencies=*/ValueRange(),
+                                                   /*dynamicSizes=*/ValueRange(), /*symbolOperands=*/ValueRange(),
+                                                   /*hostShared=*/false);
       rewriter.replaceOp(op, allocOp.getResult(0));
     } else {
       return rewriter.notifyMatchFailure(op, "Unknown AllocLocation");

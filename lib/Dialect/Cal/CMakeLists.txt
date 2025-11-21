@@ -7,6 +7,7 @@ add_mlir_dialect_library(MLIRCal
         CalPassesInsertCalPortPredicates.cpp
         CalPassesConvertActionsToExecutionBodies.cpp
         CalPassesLowerFsmToExecutionBody.cpp
+        CalPassesInferCalDynamicStateShapes.cpp
         BufferizableOpInterfaceImpl.cpp
 
         ADDITIONAL_HEADER_DIRS

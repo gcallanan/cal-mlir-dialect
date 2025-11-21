@@ -74,8 +74,8 @@ struct CreateStateVarOpInterface
         bufferization::getMemRefTypeWithStaticIdentityLayout(tensorType);
 
     auto newOp = rewriter.create<cal::CreateStateVarOp>(
-        op->getLoc(), cal::StateVarRefType::get(op->getContext(), memrefType),
-        memrefType);
+      op->getLoc(), cal::StateVarRefType::get(op->getContext(), memrefType),
+      ValueRange{}, TypeAttr::get(memrefType));
 
     rewriter.replaceOp(op, newOp.getResult());
     return success();

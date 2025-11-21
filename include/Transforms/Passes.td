@@ -653,6 +653,55 @@ def InferCalInstanceArrayShapePass : Pass<"infer-cal-instance-array-shape", "mli
   let constructor = "mlir::createInferCalInstanceArrayShapePass()";
 }
 
+// Infer static (or partially static) shapes for CAL state variables whose
+// declared memref type has dynamic dimensions but an initializing value with
+// known static extents can be found. This pass scans `cal.create_state_var`
+// operations whose element type is a `memref<?x...>` and attempts to refine
+// the `?` dimensions to concrete sizes by inspecting the first `cal.set`
+// that writes to the state. If the value operand of that `cal.set` is:
+//   * a memref with fully static shape, or
+//   * a tensor with fully static shape (converted to an equivalent memref),
+// then the state variable's type attribute is rewritten to the static memref
+// type and all users updated. This enables downstream passes (bufferization,
+// lowering) to avoid emitting dynamic allocation code for trivially static
+// cases and prevents verifier errors when dynamic dims were unintentionally
+// left unspecified.
+//
+// The pass is conservative: it only rewrites when all dynamic dims can be
+// resolved. If partial information is available, the op is left unchanged.
+// No new allocations are introduced; only the type on the state variable is
+// refined.
+def InferCalDynamicStateShapesPass : Pass<"infer-cal-dynamic-state-memref-shapes", "mlir::ModuleOp"> {
+  let summary = "Infer static shapes for dynamic memref CAL state variables from their initializing values";
+  let description = [{
+    Scans CAL actors for `cal.create_state_var` ops whose element type is a memref
+    with one or more dynamic dimensions (e.g. `memref<?x4xf32>`). For each such
+    state variable the pass searches its first defining `cal.set` and examines the
+    value operand:
+
+      - If the operand is a memref with fully static shape, the state variable's
+        type is rewritten to that static memref type.
+      - If the operand is a tensor with fully static shape, an equivalent static
+        memref type is formed (assuming default contiguous layout) and the state
+        variable's type is rewritten accordingly.
+
+    The pass skips state variables with multiple distinct initial writes before
+    any read, or where the initializing value's shape does not resolve all dynamic
+    dimensions. It also ignores non-memref state variables.
+
+    This lightweight inference reduces dynamic allocation requirements and produces
+    clearer diagnostics earlier in the pipeline. It is intended to run before
+    `lower-cal-state-to-memref`.
+  }];
+  let constructor = "mlir::createInferCalDynamicStateShapesPass()";
+  let dependentDialects = [
+    "mlir::cal::CalDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::tensor::TensorDialect",
+    "mlir::memref::MemRefDialect"
+  ];
+}
+
 // Elaborate CAL entities (instances and instance arrays) while preserving array SSA.
 // This pass unrolls static scf.for nests that build instance arrays into linear
 // chains of cal.instance.array.set with constant indices. It keeps the array

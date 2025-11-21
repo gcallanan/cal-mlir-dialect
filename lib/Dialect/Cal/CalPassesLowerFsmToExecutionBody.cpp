@@ -103,7 +103,7 @@ public:
   rewriter.setInsertionPoint(fsm);
   auto i32Ty = rewriter.getI32Type();
   auto stateRefTy = cal::StateVarRefType::get(i32Ty.getContext(), i32Ty);
-  auto stateVar = rewriter.create<cal::CreateStateVarOp>(loc, stateRefTy, TypeAttr::get(i32Ty));
+  auto stateVar = rewriter.create<cal::CreateStateVarOp>(loc, stateRefTy, ValueRange{}, TypeAttr::get(i32Ty));
   // Initialize it to the initial state index.
   auto initIdx = rewriter.create<arith::ConstantIntOp>(loc, initialIndex, 32);
   auto initSet = rewriter.create<cal::StateSetOp>(loc, initIdx.getResult(), stateVar.getResult());
