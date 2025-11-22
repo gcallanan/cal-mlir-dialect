@@ -1,8 +1,6 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -27,13 +25,16 @@ struct InferCalDynamicStateShapesPass : public mlir::impl::InferCalDynamicStateS
     SmallVector<cal::CreateStateVarOp, 16> worklist;
     module.walk([&](cal::CreateStateVarOp op) { worklist.push_back(op); });
 
-    auto evalConst = [&](Value v) -> std::optional<int64_t> {
+    // Recursive constant evaluator (supports simple arithmetic folds).
+    std::function<std::optional<int64_t>(Value)> evalConst;
+    evalConst = [&](Value v) -> std::optional<int64_t> {
       APInt ap;
-      // Generic integer (covers index constants via matchPattern) first.
+      // Generic integer constant.
       if (matchPattern(v, m_ConstantInt(&ap)))
         return ap.getSExtValue();
-      if (matchPattern(v, m_ConstantIndex(&ap)))
-        return ap.getSExtValue();
+      // Index constant (arith.constant index).
+      if (auto cIdx = v.getDefiningOp<arith::ConstantIndexOp>())
+        return static_cast<int64_t>(cIdx.value());
       if (auto cOp = v.getDefiningOp<arith::ConstantOp>()) {
         if (auto intAttr = dyn_cast<IntegerAttr>(cOp.getValue()))
           return intAttr.getValue().getSExtValue();
@@ -42,29 +43,36 @@ struct InferCalDynamicStateShapesPass : public mlir::impl::InferCalDynamicStateS
         if (auto inner = evalConst(castOp.getIn()))
           return inner;
       }
-      // Simple folds: addi, subi, muli (both constant operands).
       if (auto addOp = v.getDefiningOp<arith::AddIOp>()) {
-        if (auto lhs = evalConst(addOp.getLhs()); lhs && evalConst(addOp.getRhs()))
-          return *lhs + *evalConst(addOp.getRhs());
+        if (auto lhs = evalConst(addOp.getLhs()); lhs) {
+          if (auto rhs = evalConst(addOp.getRhs()))
+            return *lhs + *rhs;
+        }
       }
       if (auto subOp = v.getDefiningOp<arith::SubIOp>()) {
-        if (auto lhs = evalConst(subOp.getLhs()); lhs && evalConst(subOp.getRhs()))
-          return *lhs - *evalConst(subOp.getRhs());
+        if (auto lhs = evalConst(subOp.getLhs()); lhs) {
+          if (auto rhs = evalConst(subOp.getRhs()))
+            return *lhs - *rhs;
+        }
       }
       if (auto mulOp = v.getDefiningOp<arith::MulIOp>()) {
-        if (auto lhs = evalConst(mulOp.getLhs()); lhs && evalConst(mulOp.getRhs()))
-          return *lhs * *evalConst(mulOp.getRhs());
+        if (auto lhs = evalConst(mulOp.getLhs()); lhs) {
+          if (auto rhs = evalConst(mulOp.getRhs()))
+            return *lhs * *rhs;
+        }
       }
       return std::nullopt;
     };
 
     for (cal::CreateStateVarOp createOp : worklist) {
       Type stateElemTy = createOp.getStateType();
-      ShapedType shapedTy = nullptr;
+      ShapedType shapedTy;
       if (auto mem = dyn_cast<MemRefType>(stateElemTy)) shapedTy = mem;
       else if (auto ten = dyn_cast<RankedTensorType>(stateElemTy)) shapedTy = ten;
-      else continue; // Not a shaped type we handle.
-      if (!shapedTy || shapedTy.getNumDynamicDims() == 0) continue; // Already static.
+      else
+        continue; // Not a shaped type we handle.
+      if (shapedTy.getNumDynamicDims() == 0)
+        continue; // Already static.
 
       ValueRange sizeOperands = createOp.getSizes();
       if (sizeOperands.empty()) continue; // Need explicit operands for dynamic dims.

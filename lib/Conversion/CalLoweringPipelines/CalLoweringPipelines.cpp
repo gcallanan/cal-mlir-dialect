@@ -17,6 +17,7 @@
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
 #include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/Conversion/ComplexToStandard/ComplexToStandard.h"
+#include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
 
 // MLIR Dialects and Transforms
 #include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
@@ -114,17 +115,17 @@ void registerLowerCalToLLVMPipeline() {
         // isolation violations for dynamic-sized states.
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
+
         // Honor pipeline option to drain actors by default (non-preemptive).
         pm.addPass(
             mlir::createConvertCalToFuncPass(options.nonPreemptiveDefault));
 
+        // Convert complex ops to standard forms now that actors are functions.
+        pm.addPass(mlir::createConvertComplexToStandardPass());
+
         // We add this pass as we often get functions that are the same but with
         // different names.
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
-
-        // Early complex lowering: convert complex ops to standard forms before
-        // any memref/state/fifo lowering that may mark them illegal.
-        pm.addPass(mlir::createConvertComplexToStandardPass());
 
         pm.addPass(mlir::createLowerCalStateToMemref());
         pm.addPass(mlir::createLowerFifoToMemrefPass());
@@ -164,6 +165,7 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::createCSEPass());
 
         // (Complex already lowered earlier; do not repeat here.)
+        pm.addPass(mlir::createConvertComplexToLLVMPass());
 
         // Convert Math to LLVM (always needed).
         pm.addNestedPass<mlir::func::FuncOp>(

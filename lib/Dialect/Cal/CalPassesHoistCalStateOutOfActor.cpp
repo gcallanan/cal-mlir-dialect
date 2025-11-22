@@ -85,6 +85,11 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
     // blocks argument list and then remove the operation.
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
+      
+      // Skip the execution body
+      if (isa<cal::ExecutionBody>(op))
+        continue;
+
       // Only hoist create_state_var results as actor block arguments when the
       // op has no dynamic size operands. If sizes are present, keep the
       // allocation inside the actor to avoid region isolation issues and to
@@ -131,6 +136,10 @@ struct MoveInitOperationsToArguments : public OpRewritePattern<cal::ActorOp> {
         }
         opsToErase.push_back(&op);
         op.replaceAllUsesWith(newArgs);
+      } else if (isa<cal::StateSetOp>(op) || isa<memref::StoreOp>(op) || isa<memref::CopyOp>(op)) {
+        // Remove side-effecting initialization operations that were hoisted.
+        // These are executed in the network now.
+        opsToErase.push_back(&op);
       }
     }
 
@@ -232,14 +241,22 @@ struct AddStateAboveCreateInstance
     originalToClonedOperandsMap.map(actorBody.getArguments(),
                                     instanceOp.getOperands());
 
-    // 2. Clone only create_state_var ops above the instance and append their
-    // results as extra operands. Skip sets/alloc/loops/etc.
+    // 2. Clone all initialization ops (everything except ExecutionBody) above
+    // the instance. Append results of CreateStateVarOp as extra operands.
     beginIt = actorBody.op_begin();
     endIt = actorBody.op_end();
     bool variableHoisted = false;
 
     for (auto it = beginIt; it != endIt; ++it) {
       Operation &op = *it; // reference to the operation
+      
+      if (isa<cal::ExecutionBody>(op) || isa<cal::ActionOp>(op) || isa<cal::FsmOp>(op))
+        continue;
+
+      // Clone the operation.
+      // Note: rewriter.clone updates the map so subsequent ops use cloned values.
+      Operation *clonedOp = rewriter.clone(op, originalToClonedOperandsMap);
+
       if (auto csv = dyn_cast<cal::CreateStateVarOp>(&op)) {
         // Safe hoisting conditions must mirror the actor-arg case above.
         if (!csv.getSizes().empty()) {
@@ -262,7 +279,6 @@ struct AddStateAboveCreateInstance
             continue;
         }
         variableHoisted = true;
-        Operation *clonedOp = rewriter.clone(*csv, originalToClonedOperandsMap);
         for (Value res : clonedOp->getResults()) {
           operands.push_back(res);
         }
@@ -288,10 +304,101 @@ struct AddStateAboveCreateInstance
   }
 };
 
+struct AddStateAboveInstantiate
+    : public OpRewritePattern<cal::InstantiateOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(cal::InstantiateOp instanceOp,
+                                PatternRewriter &rewriter) const override {
+
+    SymbolTableCollection symbolTable;
+    FlatSymbolRefAttr actorRef = instanceOp.getActorRefAttr();
+
+    cal::ActorOp actorOp =
+        symbolTable.lookupNearestSymbolFrom<cal::ActorOp>(instanceOp, actorRef);
+    if (!actorOp)
+      return failure();
+
+    mlir::Region &actorBody = actorOp.getBody();
+
+    if (instanceOp->hasAttr("cal.hoisted_state"))
+      return failure();
+
+    auto beginIt = actorBody.op_begin();
+    auto endIt = actorBody.op_end();
+    bool hasStateVars = false;
+    for (auto it = beginIt; it != endIt; ++it) {
+      Operation &op = *it;
+      if (isa<cal::CreateStateVarOp>(op)) { hasStateVars = true; break; }
+    }
+    if (!hasStateVars) return failure();
+
+    mlir::SmallVector<mlir::Value, 4> params(instanceOp.getParams().begin(),
+                                             instanceOp.getParams().end());
+    
+    IRMapping originalToClonedOperandsMap;
+    originalToClonedOperandsMap.map(actorBody.getArguments(),
+                                    instanceOp.getParams());
+
+    beginIt = actorBody.op_begin();
+    endIt = actorBody.op_end();
+    bool variableHoisted = false;
+
+    for (auto it = beginIt; it != endIt; ++it) {
+      Operation &op = *it; 
+      
+      if (isa<cal::ExecutionBody>(op) || isa<cal::ActionOp>(op) || isa<cal::FsmOp>(op))
+        continue;
+
+      Operation *clonedOp = rewriter.clone(op, originalToClonedOperandsMap);
+
+      if (auto csv = dyn_cast<cal::CreateStateVarOp>(&op)) {
+        if (!csv.getSizes().empty()) {
+          Block &entryBlock = actorBody.front();
+          bool allSizesAreActorArgs = llvm::all_of(csv.getSizes(), [&](Value v) {
+            return v.isa<BlockArgument>() &&
+                   v.cast<BlockArgument>().getOwner() == &entryBlock;
+          });
+          if (!allSizesAreActorArgs)
+            continue;
+        } else {
+          bool isStaticShape = true;
+          Type stateTy = csv.getStateType();
+          if (auto memTy = dyn_cast_or_null<MemRefType>(stateTy))
+            isStaticShape = memTy.hasStaticShape();
+          else if (auto tenTy = dyn_cast_or_null<TensorType>(stateTy))
+            isStaticShape = tenTy.hasStaticShape();
+          if (!isStaticShape)
+            continue;
+        }
+        variableHoisted = true;
+        for (Value res : clonedOp->getResults()) {
+          params.push_back(res);
+        }
+      }
+    }
+
+    if (variableHoisted) {
+        NamedAttrList attrs(instanceOp->getAttrs());
+        attrs.set(StringAttr::get(getContext(), "cal.hoisted_state"), UnitAttr::get(getContext()));
+        
+        auto newOp = rewriter.create<cal::InstantiateOp>(
+          instanceOp.getLoc(), instanceOp->getResultTypes(),
+          instanceOp.getActorRefAttr(), 
+          instanceOp.getInstanceNameAttr(), params);
+        newOp->setAttrs(attrs);
+        rewriter.replaceOp(instanceOp, newOp);
+      return success();
+    }
+    return failure();
+  }
+};
+
 // Add this helper function before the pass class
 void populateHoistCalStateOutOfActorPatterns(RewritePatternSet &patterns) {
   patterns.add<MoveInitOperationsToArguments>(patterns.getContext());
   patterns.add<AddStateAboveCreateInstance>(patterns.getContext());
+  patterns.add<AddStateAboveInstantiate>(patterns.getContext());
 }
 
 class HoistCalStateOutOfActorPass
@@ -306,6 +413,7 @@ public:
     {
       RewritePatternSet phase1(&getContext());
       phase1.add<AddStateAboveCreateInstance>(&getContext());
+      phase1.add<AddStateAboveInstantiate>(&getContext());
       if (failed(applyPatternsGreedily(getOperation(), std::move(phase1)))) {
         signalPassFailure();
         return;
