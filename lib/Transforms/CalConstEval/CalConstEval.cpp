@@ -22,6 +22,7 @@
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
@@ -33,6 +34,9 @@
 #include "mlir/Transforms/InliningUtils.h"
 // Generic constant matcher
 #include "mlir/IR/Matchers.h"
+// LLVM translation interfaces for ExecutionEngine JIT
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 // Env var check
 #include <cstdlib>
 // Time watchdog
@@ -580,6 +584,9 @@ std::optional<llvm::APInt> CalConstEvalPass::tryJitConstEval(
   DialectRegistry reg;
   reg.insert<arith::ArithDialect, func::FuncDialect, scf::SCFDialect,
              cf::ControlFlowDialect, mlir::LLVM::LLVMDialect>();
+  // Register LLVM translation interfaces so ExecutionEngine can translate to LLVM IR.
+  registerBuiltinDialectTranslation(reg);
+  registerLLVMDialectTranslation(reg);
   auto jitCtx = std::make_unique<MLIRContext>(reg);
   jitCtx->disableMultithreading();
   MLIRContext *ctx = jitCtx.get();
@@ -656,12 +663,23 @@ std::optional<llvm::APInt> CalConstEvalPass::tryJitConstEval(
   // Lower to LLVM dialect.
   PassManager pm(ctx);
   pm.enableVerifier(false);
+  // Canonicalize before conversions.
+  pm.addPass(createCanonicalizerPass());
+  // Convert SCF to CF so later LLVM conversion can proceed.
   pm.addPass(createConvertSCFToCFPass());
-  pm.addPass(createConvertControlFlowToLLVMPass());
+  // Perform another canonicalize+CSE to clean up.
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createCSEPass());
+  // Convert all dialects to LLVM using proper pass creation functions
   pm.addPass(createArithToLLVMConversionPass());
+  pm.addPass(createConvertControlFlowToLLVMPass());
   // Convert Func to LLVM (explicit instead of generic ConvertToLLVM to avoid
   // relying on dialect extension interfaces).
   pm.addPass(createConvertFuncToLLVMPass());
+  // Reconcile unrealized casts that may be left over
+  pm.addPass(createReconcileUnrealizedCastsPass());
+  // One more canonicalize to fold trivial patterns post-conversion.
+  pm.addPass(createCanonicalizerPass());
   if (failed(pm.run(scratch))) return std::nullopt;
 
   // Post-lowering size watchdog; LLVM form may expand IR.
@@ -676,10 +694,17 @@ std::optional<llvm::APInt> CalConstEvalPass::tryJitConstEval(
   ExecutionEngineOptions eeOpts;
   eeOpts.transformer = nullptr; // default
   auto expectedEngine = ExecutionEngine::create(scratch, eeOpts);
-  if (!expectedEngine) return std::nullopt;
+  if (!expectedEngine) {
+    // Consume the error to avoid assertion failure.
+    llvm::consumeError(expectedEngine.takeError());
+    return std::nullopt;
+  }
   std::unique_ptr<ExecutionEngine> engine = std::move(*expectedEngine);
   auto symOr = engine->lookup("__jit_entry");
-  if (!symOr) return std::nullopt;
+  if (!symOr) {
+    llvm::consumeError(symOr.takeError());
+    return std::nullopt;
+  }
   void *addr = *symOr; // llvm::Expected unwrap
   // Invoke with a type-appropriate function pointer and convert to APInt bits.
   if (isFloatResult) {

@@ -73,6 +73,9 @@ struct ConstJITResolvePass
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, func::FuncDialect, scf::SCFDialect,
                     cf::ControlFlowDialect, LLVM::LLVMDialect, cal::CalDialect, ub::UBDialect>();
+    // Register LLVM translation interfaces so ExecutionEngine can translate to LLVM IR.
+    registerBuiltinDialectTranslation(registry);
+    registerLLVMDialectTranslation(registry);
   }
 
   void runOnOperation() override {
