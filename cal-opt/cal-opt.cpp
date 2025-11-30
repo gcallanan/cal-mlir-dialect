@@ -28,6 +28,11 @@
 // Async dialect
 #include "mlir/Dialect/Async/IR/Async.h"
 #include "mlir/Dialect/Async/Passes.h"
+// Transform dialect
+#include "mlir/Dialect/Transform/IR/TransformDialect.h"
+#include "mlir/Dialect/Transform/Transforms/Passes.h"
+#include "mlir/Dialect/Transform/LoopExtension/LoopExtension.h"
+#include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 // (Optional) Inliner interfaces would go here if needed.
 
 // Func dialect extensions (inliner) are not available in this MLIR snapshot;
@@ -155,7 +160,12 @@ int main(int argc, char **argv) {
       mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect,
       mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect,
       mlir::affine::AffineDialect, mlir::ub::UBDialect,
-      mlir::async::AsyncDialect>();
+      mlir::async::AsyncDialect,
+      mlir::transform::TransformDialect>();
+
+  // Register Transform dialect extensions for linalg operations
+  mlir::transform::registerLoopExtension(registry);
+  mlir::linalg::registerTransformDialectExtension(registry);
 
   // We need this to be able to run the --buffer-deallocation pass which can
   // automatically insert deallocation operations
