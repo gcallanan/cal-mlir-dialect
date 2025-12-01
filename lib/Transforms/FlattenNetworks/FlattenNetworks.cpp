@@ -71,6 +71,63 @@ struct NetworkProcessingOptions {
 static LogicalResult runNetworkProcessing(ModuleOp module,
                                           const NetworkProcessingOptions &opts);
 
+// Helper to handle nested module structures: if the given module contains no
+// cal.network or cal.actor ops directly, but has nested ModuleOps that do,
+// recursively process those nested modules. Returns the module that was
+// actually processed (the innermost module containing CAL constructs), or
+// the original module if it contains CAL constructs.
+static LogicalResult runNetworkProcessingWithNestedModules(
+    ModuleOp module, const NetworkProcessingOptions &opts) {
+  // Check if this module directly contains any cal.network or cal.actor
+  bool hasDirectCalOps = false;
+  for (Operation &op : module.getBody()->getOperations()) {
+    if (isa<NetworkOp, ActorOp>(op)) {
+      hasDirectCalOps = true;
+      break;
+    }
+  }
+  
+  if (hasDirectCalOps) {
+    // This module contains CAL ops; process it directly
+    return runNetworkProcessing(module, opts);
+  }
+  
+  // No direct CAL ops; check for nested modules that might contain them
+  SmallVector<ModuleOp, 4> nestedModules;
+  for (Operation &op : module.getBody()->getOperations()) {
+    if (auto nestedMod = dyn_cast<ModuleOp>(op)) {
+      nestedModules.push_back(nestedMod);
+    }
+  }
+  
+  // Process each nested module that contains CAL constructs
+  bool processedAny = false;
+  for (ModuleOp nested : nestedModules) {
+    bool nestedHasCal = false;
+    nested.walk([&](Operation *op) {
+      if (isa<NetworkOp, ActorOp>(op)) {
+        nestedHasCal = true;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    
+    if (nestedHasCal) {
+      if (failed(runNetworkProcessingWithNestedModules(nested, opts)))
+        return failure();
+      processedAny = true;
+    }
+  }
+  
+  // If no nested modules with CAL ops were found, process the original module
+  // (it will be a no-op, but maintains consistency)
+  if (!processedAny) {
+    return runNetworkProcessing(module, opts);
+  }
+  
+  return success();
+}
+
 class FlattenCalNetworksPass
     : public impl::FlattenCalNetworksPassBase<FlattenCalNetworksPass> {
 public:
@@ -107,7 +164,7 @@ void FlattenCalNetworksPass::runOnOperation() {
   opts.performFlattening = true;
   opts.allowSourcePortMultiConnect = allowSourcePortMultiConnect;
 
-  if (failed(runNetworkProcessing(getOperation(), opts)))
+  if (failed(runNetworkProcessingWithNestedModules(getOperation(), opts)))
     signalPassFailure();
 }
 
@@ -120,7 +177,7 @@ void ElaborateCalConnectionsPass::runOnOperation() {
   opts.performFlattening = false;
   opts.prepOnly = false; // legacy full elaboration
 
-  if (failed(runNetworkProcessing(getOperation(), opts)))
+  if (failed(runNetworkProcessingWithNestedModules(getOperation(), opts)))
     signalPassFailure();
 }
 
@@ -139,7 +196,7 @@ public:
     opts.performFlattening = false; // planning path only
     opts.prepOnly = true;
     opts.allowSourcePortMultiConnect = allowSourcePortMultiConnect;
-    if (failed(runNetworkProcessing(getOperation(), opts)))
+    if (failed(runNetworkProcessingWithNestedModules(getOperation(), opts)))
       signalPassFailure();
   }
 };
@@ -159,7 +216,7 @@ public:
     opts.performFlattening = false; // full materialization
     opts.prepOnly = false;
     opts.allowSourcePortMultiConnect = allowSourcePortMultiConnect;
-    if (failed(runNetworkProcessing(getOperation(), opts)))
+    if (failed(runNetworkProcessingWithNestedModules(getOperation(), opts)))
       signalPassFailure();
   }
 };

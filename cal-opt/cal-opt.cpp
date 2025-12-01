@@ -51,6 +51,7 @@
 #include "mlir/Dialect/Linalg/Transforms/AllInterfaces.h"
 #include "mlir/Dialect/SCF/Transforms/BufferDeallocationOpInterfaceImpl.h"
 #include "mlir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/SCF/IR/ValueBoundsOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Target/LLVMIR/Dialect/GPU/GPUToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
@@ -182,6 +183,7 @@ int main(int argc, char **argv) {
   mlir::arith::registerBufferViewFlowOpInterfaceExternalModels(registry);
   mlir::arith::registerValueBoundsOpInterfaceExternalModels(registry);
   mlir::scf::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::scf::registerValueBoundsOpInterfaceExternalModels(registry);
   mlir::cf::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::tensor::registerValueBoundsOpInterfaceExternalModels(registry);

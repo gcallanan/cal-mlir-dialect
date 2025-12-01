@@ -168,8 +168,8 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::createConvertComplexToLLVMPass());
 
         // Convert Math to LLVM (always needed).
-        pm.addNestedPass<mlir::func::FuncOp>(
-            mlir::createConvertMathToLLVMPass());
+        // Use non-nested pass to handle nested module structures.
+        pm.addPass(mlir::createConvertMathToLLVMPass());
         // Expand complicated MemRef operations before lowering them.
         pm.addPass(mlir::memref::createExpandStridedMetadataPass());
         // The expansion may create affine expressions. Get rid of them.
