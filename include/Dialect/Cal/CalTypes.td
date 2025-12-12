@@ -118,4 +118,156 @@ def Cal_InterfaceInstances : Cal_Type<"InterfaceInstances", "instances.iface", [
   let assemblyFormat = "`<` $ifaceRef `>`";
 }
 
+//===----------------------------------------------------------------------===//
+// Algebraic Types: Variant (Sum Type) and Product Type
+//===----------------------------------------------------------------------===//
+
+def Cal_Variant : Cal_Type<"Variant", "variant", []> {
+  let summary = "Algebraic sum type (tagged union)";
+  let description = [{
+    Represents a sum type with named variants, each containing zero or more fields.
+    This type models tagged unions where each variant can hold different field types.
+
+    The type is parameterized by:
+    - `name`: A string identifying the type (e.g., "Maybe", "Result")
+    - `variants`: An ArrayAttr of DictionaryAttr, each containing:
+      - "name": StringAttr for the variant name (e.g., "Some", "None")
+      - "fields": ArrayAttr of Type for the variant's field types
+
+    Example printed forms:
+      !cal.variant<"Maybe", [#cal.var<"Some", [i32]>, #cal.var<"None", []>]>
+      !cal.variant<"Result", [#cal.var<"Ok", [tensor<2x2xf32>]>, #cal.var<"Err", [i32]>]>
+
+    Usage in CAL:
+      type Maybe(type T):
+        Some(T value)
+      | None
+      end
+
+    Memory layout (for lowering): A struct with a tag field (i32) followed by
+    a union of all variant payloads (size = max variant size).
+  }];
+  let parameters = (ins
+    StringRefParameter<"type name">:$name,
+    "mlir::ArrayAttr":$variants
+  );
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+}
+
+def Cal_Product : Cal_Type<"Product", "product", []> {
+  let summary = "Algebraic product type (record/struct)";
+  let description = [{
+    Represents a product type with named fields. This is similar to a struct
+    or record type in other languages.
+
+    The type is parameterized by:
+    - `name`: A string identifying the type (e.g., "Vec2", "Point3D")
+    - `fields`: An ArrayAttr of DictionaryAttr, each containing:
+      - "name": StringAttr for the field name (e.g., "x", "y")
+      - "type": TypeAttr for the field type
+
+    Example printed forms:
+      !cal.product<"Vec2", [#cal.field<"x", i32>, #cal.field<"y", i32>]>
+      !cal.product<"Point3D", [#cal.field<"x", f64>, #cal.field<"y", f64>, #cal.field<"z", f64>]>
+
+    Usage in CAL:
+      type Vec2:
+        (int x, int y)
+      end
+
+    Memory layout: A struct with fields in declaration order.
+  }];
+  let parameters = (ins
+    StringRefParameter<"type name">:$name,
+    "mlir::ArrayAttr":$fields
+  );
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Memory Management Types for Recursive Algebraic Types
+// These types support the dataflow-specific memory management model:
+// - Arena: Action-scoped bump allocation
+// - RC: Reference-counted state variables
+// - Token: Single-owner FIFO transfer
+//===----------------------------------------------------------------------===//
+
+def Cal_Arena : Cal_Type<"Arena", "arena", []> {
+  let summary = "Action-scoped memory arena for temporary allocations";
+  let description = [{
+    Represents a bump-pointer arena for fast allocation of temporary values.
+    Arenas are created at action start and destroyed at action end. All
+    allocations within an arena are freed together when the arena is destroyed.
+
+    This type is used for:
+    - Temporary recursive variant allocations within actions
+    - Intermediate computation results
+    - Deep copies during FIFO token wrapping
+
+    Example usage:
+      %arena = cal.arena.create : !cal.arena
+      %ptr = cal.arena.alloc %arena[64, align 8] : !llvm.ptr
+      cal.arena.destroy %arena : !cal.arena
+  }];
+  // No parameters - arena is an opaque handle
+}
+
+def Cal_RC : Cal_Type<"RC", "rc", []> {
+  let summary = "Reference-counted heap allocation for state variables";
+  let description = [{
+    Wraps a value with reference counting for state variables that persist
+    across action firings. The reference count is stored alongside the value
+    and automatically manages memory deallocation.
+
+    This type is used for:
+    - State variables containing recursive types
+    - Shared data that outlives a single action
+
+    The element type can be any MLIR type, including recursive variants.
+
+    Example printed forms:
+      !cal.rc<i32>
+      !cal.rc<!cal.variant<"List", ...>>
+
+    Operations:
+      %rc = cal.rc.alloc %value : T -> !cal.rc<T>    // refcount = 1
+      %rc2 = cal.rc.retain %rc : !cal.rc<T>          // refcount++
+      cal.rc.release %rc : !cal.rc<T>                // refcount--, free if 0
+      %val = cal.rc.load %rc : !cal.rc<T> -> T       // read value
+  }];
+  let parameters = (ins "Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+}
+
+def Cal_Token : Cal_Type<"Token", "token", []> {
+  let summary = "Owned data token for FIFO transfer with single ownership";
+  let description = [{
+    Represents data being transferred through a FIFO with single ownership.
+    Tokens are created by wrapping arena or RC values (deep copy), and
+    consumed by unwrapping into the receiver's arena.
+
+    Key properties:
+    - Single ownership: A token has exactly one owner at any time
+    - Transfer semantics: Pushing to FIFO transfers ownership
+    - Deep copy on wrap: Source value remains valid, token owns copy
+    - Zero-copy unwrap: Token data moves into target arena
+
+    This type ensures memory safety across actor boundaries by preventing
+    aliasing of heap-allocated data through FIFOs.
+
+    Example printed forms:
+      !cal.token<i32>
+      !cal.token<!cal.variant<"List", ...>>
+
+    Operations:
+      %tok = cal.token.wrap %val from %arena : T -> !cal.token<T>
+      %val = cal.token.unwrap %tok into %arena : !cal.token<T> -> T
+      cal.token.consume %tok : !cal.token<T>  // discard without unwrap
+  }];
+  let parameters = (ins "Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+}
+
 #endif // CAL_TYPES

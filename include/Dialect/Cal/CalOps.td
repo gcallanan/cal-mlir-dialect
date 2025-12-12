@@ -14,6 +14,7 @@ include "Dialect/Fifo/FifoTypes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/CommonAttrConstraints.td"
 
@@ -896,6 +897,555 @@ def Cal_InstanceArraySetOp : Cal_Op<"instance.array.set", [Pure]> {
   let results = (outs AnyType:$result);
   let assemblyFormat = "$array `[` $indices `]` `,` $value attr-dict `:` type($array) `,` type($value) `->` type($result)";
   // No custom verifier/canonicalizer here; bounds/type checks are pass-driven.
+}
+
+//===----------------------------------------------------------------------===//
+// Algebraic Type Operations: Variant (Sum Type) and Product Type
+//===----------------------------------------------------------------------===//
+// These operations support algebraic data types in CAL. Variants (sum types)
+// represent tagged unions where each variant can hold different field types.
+// Products represent structs/records with named fields.
+//===----------------------------------------------------------------------===//
+
+def Cal_VariantCreateOp : Cal_Op<"variant.create", [Pure]> {
+  let summary = "Create a variant (sum type) value";
+  let description = [{
+    The `cal.variant.create` operation constructs a variant value with the
+    specified variant name and field values. The result type must be a
+    `!cal.variant` type, and the variant name must be one of the declared
+    variants in that type.
+
+    Arguments:
+    - `variant_name`: The name of the variant being constructed (e.g., "Some", "None")
+    - `fields`: Zero or more field values matching the variant's field types
+
+    Results:
+    - `result`: The constructed variant value
+
+    Example:
+      // Create a Some(42) value for Maybe<i32>
+      %value = arith.constant 42 : i32
+      %some = cal.variant.create "Some"(%value)
+              : !cal.variant<"Maybe", [("Some", [i32]), ("None", [])]>
+
+      // Create a None value
+      %none = cal.variant.create "None"()
+              : !cal.variant<"Maybe", [("Some", [i32]), ("None", [])]>
+  }];
+
+  let arguments = (ins
+    StrAttr:$variant_name,
+    Variadic<AnyType>:$fields
+  );
+
+  let results = (outs Cal_Variant:$result);
+
+  let assemblyFormat = [{
+    $variant_name `(` $fields `)` attr-dict `:` type($result) (`(` type($fields)^ `)`)?
+  }];
+
+  let hasVerifier = 1;
+}
+
+def Cal_VariantGetTagOp : Cal_Op<"variant.get_tag", [Pure]> {
+  let summary = "Get the discriminant tag of a variant value";
+  let description = [{
+    The `cal.variant.get_tag` operation extracts the discriminant tag from a
+    variant value. The tag is returned as an index value representing which
+    variant is currently active (0-indexed in declaration order).
+
+    This operation is useful for pattern matching and conditional branching
+    based on the variant type.
+
+    Arguments:
+    - `variant`: The variant value to extract the tag from
+
+    Results:
+    - `tag`: An index value representing the active variant (0 for first, etc.)
+
+    Example:
+      %maybe = ... : !cal.variant<"Maybe", [("Some", [i32]), ("None", [])]>
+      %tag = cal.variant.get_tag %maybe : !cal.variant<"Maybe", ...> -> index
+      // %tag is 0 if Some, 1 if None
+  }];
+
+  let arguments = (ins Cal_Variant:$variant);
+  let results = (outs Index:$tag);
+
+  let assemblyFormat = [{
+    $variant attr-dict `:` type($variant) `->` type($tag)
+  }];
+}
+
+def Cal_VariantGetFieldOp : Cal_Op<"variant.get_field", [Pure]> {
+  let summary = "Extract a field value from a variant";
+  let description = [{
+    The `cal.variant.get_field` operation extracts a specific field value from
+    a variant. The caller must specify which variant and which field index to
+    extract. The behavior is undefined if the variant is not currently the
+    specified variant (i.e., the tag doesn't match).
+
+    This is typically used after checking the tag with `cal.variant.get_tag`
+    to safely extract field values.
+
+    Arguments:
+    - `variant`: The variant value to extract from
+    - `variant_name`: The expected active variant name
+    - `field_index`: The 0-based index of the field to extract
+
+    Results:
+    - `result`: The extracted field value
+
+    Example:
+      %maybe = ... : !cal.variant<"Maybe", [("Some", [i32]), ("None", [])]>
+      // Assumes %maybe is known to be Some
+      %value = cal.variant.get_field %maybe["Some", 0]
+               : !cal.variant<"Maybe", ...> -> i32
+  }];
+
+  let arguments = (ins
+    Cal_Variant:$variant,
+    StrAttr:$variant_name,
+    I64Attr:$field_index
+  );
+
+  let results = (outs AnyType:$result);
+
+  let assemblyFormat = [{
+    $variant `[` $variant_name `,` $field_index `]` attr-dict
+    `:` type($variant) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+}
+
+def Cal_VariantMatchOp : Cal_Op<"variant.match", [
+    RecursiveMemoryEffects,
+    SingleBlockImplicitTerminator<"VariantYieldOp">
+  ]> {
+  let summary = "Pattern match on a variant value";
+  let description = [{
+    The `cal.variant.match` operation provides structured pattern matching on
+    variant (sum type) values. Each case region corresponds to one variant and
+    receives the variant's fields as block arguments.
+
+    The operation has one region per variant case. Each region must terminate
+    with `cal.variant.yield` to produce a result value. All cases must yield
+    values of the same type.
+
+    Arguments:
+    - `variant`: The variant value to match on
+
+    Results:
+    - `result`: The value yielded by the matching case
+
+    Example:
+      %maybe = ... : !cal.variant<"Maybe", [("Some", [i32]), ("None", [])]>
+      %result = cal.variant.match %maybe : !cal.variant<"Maybe", ...> -> i32 {
+        case "Some"(%v: i32):
+          cal.variant.yield %v : i32
+        case "None":
+          %zero = arith.constant 0 : i32
+          cal.variant.yield %zero : i32
+      }
+
+    Note: This high-level operation can be lowered to `scf.if` chains with
+    `cal.variant.get_tag` and `cal.variant.get_field` operations.
+  }];
+
+  let arguments = (ins Cal_Variant:$variant);
+  let results = (outs AnyType:$result);
+  let regions = (region VariadicRegion<SizedRegion<1>>:$cases);
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+def Cal_VariantYieldOp : Cal_Op<"variant.yield", [
+    Pure, Terminator,
+    ParentOneOf<["VariantMatchOp"]>
+  ]> {
+  let summary = "Yield a result from a variant match case";
+  let description = [{
+    The `cal.variant.yield` operation terminates a case region within a
+    `cal.variant.match` operation. It specifies the result value to be
+    returned when that case is matched.
+
+    Example:
+      cal.variant.yield %value : i32
+  }];
+
+  let arguments = (ins AnyType:$result);
+
+  let assemblyFormat = "$result attr-dict `:` type($result)";
+}
+
+//===----------------------------------------------------------------------===//
+// Product Type Operations
+//===----------------------------------------------------------------------===//
+
+def Cal_ProductCreateOp : Cal_Op<"product.create", [Pure]> {
+  let summary = "Create a product (struct/record) value";
+  let description = [{
+    The `cal.product.create` operation constructs a product type value from
+    its field values. The fields must be provided in declaration order as
+    specified in the product type definition.
+
+    Arguments:
+    - `fields`: The field values in declaration order
+
+    Results:
+    - `result`: The constructed product value
+
+    Example:
+      %x = arith.constant 10 : i32
+      %y = arith.constant 20 : i32
+      %vec = cal.product.create(%x, %y)
+             : !cal.product<"Vec2", [("x", i32), ("y", i32)]>
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$fields);
+  let results = (outs Cal_Product:$result);
+
+  let assemblyFormat = [{
+    `(` $fields `)` attr-dict `:` type($result) (`:` `(` type($fields)^ `)`)?
+  }];
+
+  let hasVerifier = 1;
+}
+
+def Cal_ProductGetFieldOp : Cal_Op<"product.get_field", [Pure]> {
+  let summary = "Extract a field value from a product type";
+  let description = [{
+    The `cal.product.get_field` operation extracts a named field from a product
+    type value. The field name must be one of the declared fields in the
+    product type definition.
+
+    Arguments:
+    - `product`: The product value to extract from
+    - `field_name`: The name of the field to extract
+
+    Results:
+    - `result`: The extracted field value
+
+    Example:
+      %vec = ... : !cal.product<"Vec2", [("x", i32), ("y", i32)]>
+      %x_val = cal.product.get_field %vec["x"]
+               : !cal.product<"Vec2", ...> -> i32
+  }];
+
+  let arguments = (ins
+    Cal_Product:$product,
+    StrAttr:$field_name
+  );
+
+  let results = (outs AnyType:$result);
+
+  let assemblyFormat = [{
+    $product `[` $field_name `]` attr-dict `:` type($product) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Memory Management Operations for Recursive Algebraic Types
+// These operations implement the dataflow-specific memory model:
+// - Arena: Action-scoped bump allocation for temporaries
+// - RC: Reference-counted state variables
+// - Token: Single-owner FIFO transfer
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// Arena Operations
+//===----------------------------------------------------------------------===//
+
+def Cal_ArenaCreateOp : Cal_Op<"arena.create", [MemoryEffects<[MemAlloc]>]> {
+  let summary = "Create a new memory arena for action-scoped allocations";
+  let description = [{
+    Creates a new bump-pointer arena for fast temporary allocations. The arena
+    should be destroyed at action end using `cal.arena.destroy`.
+
+    Optional `initial_size` specifies the initial arena capacity in bytes.
+    The arena will grow automatically if needed.
+
+    Example:
+      %arena = cal.arena.create : !cal.arena
+      %arena_big = cal.arena.create size(4096) : !cal.arena
+  }];
+
+  let arguments = (ins OptionalAttr<I64Attr>:$initial_size);
+  let results = (outs Cal_Arena:$arena);
+
+  let assemblyFormat = "(`size` `(` $initial_size^ `)`)? attr-dict `:` type($arena)";
+}
+
+def Cal_ArenaDestroyOp : Cal_Op<"arena.destroy", [MemoryEffects<[MemFree]>]> {
+  let summary = "Destroy arena and free all allocations";
+  let description = [{
+    Destroys an arena, freeing all memory allocated from it. After this call,
+    any pointers obtained from arena.alloc are invalid.
+
+    This should be called at the end of each action to clean up temporaries.
+
+    Example:
+      cal.arena.destroy %arena : !cal.arena
+  }];
+
+  let arguments = (ins Cal_Arena:$arena);
+
+  let assemblyFormat = "$arena attr-dict `:` type($arena)";
+}
+
+def Cal_ArenaAllocOp : Cal_Op<"arena.alloc", [MemoryEffects<[MemAlloc]>]> {
+  let summary = "Allocate raw memory from arena";
+  let description = [{
+    Allocates raw memory from an arena with specified size and alignment.
+    This is a low-level operation used by variant boxing operations.
+
+    The returned pointer is valid until the arena is destroyed.
+
+    Example:
+      %ptr = cal.arena.alloc %arena[%size, align %align] : !cal.arena -> !llvm.ptr
+  }];
+
+  let arguments = (ins Cal_Arena:$arena, Index:$size, Index:$alignment);
+  let results = (outs AnyType:$ptr);
+
+  let assemblyFormat = "$arena `[` $size `,` `align` $alignment `]` attr-dict `:` type($arena) `->` type($ptr)";
+}
+
+//===----------------------------------------------------------------------===//
+// Reference Counting Operations
+//===----------------------------------------------------------------------===//
+
+def Cal_RCAllocOp : Cal_Op<"rc.alloc", [MemoryEffects<[MemAlloc, MemWrite]>]> {
+  let summary = "Allocate a reference-counted value (refcount = 1)";
+  let description = [{
+    Allocates a new reference-counted container holding the given value.
+    The initial reference count is 1. The value is deep-copied into the
+    RC container.
+
+    Used for state variables containing recursive algebraic types.
+
+    Example:
+      %rc = cal.rc.alloc %list : !cal.variant<"List", ...> -> !cal.rc<!cal.variant<"List", ...>>
+  }];
+
+  let arguments = (ins AnyType:$value);
+  let results = (outs Cal_RC:$result);
+
+  let assemblyFormat = "$value attr-dict `:` type($value) `->` type($result)";
+
+  let hasVerifier = 1;
+}
+
+def Cal_RCRetainOp : Cal_Op<"rc.retain", [MemoryEffects<[MemRead, MemWrite]>, SameOperandsAndResultType]> {
+  let summary = "Increment reference count";
+  let description = [{
+    Increments the reference count of an RC container. Returns the same
+    RC handle (for chaining convenience).
+
+    Example:
+      %rc2 = cal.rc.retain %rc : !cal.rc<i32>
+  }];
+
+  let arguments = (ins Cal_RC:$value);
+  let results = (outs Cal_RC:$result);
+
+  let assemblyFormat = "$value attr-dict `:` type($result)";
+
+  let hasVerifier = 1;
+}
+
+def Cal_RCReleaseOp : Cal_Op<"rc.release", [MemoryEffects<[MemRead, MemWrite, MemFree]>]> {
+  let summary = "Decrement reference count (free if zero)";
+  let description = [{
+    Decrements the reference count of an RC container. If the count
+    reaches zero, the contained value and the container are freed.
+
+    For recursive types, this recursively releases any nested RC values.
+
+    Example:
+      cal.rc.release %rc : !cal.rc<!cal.variant<"List", ...>>
+  }];
+
+  let arguments = (ins Cal_RC:$value);
+
+  let assemblyFormat = "$value attr-dict `:` type($value)";
+
+  let hasVerifier = 1;
+}
+
+def Cal_RCLoadOp : Cal_Op<"rc.load", [MemoryEffects<[MemRead]>]> {
+  let summary = "Load value from RC container (borrow)";
+  let description = [{
+    Reads the value stored in an RC container without affecting the
+    reference count. The returned value is a borrow - it is valid only
+    as long as the RC container is alive.
+
+    Example:
+      %val = cal.rc.load %rc : !cal.rc<i32> -> i32
+  }];
+
+  let arguments = (ins Cal_RC:$rc);
+  let results = (outs AnyType:$value);
+
+  let assemblyFormat = "$rc attr-dict `:` type($rc) `->` type($value)";
+
+  let hasVerifier = 1;
+}
+
+def Cal_RCStoreOp : Cal_Op<"rc.store", [MemoryEffects<[MemWrite]>]> {
+  let summary = "Store a new value into RC container";
+  let description = [{
+    Replaces the value stored in an RC container. The old value is
+    released (for recursive types, this decrements nested refcounts).
+
+    Example:
+      cal.rc.store %new_val into %rc : i32 into !cal.rc<i32>
+  }];
+
+  let arguments = (ins AnyType:$value, Cal_RC:$rc);
+
+  let assemblyFormat = "$value `into` $rc attr-dict `:` type($value) `into` type($rc)";
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Token Operations (FIFO Transfer)
+//===----------------------------------------------------------------------===//
+
+def Cal_TokenWrapOp : Cal_Op<"token.wrap", [MemoryEffects<[MemAlloc, MemRead, MemWrite]>]> {
+  let summary = "Wrap a value into a token for FIFO transfer (deep copy)";
+  let description = [{
+    Creates a token by deep-copying the value. The source value remains
+    valid (until its arena is destroyed), but the token now owns an
+    independent copy suitable for FIFO transfer.
+
+    The optional `source_arena` operand indicates where the source value
+    lives, enabling optimized copying strategies.
+
+    Example:
+      %token = cal.token.wrap %list : !cal.variant<"List", ...> 
+               -> !cal.token<!cal.variant<"List", ...>>
+      
+      %token2 = cal.token.wrap %list from %arena 
+                : !cal.variant<"List", ...> -> !cal.token<!cal.variant<"List", ...>>
+  }];
+
+  let arguments = (ins AnyType:$value, Optional<Cal_Arena>:$source_arena);
+  let results = (outs Cal_Token:$token);
+
+  let assemblyFormat = [{
+    $value (`from` $source_arena^)? attr-dict `:` type($value) `->` type($token)
+  }];
+
+  let hasVerifier = 1;
+}
+
+def Cal_TokenUnwrapOp : Cal_Op<"token.unwrap", [MemoryEffects<[MemRead, MemWrite, MemFree]>]> {
+  let summary = "Unwrap a token into target arena (consumes token)";
+  let description = [{
+    Extracts the value from a token into the target arena. The token is
+    consumed and cannot be used again. This is typically zero-copy as
+    the token's memory can be adopted by the arena.
+
+    Example:
+      %val = cal.token.unwrap %token into %arena 
+             : !cal.token<!cal.variant<"List", ...>> -> !cal.variant<"List", ...>
+  }];
+
+  let arguments = (ins Cal_Token:$token, Cal_Arena:$target_arena);
+  let results = (outs AnyType:$value);
+
+  let assemblyFormat = [{
+    $token `into` $target_arena attr-dict `:` type($token) `->` type($value)
+  }];
+
+  let hasVerifier = 1;
+}
+
+def Cal_TokenConsumeOp : Cal_Op<"token.consume", [MemoryEffects<[MemFree]>]> {
+  let summary = "Consume and discard a token without unwrapping";
+  let description = [{
+    Destroys a token without extracting its value. Use this when a
+    received token is not needed (e.g., error handling paths).
+
+    Example:
+      cal.token.consume %token : !cal.token<!cal.variant<"List", ...>>
+  }];
+
+  let arguments = (ins Cal_Token:$token);
+
+  let assemblyFormat = "$token attr-dict `:` type($token)";
+}
+
+//===----------------------------------------------------------------------===//
+// Boxing Operations (for recursive variant fields)
+//===----------------------------------------------------------------------===//
+
+def Cal_BoxInArenaOp : Cal_Op<"box.in_arena", [MemoryEffects<[MemAlloc, MemWrite]>]> {
+  let summary = "Box a value in an arena (for recursive variant fields)";
+  let description = [{
+    Allocates memory in the arena and stores the value there. Returns a
+    pointer to the boxed value. Used internally for recursive variant
+    fields that cannot be stored inline.
+
+    Example:
+      %boxed = cal.box.in_arena %list in %arena 
+               : !cal.variant<"List", ...> -> !llvm.ptr
+  }];
+
+  let arguments = (ins AnyType:$value, Cal_Arena:$arena);
+  let results = (outs AnyType:$boxed);
+
+  let assemblyFormat = "$value `in` $arena attr-dict `:` type($value) `->` type($boxed)";
+}
+
+def Cal_UnboxOp : Cal_Op<"unbox", [MemoryEffects<[MemRead]>]> {
+  let summary = "Unbox a pointer to retrieve the value";
+  let description = [{
+    Loads and returns the value stored at a boxed pointer. The pointer
+    must be valid (pointing to live arena or RC memory).
+
+    Example:
+      %val = cal.unbox %ptr : !llvm.ptr -> !cal.variant<"List", ...>
+  }];
+
+  let arguments = (ins AnyType:$boxed);
+  let results = (outs AnyType:$value);
+
+  let assemblyFormat = "$boxed attr-dict `:` type($boxed) `->` type($value)";
+}
+
+//===----------------------------------------------------------------------===//
+// Deep Copy Operation (generated per-type for recursive structures)
+//===----------------------------------------------------------------------===//
+
+def Cal_DeepCopyOp : Cal_Op<"deep_copy", [MemoryEffects<[MemAlloc, MemRead, MemWrite]>]> {
+  let summary = "Deep copy a value into target arena";
+  let description = [{
+    Creates a deep copy of a value, allocating all recursive components
+    in the target arena. This is used when transferring data between
+    arenas (e.g., for FIFO token wrapping).
+
+    For non-recursive types, this is a simple copy. For recursive types,
+    all nested boxed values are recursively copied.
+
+    Example:
+      %copy = cal.deep_copy %list into %arena 
+              : !cal.variant<"List", ...> in !cal.arena -> !cal.variant<"List", ...>
+  }];
+
+  let arguments = (ins AnyType:$value, Cal_Arena:$target_arena);
+  let results = (outs AnyType:$copy);
+
+  let assemblyFormat = [{
+    $value `into` $target_arena attr-dict 
+    `:` type($value) `in` type($target_arena) `->` type($copy)
+  }];
 }
 
 #endif // CAL_OPS

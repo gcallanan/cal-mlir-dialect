@@ -2393,3 +2393,506 @@ LogicalResult ImplementsOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 // Legacy cal.instance_if op was removed; custom parser/printer/verifier and
 // canonicalization patterns have been deleted accordingly.
 
+//===----------------------------------------------------------------------===//
+// Algebraic Type Operations - Verifiers
+//===----------------------------------------------------------------------===//
+
+// Helper to find a variant descriptor by name in a VariantType
+static std::optional<DictionaryAttr>
+findVariantByName(VariantType variantType, StringRef variantName) {
+  for (Attribute attr : variantType.getVariants()) {
+    auto variantDict = mlir::dyn_cast<DictionaryAttr>(attr);
+    if (!variantDict)
+      continue;
+    auto nameAttr = variantDict.getAs<StringAttr>("name");
+    if (nameAttr && nameAttr.getValue() == variantName)
+      return variantDict;
+  }
+  return std::nullopt;
+}
+
+// Helper to get the field types for a variant
+static SmallVector<Type>
+getVariantFieldTypes(DictionaryAttr variantDict) {
+  SmallVector<Type> fieldTypes;
+  auto fieldsAttr = variantDict.getAs<ArrayAttr>("fields");
+  if (!fieldsAttr)
+    return fieldTypes;
+  for (Attribute fieldAttr : fieldsAttr) {
+    if (auto typeAttr = mlir::dyn_cast<TypeAttr>(fieldAttr))
+      fieldTypes.push_back(typeAttr.getValue());
+  }
+  return fieldTypes;
+}
+
+// Helper to find the index of a variant by name (for future use by lowering passes)
+[[maybe_unused]] static std::optional<int64_t>
+findVariantIndex(VariantType variantType, StringRef variantName) {
+  int64_t index = 0;
+  for (Attribute attr : variantType.getVariants()) {
+    auto variantDict = mlir::dyn_cast<DictionaryAttr>(attr);
+    if (!variantDict) {
+      ++index;
+      continue;
+    }
+    auto nameAttr = variantDict.getAs<StringAttr>("name");
+    if (nameAttr && nameAttr.getValue() == variantName)
+      return index;
+    ++index;
+  }
+  return std::nullopt;
+}
+
+// Helper to find a field by name in a ProductType
+static std::optional<std::pair<int64_t, Type>>
+findProductFieldByName(ProductType productType, StringRef fieldName) {
+  int64_t index = 0;
+  for (Attribute attr : productType.getFields()) {
+    auto fieldDict = mlir::dyn_cast<DictionaryAttr>(attr);
+    if (!fieldDict) {
+      ++index;
+      continue;
+    }
+    auto nameAttr = fieldDict.getAs<StringAttr>("name");
+    auto typeAttr = fieldDict.getAs<TypeAttr>("type");
+    if (nameAttr && nameAttr.getValue() == fieldName && typeAttr)
+      return std::make_pair(index, typeAttr.getValue());
+    ++index;
+  }
+  return std::nullopt;
+}
+
+LogicalResult VariantCreateOp::verify() {
+  auto variantType = mlir::cast<VariantType>(getResult().getType());
+  StringRef variantName = getVariantName();
+
+  // Find the variant descriptor
+  auto variantDict = findVariantByName(variantType, variantName);
+  if (!variantDict) {
+    return emitOpError() << "variant '" << variantName << "' not found in type '"
+                         << variantType.getName() << "'";
+  }
+
+  // Get expected field types
+  auto expectedFieldTypes = getVariantFieldTypes(*variantDict);
+
+  // Check arity
+  if (getFields().size() != expectedFieldTypes.size()) {
+    return emitOpError() << "variant '" << variantName << "' expects "
+                         << expectedFieldTypes.size() << " field(s), but got "
+                         << getFields().size();
+  }
+
+  // Check field types
+  for (auto [idx, pair] : llvm::enumerate(llvm::zip(getFields(), expectedFieldTypes))) {
+    auto [field, expectedType] = pair;
+    if (field.getType() != expectedType) {
+      return emitOpError() << "variant '" << variantName << "' field " << idx
+                           << " expects type " << expectedType << ", but got "
+                           << field.getType();
+    }
+  }
+
+  return success();
+}
+
+LogicalResult VariantGetFieldOp::verify() {
+  auto variantType = mlir::cast<VariantType>(getVariant().getType());
+  StringRef variantName = getVariantName();
+  int64_t fieldIndex = getFieldIndex();
+
+  // Find the variant descriptor
+  auto variantDict = findVariantByName(variantType, variantName);
+  if (!variantDict) {
+    return emitOpError() << "variant '" << variantName << "' not found in type '"
+                         << variantType.getName() << "'";
+  }
+
+  // Get field types for this variant
+  auto fieldTypes = getVariantFieldTypes(*variantDict);
+
+  // Check field index bounds
+  if (fieldIndex < 0 || static_cast<size_t>(fieldIndex) >= fieldTypes.size()) {
+    return emitOpError() << "field index " << fieldIndex << " out of bounds for variant '"
+                         << variantName << "' which has " << fieldTypes.size() << " field(s)";
+  }
+
+  // Check result type matches
+  Type expectedType = fieldTypes[fieldIndex];
+  if (getResult().getType() != expectedType) {
+    return emitOpError() << "result type " << getResult().getType()
+                         << " does not match field " << fieldIndex << " type "
+                         << expectedType << " in variant '" << variantName << "'";
+  }
+
+  return success();
+}
+
+LogicalResult VariantMatchOp::verify() {
+  auto variantType = mlir::cast<VariantType>(getVariant().getType());
+  size_t numVariants = variantType.getVariants().size();
+
+  // Check that we have exactly one region per variant
+  if (getCases().size() != numVariants) {
+    return emitOpError() << "expected " << numVariants << " case region(s) for variant type '"
+                         << variantType.getName() << "', but got " << getCases().size();
+  }
+
+  // Verify each case region
+  for (auto [idx, region] : llvm::enumerate(getCases())) {
+    if (!region.hasOneBlock()) {
+      return emitOpError() << "case region " << idx << " must have exactly one block";
+    }
+
+    // Get the expected variant for this case
+    auto variantDict = mlir::cast<DictionaryAttr>(variantType.getVariants()[idx]);
+    auto fieldTypes = getVariantFieldTypes(variantDict);
+
+    // Check block argument count and types
+    Block &caseBlock = region.front();
+    if (caseBlock.getNumArguments() != fieldTypes.size()) {
+      return emitOpError() << "case region " << idx << " expects "
+                           << fieldTypes.size() << " block argument(s), but got "
+                           << caseBlock.getNumArguments();
+    }
+
+    for (auto [argIdx, pair] : llvm::enumerate(
+             llvm::zip(caseBlock.getArguments(), fieldTypes))) {
+      auto [arg, expectedType] = pair;
+      if (arg.getType() != expectedType) {
+        return emitOpError() << "case region " << idx << " argument " << argIdx
+                             << " expects type " << expectedType << ", but got "
+                             << arg.getType();
+      }
+    }
+
+    // Check that the region terminates with variant.yield
+    if (caseBlock.empty()) {
+      return emitOpError() << "case region " << idx << " is empty";
+    }
+    auto terminator = dyn_cast<VariantYieldOp>(caseBlock.getTerminator());
+    if (!terminator) {
+      return emitOpError() << "case region " << idx
+                           << " must terminate with cal.variant.yield";
+    }
+
+    // Check yield type matches result type
+    if (terminator.getResult().getType() != getResult().getType()) {
+      return emitOpError() << "case region " << idx << " yields type "
+                           << terminator.getResult().getType()
+                           << " but expected " << getResult().getType();
+    }
+  }
+
+  return success();
+}
+
+// Custom assembly format for VariantMatchOp
+//
+// Format:
+//   cal.variant.match %variant : !cal.variant<...> -> result_type {
+//     case "VariantName"(%arg0: type0, %arg1: type1):
+//       ... ops ...
+//       cal.variant.yield %result : type
+//     case "OtherVariant":
+//       ...
+//   }
+
+void VariantMatchOp::print(OpAsmPrinter &p) {
+  auto variantType = mlir::cast<VariantType>(getVariant().getType());
+
+  p << " " << getVariant() << " : " << variantType << " -> " << getResult().getType() << " {";
+  p.increaseIndent();
+
+  for (auto [idx, region] : llvm::enumerate(getCases())) {
+    auto variantDict = mlir::cast<DictionaryAttr>(variantType.getVariants()[idx]);
+    StringRef variantName = variantDict.getAs<StringAttr>("name").getValue();
+
+    p.printNewline();
+    p << "case \"" << variantName << "\"";
+
+    Block &caseBlock = region.front();
+    if (!caseBlock.getArguments().empty()) {
+      p << "(";
+      llvm::interleaveComma(caseBlock.getArguments(), p, [&](BlockArgument arg) {
+        p << arg << ": " << arg.getType();
+      });
+      p << ")";
+    }
+    p << ":";
+    p.increaseIndent();
+
+    // Print the block contents (excluding the entry block arguments)
+    for (Operation &op : caseBlock) {
+      p.printNewline();
+      p.printCustomOrGenericOp(&op);
+    }
+
+    p.decreaseIndent();
+  }
+
+  p.decreaseIndent();
+  p.printNewline();
+  p << "}";
+}
+
+ParseResult VariantMatchOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand variantOperand;
+  VariantType variantType;
+  Type resultType;
+
+  // Parse: %variant : !cal.variant<...> -> result_type
+  if (parser.parseOperand(variantOperand) ||
+      parser.parseColon() ||
+      parser.parseType(variantType) ||
+      parser.parseArrow() ||
+      parser.parseType(resultType))
+    return failure();
+
+  if (parser.resolveOperand(variantOperand, variantType, result.operands))
+    return failure();
+
+  result.addTypes(resultType);
+
+  // Parse the regions: { case "Name"(...): ... }
+  if (parser.parseLBrace())
+    return failure();
+
+  // Parse case regions
+  size_t numVariants = variantType.getVariants().size();
+  for (size_t i = 0; i < numVariants; ++i) {
+    // Get expected variant info
+    auto variantDict = mlir::cast<DictionaryAttr>(variantType.getVariants()[i]);
+    StringRef expectedVariantName = variantDict.getAs<StringAttr>("name").getValue();
+    auto fieldTypes = getVariantFieldTypes(variantDict);
+
+    // Parse: case "VariantName"
+    if (parser.parseKeyword("case"))
+      return failure();
+
+    std::string variantName;
+    if (parser.parseString(&variantName))
+      return failure();
+
+    if (variantName != expectedVariantName) {
+      return parser.emitError(parser.getCurrentLocation())
+             << "expected case for variant '" << expectedVariantName
+             << "' but got '" << variantName << "'";
+    }
+
+    // Create a new region for this case
+    Region *caseRegion = result.addRegion();
+
+    // Parse optional block arguments: (%arg0: type0, ...)
+    SmallVector<OpAsmParser::Argument> blockArgs;
+    if (!fieldTypes.empty()) {
+      if (parser.parseLParen())
+        return failure();
+
+      for (size_t j = 0; j < fieldTypes.size(); ++j) {
+        if (j > 0 && parser.parseComma())
+          return failure();
+
+        OpAsmParser::Argument arg;
+        if (parser.parseArgument(arg) ||
+            parser.parseColon() ||
+            parser.parseType(arg.type))
+          return failure();
+
+        if (arg.type != fieldTypes[j]) {
+          return parser.emitError(parser.getCurrentLocation())
+                 << "argument type " << arg.type << " does not match expected "
+                 << fieldTypes[j];
+        }
+        blockArgs.push_back(arg);
+      }
+
+      if (parser.parseRParen())
+        return failure();
+    }
+
+    // Parse colon
+    if (parser.parseColon())
+      return failure();
+
+    // Parse the region body - use parseRegion with the block arguments
+    if (parser.parseRegion(*caseRegion, blockArgs))
+      return failure();
+
+    // Ensure the region has exactly one block
+    if (caseRegion->empty()) {
+      return parser.emitError(parser.getCurrentLocation())
+             << "case region for '" << variantName << "' cannot be empty";
+    }
+  }
+
+  if (parser.parseRBrace())
+    return failure();
+
+  return success();
+}
+
+LogicalResult ProductCreateOp::verify() {
+  auto productType = mlir::cast<ProductType>(getResult().getType());
+  ArrayAttr fieldsAttr = productType.getFields();
+
+  // Check arity
+  if (getFields().size() != fieldsAttr.size()) {
+    return emitOpError() << "product type '" << productType.getName()
+                         << "' expects " << fieldsAttr.size()
+                         << " field(s), but got " << getFields().size();
+  }
+
+  // Check field types
+  for (auto [idx, pair] : llvm::enumerate(llvm::zip(getFields(), fieldsAttr))) {
+    auto [field, fieldDictAttr] = pair;
+    auto fieldDict = mlir::cast<DictionaryAttr>(fieldDictAttr);
+    auto expectedTypeAttr = fieldDict.getAs<TypeAttr>("type");
+    if (!expectedTypeAttr) {
+      return emitOpError() << "field " << idx << " missing type in product type";
+    }
+    Type expectedType = expectedTypeAttr.getValue();
+    if (field.getType() != expectedType) {
+      auto fieldName = fieldDict.getAs<StringAttr>("name");
+      return emitOpError() << "field '" << (fieldName ? fieldName.getValue() : "")
+                           << "' (index " << idx << ") expects type " << expectedType
+                           << ", but got " << field.getType();
+    }
+  }
+
+  return success();
+}
+
+LogicalResult ProductGetFieldOp::verify() {
+  auto productType = mlir::cast<ProductType>(getProduct().getType());
+  StringRef fieldName = getFieldName();
+
+  // Find the field
+  auto fieldInfo = findProductFieldByName(productType, fieldName);
+  if (!fieldInfo) {
+    return emitOpError() << "field '" << fieldName << "' not found in product type '"
+                         << productType.getName() << "'";
+  }
+
+  // Check result type matches
+  Type expectedType = fieldInfo->second;
+  if (getResult().getType() != expectedType) {
+    return emitOpError() << "result type " << getResult().getType()
+                         << " does not match field '" << fieldName << "' type "
+                         << expectedType;
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Memory Management Operations Verifiers
+//===----------------------------------------------------------------------===//
+
+LogicalResult RCAllocOp::verify() {
+  // Check that result type is !cal.rc<T> where T matches input value type
+  auto rcType = mlir::dyn_cast<RCType>(getResult().getType());
+  if (!rcType) {
+    return emitOpError() << "result type must be !cal.rc<T>";
+  }
+
+  Type valueType = getValue().getType();
+  Type elementType = rcType.getElementType();
+  if (valueType != elementType) {
+    return emitOpError() << "value type " << valueType
+                         << " does not match RC element type " << elementType;
+  }
+
+  return success();
+}
+
+LogicalResult RCRetainOp::verify() {
+  // Check that input and output types match
+  auto inputType = mlir::dyn_cast<RCType>(getValue().getType());
+  auto outputType = mlir::dyn_cast<RCType>(getResult().getType());
+  
+  if (!inputType) {
+    return emitOpError() << "input must be !cal.rc<T>";
+  }
+  if (!outputType) {
+    return emitOpError() << "result must be !cal.rc<T>";
+  }
+  if (inputType != outputType) {
+    return emitOpError() << "input and output types must match";
+  }
+
+  return success();
+}
+
+LogicalResult RCReleaseOp::verify() {
+  auto rcType = mlir::dyn_cast<RCType>(getValue().getType());
+  if (!rcType) {
+    return emitOpError() << "operand must be !cal.rc<T>";
+  }
+  return success();
+}
+
+LogicalResult RCLoadOp::verify() {
+  auto rcType = mlir::dyn_cast<RCType>(getRc().getType());
+  if (!rcType) {
+    return emitOpError() << "operand must be !cal.rc<T>";
+  }
+
+  Type elementType = rcType.getElementType();
+  Type resultType = getValue().getType();
+  if (elementType != resultType) {
+    return emitOpError() << "result type " << resultType
+                         << " does not match RC element type " << elementType;
+  }
+
+  return success();
+}
+
+LogicalResult RCStoreOp::verify() {
+  auto rcType = mlir::dyn_cast<RCType>(getRc().getType());
+  if (!rcType) {
+    return emitOpError() << "target must be !cal.rc<T>";
+  }
+
+  Type valueType = getValue().getType();
+  Type elementType = rcType.getElementType();
+  if (valueType != elementType) {
+    return emitOpError() << "value type " << valueType
+                         << " does not match RC element type " << elementType;
+  }
+
+  return success();
+}
+
+LogicalResult TokenWrapOp::verify() {
+  auto tokenType = mlir::dyn_cast<TokenType>(getToken().getType());
+  if (!tokenType) {
+    return emitOpError() << "result must be !cal.token<T>";
+  }
+
+  Type valueType = getValue().getType();
+  Type elementType = tokenType.getElementType();
+  if (valueType != elementType) {
+    return emitOpError() << "value type " << valueType
+                         << " does not match token element type " << elementType;
+  }
+
+  return success();
+}
+
+LogicalResult TokenUnwrapOp::verify() {
+  auto tokenType = mlir::dyn_cast<TokenType>(getToken().getType());
+  if (!tokenType) {
+    return emitOpError() << "operand must be !cal.token<T>";
+  }
+
+  Type elementType = tokenType.getElementType();
+  Type resultType = getValue().getType();
+  if (elementType != resultType) {
+    return emitOpError() << "result type " << resultType
+                         << " does not match token element type " << elementType;
+  }
+
+  return success();
+}
+
