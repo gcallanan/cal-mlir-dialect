@@ -8,6 +8,8 @@
 #include "Conversion/CalToFuncWithStaticSchedule/CalToFuncWithStaticSchedule.h"
 #include "Conversion/FifoToMemref/ConvertFifoToMemref.h"
 #include "Conversion/DecomposeFifoTuples/DecomposeFifoTuples.h"
+#include "Conversion/CalMemoryToLLVM/CalMemoryToLLVM.h"
+#include "Conversion/CalVariantToLLVM/CalVariantToLLVM.h"
 
 namespace mlir {
 

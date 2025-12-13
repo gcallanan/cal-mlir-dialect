@@ -23,6 +23,14 @@ std::unique_ptr<mlir::Pass> insertCalPortPredicates();
 std::unique_ptr<mlir::Pass> lowerCalFsmToExecutionBody();
 // Infers static shapes for dynamic memref state variables where possible.
 std::unique_ptr<mlir::Pass> inferCalDynamicStateShapes();
+// Detects recursive algebraic types and marks operations accordingly.
+std::unique_ptr<mlir::Pass> detectRecursiveTypes();
+// Inserts arena allocation/deallocation for action-scoped memory management.
+std::unique_ptr<mlir::Pass> insertArenas();
+// Inserts reference counting for state variables with recursive types.
+std::unique_ptr<mlir::Pass> insertRCForState();
+// Materializes RC operations from attributes set by insert-rc-for-state.
+std::unique_ptr<mlir::Pass> materializeRCOps();
 
 void populateHoistCalStateOutOfActorPatterns(RewritePatternSet &patterns);
 

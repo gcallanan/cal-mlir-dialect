@@ -158,6 +158,14 @@ void registerLowerCalToLLVMPipeline() {
         //    pipelines as in the LLVM project, for example in
         //    TestLowertoLLVM.cpp.)
 
+        // Lower algebraic types (variant/product) to LLVM structs first,
+        // before any other LLVM lowering.
+        pm.addPass(mlir::createConvertCalVariantToLLVMPass());
+
+        // Lower memory management operations (arena, RC, token, boxing)
+        // to LLVM after variant types are lowered.
+        pm.addPass(mlir::createConvertCalMemoryToLLVM());
+
         // Convert SCF to CF (always needed).
         pm.addPass(mlir::createConvertSCFToCFPass());
         // Sprinkle some cleanups.
@@ -239,6 +247,12 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertLinalgToLoopsPass());
         pm.addPass(mlir::createCanonicalizerPass());
+
+        // Lower algebraic types (variant/product) to LLVM structs first.
+        pm.addPass(mlir::createConvertCalVariantToLLVMPass());
+
+        // Lower memory management operations (arena, RC, token, boxing).
+        pm.addPass(mlir::createConvertCalMemoryToLLVM());
 
         // Convert SCF to CF (always needed).
         pm.addPass(mlir::createConvertSCFToCFPass());
@@ -348,6 +362,12 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
     pm.addPass(mlir::createGpuAsyncRegionPass());
   }
   pm.addPass(mlir::createConvertSCFToCFPass());
+
+  // Lower algebraic types (variant/product) to LLVM structs first.
+  pm.addPass(mlir::createConvertCalVariantToLLVMPass());
+
+  // Lower memory management operations (arena, RC, token, boxing).
+  pm.addPass(mlir::createConvertCalMemoryToLLVM());
 
   mlir::gpu::GPUToNVVMPipelineOptions nvvmOptions;
   nvvmOptions.cubinChip = options.cubinChip;

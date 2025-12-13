@@ -8,6 +8,10 @@ add_mlir_dialect_library(MLIRCal
         CalPassesConvertActionsToExecutionBodies.cpp
         CalPassesLowerFsmToExecutionBody.cpp
         CalPassesInferCalDynamicStateShapes.cpp
+        CalPassesDetectRecursiveTypes.cpp
+        CalPassesInsertArenas.cpp
+        CalPassesInsertRCForState.cpp
+        CalPassesMaterializeRCOps.cpp
         BufferizableOpInterfaceImpl.cpp
 
         ADDITIONAL_HEADER_DIRS

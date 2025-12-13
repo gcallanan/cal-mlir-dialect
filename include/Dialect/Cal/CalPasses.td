@@ -236,4 +236,194 @@ def InferCalDynamicStateShapes: Pass<"infer-cal-dynamic-state-shapes"> {
 }
 // Removed: MergeSimpleCalActors pass (replaced by static scheduling approach)
 
+def DetectRecursiveTypes: Pass<"cal-detect-recursive-types"> {
+  let summary = "Detect and mark recursive algebraic types";
+  let description = [{
+    This pass analyzes `!cal.variant` and `!cal.product` types to detect
+    recursive type structures. A type is considered recursive if it directly
+    or transitively contains a reference to itself in any of its fields.
+
+    Examples of recursive types:
+    - List: `!cal.variant<"List", [("Cons", [i32, !cal.variant<"List", ...>]), ("Nil", [])]>`
+    - Tree: `!cal.variant<"Tree", [("Node", [i32, !cal.variant<"Tree">, !cal.variant<"Tree">]), ("Leaf", [i32])]>`
+    - Mutual recursion: Type A contains Type B which contains Type A
+
+    The pass performs the following:
+    1. Collects all `!cal.variant` and `!cal.product` types used in the module
+    2. Builds a type dependency graph
+    3. Detects cycles using Tarjan's strongly connected components algorithm
+    4. Marks operations that create or use recursive types with attributes
+
+    The analysis results are used by subsequent passes (`cal-insert-arenas`,
+    `cal-insert-rc-for-state`) to determine which types need boxing/heap
+    allocation versus inline storage.
+
+    Output attributes added to operations:
+    - `cal.recursive_type` on `cal.variant.create` for recursive types
+    - `cal.recursive_fields = [indices...]` marking which variant fields are recursive
+
+    Example transformation:
+      Input:
+        %list = cal.variant.create "Cons"(%head, %tail)
+                : !cal.variant<"List", ...>
+
+      Output:
+        %list = cal.variant.create "Cons"(%head, %tail) {cal.recursive_type}
+                : !cal.variant<"List", ...>
+  }];
+  let constructor = "mlir::cal::detectRecursiveTypes()";
+  let dependentDialects = [
+    "cal::CalDialect"
+  ];
+}
+
+def InsertArenas: Pass<"cal-insert-arenas"> {
+  let summary = "Insert arena allocation/deallocation for action-scoped memory";
+  let description = [{
+    This pass inserts arena creation and destruction operations around action
+    bodies to manage memory for recursive algebraic types. The pass transforms
+    actions marked with recursive type usage (from `cal-detect-recursive-types`)
+    by:
+
+    1. Creating an arena at the start of each `cal.execution_body`
+    2. Destroying the arena before `cal.action_done`
+    3. Wrapping variant/product creation ops that use recursive types to
+       allocate from the arena
+    4. Inserting `cal.token.wrap` before `fifo.push` and `cal.token.unwrap`
+       after `fifo.pop` for recursive types crossing FIFO boundaries
+
+    The arena provides efficient bump-pointer allocation for temporary values
+    within an action. All allocations are freed together when the action
+    completes, avoiding individual deallocation overhead.
+
+    Example transformation:
+      Input:
+        cal.execution_body {
+          %list = cal.variant.create "Cons"(%head, %tail) {cal.recursive_type}
+                  : !cal.variant<"List", ...>
+          fifo.push(%out, %list) {cal.recursive_token}
+          cal.action_done %true : i1
+        }
+
+      Output:
+        cal.execution_body {
+          %arena = cal.arena.create : !cal.arena
+          %list = cal.variant.create "Cons"(%head, %tail) in %arena
+                  : !cal.variant<"List", ...>
+          %token = cal.token.wrap %list from %arena
+                   : !cal.variant<"List", ...> -> !cal.token<!cal.variant<"List", ...>>
+          fifo.push(%out, %token)
+          cal.arena.destroy %arena : !cal.arena
+          cal.action_done %true : i1
+        }
+
+    Prerequisites:
+    - Run `cal-detect-recursive-types` first to mark recursive operations
+    - Run after `convert-cal-actions-to-execution-bodies`
+  }];
+  let constructor = "mlir::cal::insertArenas()";
+  let dependentDialects = [
+    "cal::CalDialect",
+    "fifo::FifoDialect"
+  ];
+}
+
+def InsertRCForState: Pass<"cal-insert-rc-for-state"> {
+  let summary = "Insert reference counting for state variables with recursive types";
+  let description = [{
+    This pass transforms state variable operations (`cal.create_state_var`,
+    `cal.get`, `cal.set`) to use reference counting when the state contains
+    recursive algebraic types. Reference counting ensures proper memory
+    management for values that persist across action firings.
+
+    The pass performs the following transformations:
+
+    1. For `cal.create_state_var` of a recursive type:
+       - Wraps the state type in `!cal.rc<T>` at the conceptual level
+       - The actual storage remains a state_ref, but operations are modified
+       - Marks the state variable with `cal.rc_managed` attribute
+
+    2. For `cal.set` operations on RC-managed state:
+       - Insert `cal.rc.release` on the old value before storing
+       - Insert `cal.rc.retain` on the new value (or `cal.rc.alloc` if from arena)
+       - Marks the operation with `cal.rc_updated` attribute
+
+    3. For `cal.get` operations on RC-managed state:
+       - The returned value is a borrow (no retain needed for read-only use)
+       - If the value escapes (e.g., stored elsewhere), retain is needed
+       - Marks with `cal.rc_borrowed` attribute
+
+    Example transformation:
+      Input:
+        %state = cal.create_state_var<T> {cal.recursive_type} : !cal.state_ref<T>
+        %old = cal.get(%state: !cal.state_ref<T>) : T
+        cal.set(%state: !cal.state_ref<T>, %new: T)
+
+      Output:
+        %state = cal.create_state_var<T> {cal.rc_managed} : !cal.state_ref<T>
+        %old = cal.get(%state: !cal.state_ref<T>) {cal.rc_borrowed} : T
+        cal.rc.release %old_prev : T  // release previous value
+        %retained = cal.rc.retain %new : T  // retain new value (if from another RC)
+        // or: %retained = cal.rc.alloc %new : T -> !cal.rc<T>  // alloc if from arena
+        cal.set(%state: !cal.state_ref<T>, %retained: T) {cal.rc_updated}
+
+    The pass uses dataflow analysis to determine if values need retain on get
+    (escape analysis) and whether the new value in set comes from an arena
+    (needs alloc) or another RC container (needs retain).
+
+    Prerequisites:
+    - Run `cal-detect-recursive-types` first to mark recursive types
+    - Run `cal-insert-arenas` first if arena allocation is used
+  }];
+  let constructor = "mlir::cal::insertRCForState()";
+  let dependentDialects = [
+    "cal::CalDialect"
+  ];
+}
+
+def MaterializeRCOps: Pass<"cal-materialize-rc-ops"> {
+  let summary = "Materialize RC operations from attributes set by insert-rc-for-state";
+  let description = [{
+    This pass transforms state variable operations that are marked with RC
+    attributes (by `cal-insert-rc-for-state`) into actual `cal.rc.*` operations.
+    
+    The pass converts the following patterns:
+    
+    1. `cal.set` with `cal.rc_release_old`:
+       - Insert `cal.get` to load the old RC value
+       - Insert `cal.rc.release` on the old value
+       
+    2. `cal.set` with `cal.rc_needs_alloc`:
+       - New value comes from arena-allocated memory
+       - Insert `cal.rc.alloc` to deep-copy into RC container
+       
+    3. `cal.set` with `cal.rc_needs_retain`:
+       - New value is borrowed from another RC
+       - Insert `cal.rc.retain` to increment reference count
+       
+    4. `cal.get` with `cal.rc_borrowed`:
+       - Currently no transformation (borrow is zero-cost)
+       - Future: escape analysis may require retain
+    
+    Example transformation:
+      Input:
+        cal.set(%state: !cal.state_ref<T>, %new: T) {cal.rc_release_old, cal.rc_needs_alloc}
+      
+      Output:
+        %old = cal.get(%state: !cal.state_ref<!cal.rc<T>>) : !cal.rc<T>
+        cal.rc.release %old : !cal.rc<T>
+        %rc_new = cal.rc.alloc %new : T -> !cal.rc<T>
+        cal.set(%state: !cal.state_ref<!cal.rc<T>>, %rc_new: !cal.rc<T>)
+    
+    This pass must run:
+    - AFTER `cal-detect-recursive-types` (marks recursive types)
+    - AFTER `cal-insert-rc-for-state` (marks state ops with RC attributes)
+    - BEFORE `lower-cal-state-to-memref` (which would lose RC semantics)
+  }];
+  let constructor = "mlir::cal::materializeRCOps()";
+  let dependentDialects = [
+    "cal::CalDialect"
+  ];
+}
+
 #endif // CAL_PASS

@@ -212,4 +212,86 @@ def DecomposeFifoTuples: Pass<"decompose-fifo-tuples"> {
   ];
 }
 
+def ConvertCalMemoryToLLVM: Pass<"convert-cal-memory-to-llvm", "ModuleOp"> {
+  let summary = "Lower CAL memory management ops (arena, RC, token) to LLVM dialect";
+  let description = [{
+    This pass converts CAL dialect memory management operations to the LLVM dialect
+    using inline code generation. No external C runtime is required.
+
+    **Arena Operations:**
+    - `cal.arena.create`: Allocates a backing buffer via `llvm.call @malloc` and
+      initializes a bump-pointer structure (base ptr, current offset, capacity).
+    - `cal.arena.alloc`: Bumps the offset pointer and returns the old position.
+    - `cal.arena.destroy`: Calls `llvm.call @free` on the backing buffer.
+
+    The arena is represented as a struct: `{ ptr base, i64 offset, i64 capacity }`.
+
+    **Reference Counting Operations:**
+    - `cal.rc.alloc`: Allocates memory for refcount (i32) + payload, initializes count to 1.
+    - `cal.rc.retain`: Atomic increment of refcount.
+    - `cal.rc.release`: Atomic decrement; if count reaches 0, frees memory.
+    - `cal.rc.load`: Loads payload from RC container.
+    - `cal.rc.store`: Stores new payload, releasing old value if recursive.
+
+    **Token Operations:**
+    - `cal.token.wrap`: Allocates heap memory and deep-copies the value.
+    - `cal.token.unwrap`: Returns the pointer (ownership transfer, no copy needed).
+    - `cal.token.consume`: Frees the token memory without unwrapping.
+
+    **Boxing Operations:**
+    - `cal.box.in_arena`: Allocates from arena and stores value.
+    - `cal.unbox`: Loads value from boxed pointer.
+    - `cal.deep_copy`: Generates per-type copy code for recursive structures.
+
+    Prerequisites:
+    - Run `cal-detect-recursive-types`, `cal-insert-arenas`, `cal-insert-rc-for-state` first.
+    - Standard LLVM lowering passes should follow this pass.
+  }];
+  let dependentDialects = [
+    "LLVM::LLVMDialect",
+    "cal::CalDialect"
+  ];
+}
+
+def ConvertCalVariantToLLVM: Pass<"convert-cal-variant-to-llvm", "ModuleOp"> {
+  let summary = "Lower CAL variant and product type operations to LLVM dialect";
+  let description = [{
+    This pass converts CAL dialect algebraic type operations (variant and product)
+    to the LLVM dialect using inline struct representations.
+
+    **Type Conversions:**
+    - `!cal.variant<"Name", [...]>` → `!llvm.struct<(i32, array<N x i8>)>` where
+      the i32 is the tag and the array holds the maximum payload size.
+    - `!cal.product<"Name", [...]>` → `!llvm.struct<(field1_type, field2_type, ...)>`
+
+    **Variant Operations:**
+    - `cal.variant.create`: Store tag and fields into the variant struct.
+    - `cal.variant.get_tag`: Extract the i32 tag field.
+    - `cal.variant.get_field`: Cast payload pointer and load the field.
+
+    **Product Operations:**
+    - `cal.product.create`: Build struct from fields using insertvalue.
+    - `cal.product.get_field`: Extract field using extractvalue.
+
+    **Memory Layout:**
+    Variants use a tagged union layout:
+    ```
+    struct Variant {
+      i32 tag;           // 0, 1, 2, ... for each variant case
+      i8[max_size] payload;  // union of all variant payloads
+    }
+    ```
+    Products use a simple struct layout with fields in declaration order.
+
+    Prerequisites:
+    - This pass should run before `convert-cal-memory-to-llvm` if recursive types
+      are used, as it handles the base type conversions.
+  }];
+  let constructor = "mlir::createConvertCalVariantToLLVMPass()";
+  let dependentDialects = [
+    "LLVM::LLVMDialect",
+    "cal::CalDialect"
+  ];
+}
+
 #endif // CAL_MLIR_CONVERSION_PASSES
