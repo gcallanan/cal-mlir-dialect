@@ -59,6 +59,8 @@ This document describes the current state and planned implementation of algebrai
 **Remaining Work:**
 
 - **Frontend Codegen** — Emit `cal.variant.*` and `cal.product.*` ops from CAL frontend
+- **Frontend: Mutual Recursion Annotation** — For mutually recursive types (A↔B), frontend must populate
+  `cal.pointer_field_types` attribute when boxing. Currently, detection pass only infers self-recursion.
 - **Recursive Deep Copy** — Handle truly recursive types by following boxed pointers in `cal.deep_copy`
 - **cal.variant.match Lowering** — Lower high-level match operation to scf.if chains
 
@@ -1364,6 +1366,21 @@ The detection pass analyzes embedded algebraic types. If a type field uses `!llv
 2. A boxing transformation converts these to `!llvm.ptr` and records the mapping
 3. Current implementation supports self-recursion fallback for pre-boxed IR
 
+**Frontend Requirement for Mutual Recursion:**
+For truly mutually recursive types (e.g., Forest↔Tree where Forest contains Tree and Tree contains Forest),
+the frontend must populate `cal.pointer_field_types` during code generation when boxing recursive fields:
+```mlir
+module attributes {
+  cal.pointer_field_types = {
+    "Forest::Trees::0" = !cal.variant<"Tree", ...>,   // First ptr in Trees points to Tree
+    "Forest::Trees::1" = !cal.variant<"Forest", ...>, // Second ptr points to Forest (self)
+    "Tree::Node::1" = !cal.variant<"Forest", ...>     // Tree's children field points to Forest
+  }
+} { ... }
+```
+The detection pass cannot automatically determine this mapping because `!llvm.ptr` is opaque.
+Self-recursive types (List→List) work automatically via the self-recursion heuristic.
+
 #### Phase 6: Runtime Verification ✅ Complete
 
 All RC operations verified at runtime using `lli` (LLVM interpreter):
@@ -1387,6 +1404,7 @@ cd build
 - [ ] **Nested RC fields** — Direct `!cal.rc<U>` fields (not just `!llvm.ptr`)
 - [ ] **Memory safety verification** — Valgrind/ASan testing
 - [x] **Boxing transformation passes** — `cal-detect-recursive-types`, `cal-insert-arenas`, `cal-insert-rc-for-state`, `cal-materialize-rc-ops`
+- [ ] **Frontend: Mutual recursion annotation** — CAL frontend should emit `cal.pointer_field_types` when boxing mutually recursive types (Forest↔Tree). Self-recursive types work automatically.
 
 ### Boxing Transformation Pass Pipeline
 
