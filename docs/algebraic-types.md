@@ -2,6 +2,70 @@
 
 This document describes the current state and planned implementation of algebraic types (sum types and product types) in the CAL language, including the proposed `cal.variant` MLIR dialect extension.
 
+## Quick Status: What's Next?
+
+**Completed (end-to-end algebraic type support):**
+
+1. ✅ **Variant/Product → LLVM Lowering** — Lower `!cal.variant` and `!cal.product` to LLVM structs
+   - Implemented memory layout: `{ i32 tag, [max_payload_size x i8] payload }` for variants
+   - Lowered `cal.variant.create`, `cal.variant.get_tag`, `cal.variant.get_field`
+   - Lowered `cal.product.create`, `cal.product.get_field`
+   - Location: `lib/Conversion/CalVariantToLLVM/`
+
+2. ✅ **Type-aware Size Calculation** — Fixed hardcoded sizes in memory ops
+   - `cal.rc.alloc`: computes actual `sizeof(T)` using DataLayout
+   - `cal.token.wrap`: computes actual `sizeof(T)` 
+   - `cal.box.in_arena`: computes actual `sizeof(T)` and proper alignment
+   - Location: `lib/Conversion/CalMemoryToLLVM/CalMemoryToLLVM.cpp`
+
+3. ✅ **cal.deep_copy Implementation** — Implemented arena-based deep copy
+   - Allocates space in target arena and copies value
+   - Handles variant and product types via LLVM struct copy
+   - Location: `lib/Conversion/CalMemoryToLLVM/CalMemoryToLLVM.cpp`
+
+4. ✅ **Pipeline Integration** — CalVariantToLLVM and CalMemoryToLLVM integrated
+   - Both passes added to `--lower-cal-to-llvm` pipeline
+   - CalVariantToLLVM runs before CalMemoryToLLVM
+   - Location: `lib/Conversion/CalLoweringPipelines/CalLoweringPipelines.cpp`
+
+5. ✅ **Arena Bounds Checking** — Prevent overflow in arena allocations
+   - `cal.arena.alloc`, `cal.box.in_arena`, `cal.deep_copy` now check capacity
+   - Calls `abort()` if allocation would exceed arena capacity
+   - Location: `lib/Conversion/CalMemoryToLLVM/CalMemoryToLLVM.cpp`
+
+6. ✅ **RC Release for Recursive Types** — Complete with runtime verification
+   - Generates type-specific `__cal_release_<TypeName>` functions
+   - Handles self-recursive types (e.g., linked lists, binary trees)
+   - Mutual recursion infrastructure in place via `cal.pointer_field_types` module attribute
+   - Runtime verified: linked list chains correctly freed via lli
+   - Location: `lib/Conversion/CalMemoryToLLVM/CalMemoryToLLVM.cpp`
+
+7. ✅ **Boxing Transformation Passes** — Analysis and transformation passes implemented
+   - `cal-detect-recursive-types`: Marks variant/product types with `cal.recursive_type` attribute
+   - `cal-insert-arenas`: Inserts `cal.arena.create`/`cal.arena.destroy` around execution bodies
+   - `cal-insert-rc-for-state`: Marks state variable ops with RC attributes (`cal.rc_managed`, etc.)
+   - `cal-materialize-rc-ops`: Transforms marked ops into actual RC operations:
+     - State type: `!cal.state_ref<T>` → `!cal.state_ref<!cal.rc<T>>`
+     - Inserts `cal.rc.load` after `cal.get`
+     - Inserts `cal.rc.release` + `cal.rc.alloc` around `cal.set`
+   - Location: `lib/Dialect/Cal/CalPassesDetect*.cpp`, `CalPassesInsert*.cpp`, `CalPassesMaterialize*.cpp`
+
+8. ✅ **Mutual Recursion Support** — Infrastructure for mutually recursive types
+   - `cal-detect-recursive-types` populates `cal.pointer_field_types` module attribute
+   - `CalMemoryToLLVM` uses attribute to dispatch correct release functions per field
+   - Self-recursion fallback when annotation not present
+   - Location: `lib/Dialect/Cal/CalPassesDetectRecursiveTypes.cpp`, `lib/Conversion/CalMemoryToLLVM/`
+
+**Remaining Work:**
+
+- **Frontend Codegen** — Emit `cal.variant.*` and `cal.product.*` ops from CAL frontend
+- **Recursive Deep Copy** — Handle truly recursive types by following boxed pointers in `cal.deep_copy`
+- **cal.variant.match Lowering** — Lower high-level match operation to scf.if chains
+
+**See Section 6 for full remaining work breakdown.**
+
+---
+
 ## Current Implementation Status
 
 | Area | Status | Details |
@@ -9,6 +73,7 @@ This document describes the current state and planned implementation of algebrai
 | **Grammar/AST** | ✅ Complete | `AlgebraicTypeDecl`, `SumTypeDeclBody`, `ProductTypeDeclBody`, `VariantDecl`, `ExpressionConstructor`, `PatternDeconstruction` |
 | **Type Checking** | ⚠️ Partial | Validators exist for arity, exhaustiveness, duplicate cases; missing Typir inference rule for `ExpressionConstructor` |
 | **Code Generation** | ❌ Not Implemented | `lower-cal.ts` has TODO placeholders for all algebraic type expressions |
+| **Boxing Passes** | ✅ Complete | `cal-detect-recursive-types`, `cal-insert-arenas`, `cal-insert-rc-for-state`, `cal-materialize-rc-ops` |
 
 ---
 
@@ -427,12 +492,22 @@ llvm.store %value, %payload_ptr
 
 The current Phase 4 design is **too simplistic** and does not handle important cases:
 
-#### 4.1 Simple (Non-Recursive) Types — Current Design Works
+#### 4.1 Simple (Non-Recursive) Types — ✅ Complete
 
-- [ ] Implement `cal-variant-to-llvm` pass for fixed-size variants
-- [ ] Define inline memory layout for variant types (tag + payload union)
-- [ ] Handle alignment and padding correctly
-- [ ] Test with various payload sizes
+- [x] Implement `cal-variant-to-llvm` pass for fixed-size variants
+- [x] Define inline memory layout for variant types (tag + payload union)
+- [x] Handle alignment and padding correctly
+- [x] Test with various payload sizes
+
+**Implementation:** The `CalVariantToLLVM` pass in `lib/Conversion/CalVariantToLLVM/` implements:
+- `VariantCreateOpLowering` - Creates LLVM struct with tag + payload
+- `VariantGetTagOpLowering` - Extracts tag from struct
+- `VariantGetFieldOpLowering` - Extracts field from payload via GEP+bitcast
+- `ProductCreateOpLowering` - Creates LLVM struct with fields
+- `ProductGetFieldOpLowering` - Extracts field from product struct
+
+**Note:** `cal.variant.match` lowering is not yet implemented (high-level pattern matching should be 
+lowered to `scf.if` chains before this pass runs).
 
 #### 4.2 Recursive Types — **Major Design Decision Required**
 
@@ -927,7 +1002,7 @@ Lowers variant types and operations to LLVM:
 !cal.variant<"List", [("Cons", [i32, !cal.variant<"List", ...>]), ("Nil", [])]>
   → !llvm.struct<(i32, i32, ptr)>  // tag, head, tail_ptr
 
-// Arena → opaque pointer with runtime support
+// Arena → opaque pointer (managed inline)
 !cal.arena → !llvm.ptr
 
 // RC → struct with refcount
@@ -939,28 +1014,42 @@ Lowers variant types and operations to LLVM:
 
 ---
 
-## 4.6 Runtime Support Functions
+## 4.6 Inline LLVM Code Generation
 
-The following runtime functions must be provided (in C or generated LLVM):
+All memory management operations are generated as **inline LLVM code** - no external C runtime is required. This approach provides:
 
-```c
-// Arena management
-void* cal_arena_create(size_t initial_size);
-void  cal_arena_destroy(void* arena);
-void* cal_arena_alloc(void* arena, size_t size, size_t align);
+1. **Better optimization opportunities** - LLVM can inline and optimize memory operations
+2. **No external dependencies** - Self-contained executables without runtime library linking
+3. **Type-specific code generation** - Release functions are generated per-type for recursive types
 
-// Reference counting
-void* cal_rc_alloc(size_t size);
-void  cal_rc_retain(void* ptr);
-void  cal_rc_release(void* ptr, void (*destructor)(void*));
+### Generated Inline Operations
 
-// Token management  
-void* cal_token_create(size_t size);
-void  cal_token_destroy(void* token);
+| CAL Operation | Generated LLVM |
+|--------------|----------------|
+| `cal.arena.create` | `llvm.call @malloc` + initialize header struct |
+| `cal.arena.destroy` | `llvm.call @free` |
+| `cal.arena.alloc` | Bump pointer arithmetic + alignment |
+| `cal.rc.alloc` | `llvm.call @malloc` + initialize refcount to 1 |
+| `cal.rc.retain` | `llvm.atomicrmw add` on refcount |
+| `cal.rc.release` | `llvm.atomicrmw sub` + conditional `llvm.call @free` |
+| `cal.token.wrap` | Deep copy into token buffer |
+| `cal.token.unwrap` | Transfer ownership to arena |
 
-// Deep copy support (generated per-type)
-void* cal_variant_deep_copy_List(void* src, void* dst_arena);
+### Type-Specific Release Functions
+
+For recursive types (e.g., `List`, `Tree`), the `CalMemoryToLLVM` pass generates specialized release functions:
+
+```llvm
+// Generated for !cal.variant<"List", [("Cons", [i32, !llvm.ptr]), ("Nil", [])]>
+llvm.func private @__cal_release_List(%ptr: !llvm.ptr) {
+  // 1. Load tag to determine variant
+  // 2. If Cons: recursively release the tail pointer
+  // 3. Decrement refcount atomically
+  // 4. If refcount reaches 0: call @free
+}
 ```
+
+These functions are generated on-demand when the pass encounters `cal.rc.release` operations on recursive types, identified by the `cal.recursive_type` attribute.
 
 ---
 
@@ -980,52 +1069,382 @@ void* cal_variant_deep_copy_List(void* src, void* dst_arena);
 - [x] Add operation verifiers in CalOps.cpp
 - [x] Add tests for new types and operations (`test/Dialect/Cal/memory-management-ops.mlir`)
 
-### Phase 4.2: Recursive Type Detection
+### Phase 4.2: Recursive Type Detection ✅
 
-- [ ] Implement `cal-detect-recursive-types` analysis pass
-- [ ] Add recursive field marking attributes
-- [ ] Test with List, Tree, and other recursive types
+- [x] Implement `cal-detect-recursive-types` analysis pass (`CalPassesDetectRecursiveTypes.cpp`)
+- [x] Add recursive field marking attributes (`cal.recursive_type`, `cal.recursive_fields`, `cal.recursive_token`)
+- [x] Test with non-recursive types (`test/Dialect/Cal/detect-recursive-types.mlir`)
+- [x] Pass registered in CalPasses.td and CalPasses.h
 
-### Phase 4.3: Arena Insertion
+**Note on recursive type representation:**
+MLIR types are structural, so truly self-referential types require either:
+1. Type aliases (not currently supported)
+2. Frontend-side unrolling to a fixed depth
+3. Opaque pointer indirection at recursive fields
 
-- [ ] Implement `cal-insert-arenas` transformation pass
-- [ ] Modify `cal.variant.create` to accept arena operand
-- [ ] Add token wrap/unwrap around FIFO operations
-- [ ] Test arena scoping correctness
+The pass detects recursion by analyzing same-named types appearing in field positions.
+When the frontend generates code, recursive types will be represented with boxing
+(e.g., `!llvm.ptr` for recursive fields), and the detection pass will identify
+which operations need special memory management.
 
-### Phase 4.4: State Variable RC
+### Phase 4.3: Arena Insertion ✅
 
-- [ ] Implement `cal-insert-rc-for-state` transformation pass
-- [ ] Handle state variable initialization
-- [ ] Handle state variable updates with proper retain/release
-- [ ] Test reference counting correctness
+- [x] Implement `cal-insert-arenas` transformation pass (`CalPassesInsertArenas.cpp`)
+- [x] Insert `cal.arena.create` at execution_body entry
+- [x] Insert `cal.arena.destroy` before `cal.action_done` terminators
+- [x] Mark recursive ops with `cal.arena_allocated` attribute
+- [x] Mark FIFO ops with `cal.token_wrapped`/`cal.needs_token_unwrap` attributes
+- [x] Test arena scoping correctness (`test/Dialect/Cal/insert-arenas.mlir`)
+- [x] Pass registered in CalPasses.td and CalPasses.h
 
-### Phase 4.5: LLVM Lowering
+**Implementation notes:**
+- The pass checks for `cal.recursive_type` or `cal.recursive_token` attributes set by the
+  detection pass (Phase 4.2)
+- Arena ops are only inserted when needed (execution bodies with recursive type operations)
+- FIFO operations transferring recursive types are marked for later token transformation
+- Actual token wrapping/unwrapping is deferred to LLVM lowering (Phase 4.5)
 
-- [ ] Implement `cal-variant-to-llvm` conversion pass
-- [ ] Generate memory layouts for variants
-- [ ] Lower arena ops to runtime calls
-- [ ] Lower RC ops to inline refcount manipulation
-- [ ] Lower token ops to runtime calls
-- [ ] Generate per-type deep copy functions
+### Phase 4.4: State Variable RC ✅
 
-### Phase 4.6: Runtime Library
+- [x] Implement `cal-insert-rc-for-state` transformation pass (`CalPassesInsertRCForState.cpp`)
+- [x] Mark state variables with `cal.rc_managed` attribute
+- [x] Mark `cal.get` operations with `cal.rc_borrowed` attribute
+- [x] Mark `cal.set` operations with `cal.rc_updated`, `cal.rc_release_old` attributes
+- [x] Detect when `cal.set` needs `cal.rc_needs_alloc` (from arena) or `cal.rc_needs_retain` (from RC)
+- [x] Test reference counting correctness (`test/Dialect/Cal/insert-rc-for-state.mlir`)
+- [x] Pass registered in CalPasses.td and CalPasses.h
 
-- [ ] Implement arena allocator in C
-- [ ] Implement RC infrastructure in C
-- [ ] Implement token management in C
-- [ ] Link runtime with generated code
-- [ ] Test with valgrind/asan for memory safety
+**Implementation notes:**
+- The pass checks for `cal.recursive_type` attribute on `cal.create_state_var` ops
+- State variable operations are annotated for later LLVM lowering:
+  - `cal.get` values are borrows (no retain needed for read-only access)
+  - `cal.set` must release old value and retain/alloc new value
+  - Escape analysis determines if additional retains are needed
+- Actual RC operations (rc.alloc, rc.retain, rc.release) are inserted during LLVM lowering
+
+### Phase 4.5: LLVM Lowering (Inline Code Generation) ✅
+
+The LLVM lowering generates all memory management code inline, without requiring
+a separate C runtime library. This approach:
+- Avoids external dependencies
+- Enables better optimization (inlining, dead code elimination)
+- Simplifies deployment (single binary output)
+
+The `--convert-cal-memory-to-llvm` pass is implemented in
+`lib/Conversion/CalMemoryToLLVM/CalMemoryToLLVM.cpp` and handles:
+
+- [x] Arena implementation:
+  - `!cal.arena` converts to `!llvm.ptr` (pointer to arena struct in memory)
+  - Arena struct layout: `{ ptr base, i64 offset, i64 capacity }`
+  - **Important:** Arena is pointer-to-struct (not struct by value) to enable in-place offset updates
+  - `cal.arena.create`: malloc arena struct header (24 bytes) + malloc backing buffer (default 4KB)
+  - `cal.arena.alloc`: aligned bump-pointer allocation with **in-place offset update**
+  - `cal.arena.destroy`: free backing buffer + free arena struct
+- [x] RC implementation:
+  - `!cal.rc<T>` converts to `!llvm.ptr`
+  - Memory layout: `[i32 refcount | payload]` (payload at offset 4)
+  - `cal.rc.alloc`: malloc + init refcount to 1 + store payload
+  - `cal.rc.retain`: `llvm.atomicrmw add` (thread-safe)
+  - `cal.rc.release`: `llvm.atomicrmw sub` + conditional free when count reaches 0
+  - `cal.rc.load`: load from payload offset (4 bytes after refcount)
+  - `cal.rc.store`: store to payload offset
+- [x] Token implementation:
+  - `!cal.token<T>` converts to `!llvm.ptr`
+  - `cal.token.wrap`: malloc + store (deep copy for FIFO transfer)
+  - `cal.token.unwrap`: load + adopt ownership
+  - `cal.token.consume`: free without unwrapping
+- [x] Boxing operations:
+  - `cal.box.in_arena`: arena allocation with **in-place offset update** + store value
+  - `cal.unbox`: load from pointer
+  - `cal.deep_copy`: pass-through for now (TODO: recursive copy for nested types)
+
+**Usage:**
+```bash
+cal-opt --convert-cal-memory-to-llvm input.mlir
+```
+
+#### Type Conversions Summary
+
+| CAL Type | LLVM Type | Notes |
+|----------|-----------|-------|
+| `!cal.arena` | `!llvm.ptr` | Pointer to `{ptr, i64, i64}` struct in memory |
+| `!cal.rc<T>` | `!llvm.ptr` | Pointer to refcount+payload allocation |
+| `!cal.token<T>` | `!llvm.ptr` | Pointer to token payload |
 
 ### Phase 5: Testing & Documentation
 
-- [ ] Add MLIR output tests for algebraic types
-- [ ] Add end-to-end execution tests
+- [x] Add MLIR output tests for memory operations (`test/Conversion/CalMemoryToLLVM/cal-memory-to-llvm.mlir`)
+- [ ] Add MLIR output tests for variant/product type lowering
+- [ ] Add end-to-end execution tests for recursive types (List, Tree)
+- [ ] Test with valgrind/asan for memory safety
 - [ ] Document usage in CAL language guide
 
 ---
 
-## 6. Example: Full Pipeline
+## 6. Remaining Work Summary
+
+### Critical (Blocking End-to-End Use)
+
+| Item | Status | Description |
+|------|--------|-------------|
+| **Variant/Product → LLVM** | ✅ Complete | Lower `!cal.variant` and `!cal.product` types to LLVM struct layout |
+| **Type-aware Size Calculation** | ✅ Complete | Compute actual sizes in `rc.alloc`, `token.wrap`, `box.in_arena` based on payload types |
+| **cal.deep_copy Arena Copy** | ✅ Complete | Generate copy code into target arena (shallow copy for now) |
+| **cal.deep_copy Recursive** | ⚠️ Partial | Need recursive copy for deeply nested boxed fields in truly recursive types |
+
+### Important (Correctness/Safety)
+
+| Item | Status | Description |
+|------|--------|-------------|
+| **Arena Bounds Checking** | ✅ Complete | `arena.alloc`, `box.in_arena`, `deep_copy` now check capacity and call `abort()` on overflow |
+| **RC for Nested Types** | ✅ Complete | Generates type-specific release functions for recursive variant types with pointer fields |
+| **Pipeline Integration** | ✅ Complete | CalVariantToLLVM and CalMemoryToLLVM wired into `--lower-cal-to-llvm` pipeline |
+
+### Nice-to-Have (Optimization)
+
+| Item | Status | Description |
+|------|--------|-------------|
+| **Arena Growth** | ❌ Not Started | Automatically grow arena when capacity exceeded (instead of abort) |
+| **Token Zero-Copy** | ❌ Not Started | Optimize token unwrap to adopt memory instead of copy |
+| **Escape Analysis** | ❌ Not Started | Avoid RC retain when value doesn't escape action scope |
+
+### Completed ✅
+
+| Phase | Description |
+|-------|-------------|
+| 4.1 Types | `!cal.arena`, `!cal.rc<T>`, `!cal.token<T>`, `!cal.variant`, `!cal.product` in CalTypes.td |
+| 4.2 Detection | `--cal-detect-recursive-types` pass marks recursive types |
+| 4.3 Arena Insertion | `--cal-insert-arenas` pass adds arena create/destroy |
+| 4.4 RC Annotation | `--cal-insert-rc-for-state` pass marks state variable RC needs |
+| 4.5 Memory Lowering | `--convert-cal-memory-to-llvm` pass lowers arena/RC/token/boxing ops |
+| 4.6 Variant Lowering | `--convert-cal-variant-to-llvm` pass lowers variant/product types and ops |
+| 4.7 Integration Tests | End-to-end test in `test/Conversion/CalLoweringPipelines/algebraic-types-integration.mlir` |
+| 4.8 Bounds Checking | Arena allocation ops now check capacity and abort on overflow |
+
+---
+
+## 6.1 Implementation Plan: Recursive RC Release
+
+This section documents the implementation plan for full recursive reference counting
+release of nested types (e.g., `List<T>`, `Tree<T>`). The current framework detects
+nested types but does not recursively release RC fields within variants.
+
+### Approach: Generate Per-Type Release Functions
+
+The recommended approach generates a release function for each RC element type that
+contains nested RC fields. These functions:
+
+1. Atomically decrement the reference count
+2. If count reaches zero:
+   - Switch on variant tag (for variant types)
+   - For each case, GEP to RC field(s) and recursively call release
+   - Free the RC container memory
+
+#### Example: Generated Release Function for `List<i32>`
+
+```
+// Type: !cal.variant<"List", [("Cons", [i32, !llvm.ptr]), ("Nil", [])]>
+// The ptr in Cons is a boxed recursive reference to another List
+
+llvm.func @__cal_release_List_i32(%rc_ptr: !llvm.ptr) {
+  // 1. Atomic decrement refcount
+  %refcount_ptr = llvm.getelementptr %rc_ptr[0, 0] : ...
+  %old_count = llvm.atomicrmw sub %refcount_ptr, 1 : i32
+  %c1 = llvm.mlir.constant(1 : i32) : i32
+  %should_free = llvm.icmp "eq" %old_count, %c1 : i32
+  llvm.cond_br %should_free, ^release, ^done
+
+^release:
+  // 2. Load payload (the variant value)
+  %payload_ptr = llvm.getelementptr %rc_ptr[0, 1] : ...  // after refcount
+  %tag_ptr = llvm.getelementptr %payload_ptr[0, 0] : ...
+  %tag = llvm.load %tag_ptr : i32
+  
+  // 3. Switch on tag
+  llvm.switch %tag : i32, ^done [
+    0: ^cons,   // Cons case
+    1: ^nil     // Nil case
+  ]
+
+^cons:
+  // Cons has fields: [i32, !llvm.ptr (boxed tail)]
+  // Field 0 (i32) - no release needed
+  // Field 1 (ptr to tail) - recursive release
+  %fields_ptr = llvm.getelementptr %payload_ptr[0, 1] : ...
+  %tail_ptr_ptr = llvm.getelementptr %fields_ptr[1] : ...
+  %tail_ptr = llvm.load %tail_ptr_ptr : !llvm.ptr
+  
+  // Check for null (Nil case or uninitialized)
+  %null = llvm.mlir.zero : !llvm.ptr
+  %is_null = llvm.icmp "eq" %tail_ptr, %null : !llvm.ptr
+  llvm.cond_br %is_null, ^free, ^release_tail
+
+^release_tail:
+  // Recursive call to release the tail
+  llvm.call @__cal_release_List_i32(%tail_ptr) : (!llvm.ptr) -> ()
+  llvm.br ^free
+
+^nil:
+  // Nil has no fields - nothing to release
+  llvm.br ^free
+
+^free:
+  // 4. Free the RC container
+  llvm.call @free(%rc_ptr) : (!llvm.ptr) -> ()
+  llvm.br ^done
+
+^done:
+  llvm.return
+}
+```
+
+### Implementation Checklist
+
+#### Phase 1: Helper Infrastructure ✅ Complete
+
+- [x] **`needsCustomRelease(Type)`** — Check if a type requires a custom release function
+  - Returns true if type is variant/product containing:
+    - Boxed pointers (`!llvm.ptr`) to recursive types
+  - Implemented as static function checking for pointer fields recursively
+
+- [x] **`mangleReleaseFunctionName(Type)`** — Generate unique function names
+  - Format: `@__cal_release_<TypeName>`
+  - Examples: `!cal.variant<"List", ...>` → `@__cal_release_List`
+
+- [x] **`getOrInsertFree()`** — Get or declare `@free(ptr)` function in module
+
+#### Phase 2: Release Function Generation ✅ Complete
+
+- [x] **`getOrGenerateReleaseFunction(ModuleOp, Type, ...)`** — Create the release function
+  1. Check if function already exists (via symbol lookup)
+  2. Create function with signature `(!llvm.ptr) -> ()`
+  3. Generate atomic decrement and conditional branch
+  4. For variant types: generate switch on tag
+  5. For each variant case with pointer fields:
+     - GEP to field, load pointer
+     - Null check before recursive call
+     - Recursively call `@__cal_release_<TypeName>`
+  6. Generate final free and return
+
+- [x] **Handle Recursion** — Self-referential types work via recursive function calls
+  - The generated function calls itself for tail pointers
+
+#### Phase 3: Integration with RCReleaseOpLowering ✅ Complete
+
+- [x] **Modify `RCReleaseOpLowering::matchAndRewrite()`**
+  1. Get element type from `!cal.rc<T>`
+  2. Check `needsCustomRelease(T)` 
+  3. If true: call `getOrGenerateReleaseFunction()` then emit `llvm.call @__cal_release_...(ptr)`
+  4. If false: emit simple atomic decrement + conditional free (existing behavior)
+
+- [x] **Cache Generated Functions** — Symbol table lookup prevents duplicates
+
+#### Phase 4: Testing ✅ Complete
+
+- [x] **Unit test: Recursive type** — `!cal.rc<!cal.variant<"List", [("Cons", [i32, !llvm.ptr]), ("Nil", [])]>>`
+- [x] **Unit test: Simple variant** — `!cal.rc<!cal.variant<"Maybe", [("Some", [i32]), ("None", [])]>>` uses inline release
+- [x] **Unit test: Multiple recursive types** — Different types (List, Tree) generate separate release functions
+- [x] **Integration test** — Verified with existing `algebraic-types-integration.mlir`
+
+#### Phase 5: Mutual Recursion Infrastructure ✅ Complete
+
+- [x] **Pointee type lookup** — `getPointeeTypeForField()` function looks up `cal.pointer_field_types` module attribute
+- [x] **Per-field release dispatch** — Each pointer field can call a different release function based on pointee type
+- [x] **Self-recursion fallback** — When no annotation present, assumes pointer points to containing type
+- [x] **Module attribute population** — `cal-detect-recursive-types` pass now populates `cal.pointer_field_types`
+  - Detects recursive cycles via DFS on type dependency graph
+  - For each pointer field in a recursive type, records the pointee type
+  - Self-recursion: field points back to containing type
+  - Mutual recursion: field points to different type in the cycle
+
+**Note on mutual recursion detection:**
+The detection pass analyzes embedded algebraic types. If a type field uses `!llvm.ptr` directly
+(already boxed), the pass cannot infer what it points to. For full mutual recursion support:
+1. The CAL frontend should emit unboxed recursive type references
+2. A boxing transformation converts these to `!llvm.ptr` and records the mapping
+3. Current implementation supports self-recursion fallback for pre-boxed IR
+
+#### Phase 6: Runtime Verification ✅ Complete
+
+All RC operations verified at runtime using `lli` (LLVM interpreter):
+
+| Test | Exit Code | Description |
+|------|-----------|-------------|
+| Scalar RC | 42 | `cal.rc.alloc`/`load`/`release` with i32 |
+| Variant RC | 100 | `cal.rc.*` with `!cal.variant<"Maybe">` |
+| Nil release | 0 | Recursive release with Nil variant (no recursion) |
+| Cons(null) release | 42 | Single Cons with null tail |
+| Cons chain release | 100 | Two-element linked list with actual recursive release |
+
+Test commands:
+```bash
+cd build
+./bin/cal-opt --lower-cal-to-llvm test.mlir | ./bin/cal-translate --mlir-to-llvmir | lli
+```
+
+#### Future Enhancements (Not Yet Implemented)
+
+- [ ] **Nested RC fields** — Direct `!cal.rc<U>` fields (not just `!llvm.ptr`)
+- [ ] **Memory safety verification** — Valgrind/ASan testing
+- [x] **Boxing transformation passes** — `cal-detect-recursive-types`, `cal-insert-arenas`, `cal-insert-rc-for-state`, `cal-materialize-rc-ops`
+
+### Boxing Transformation Pass Pipeline
+
+The boxing passes transform high-level CAL code with recursive algebraic types into explicit memory management:
+
+```
+1. cal-detect-recursive-types
+   - Analyzes variant/product types for recursive fields
+   - Marks operations with `cal.recursive_type` attribute
+   - Identifies which variant fields need boxing
+
+2. cal-insert-arenas  
+   - Inserts cal.arena.create at start of cal.execution_body
+   - Inserts cal.arena.destroy before cal.action_done
+   - For execution bodies containing recursive type operations
+
+3. cal-insert-rc-for-state
+   - Marks state variables with `cal.rc_managed` attribute
+   - Marks cal.get operations with `cal.rc_borrowed`
+   - Marks cal.set operations with `cal.rc_release_old`, `cal.rc_needs_alloc`
+
+4. cal-materialize-rc-ops
+   - Transforms cal.create_state_var type from T to !cal.rc<T>
+   - Inserts cal.rc.load after cal.get to extract the actual value
+   - Inserts cal.rc.release (old) + cal.rc.alloc (new) around cal.set
+```
+
+**Example Pipeline:**
+```bash
+cal-opt input.mlir \
+  --cal-detect-recursive-types \
+  --cal-insert-arenas \
+  --cal-insert-rc-for-state \
+  --cal-materialize-rc-ops \
+  --lower-cal-to-llvm
+```
+
+### Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Generation Location** | On-demand in `RCReleaseOpLowering` | Avoids separate pass, functions generated as needed |
+| **Function Visibility** | `llvm.linkage<private>` | Internal implementation detail, enables inlining |
+| **Null Pointer Handling** | Check before recursive call | Boxed fields may be null for base cases |
+| **Atomic Operations** | `llvm.atomicrmw sub` | Thread-safe reference counting |
+| **Mutual Recursion** | Module attribute + on-demand generation | `cal.pointer_field_types` maps fields to pointee types |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/Conversion/CalMemoryToLLVM/CalMemoryToLLVM.cpp` | Added helper functions `needsCustomRelease`, `mangleReleaseFunctionName`, `getPointeeTypeForField`, `getOrGenerateReleaseFunction`; modified `RCReleaseOpLowering` |
+| `test/Conversion/CalMemoryToLLVM/cal-memory-to-llvm.mlir` | Added tests for recursive release (List, Tree types) and multiple recursive types |
+| `test/Conversion/CalLoweringPipelines/algebraic-types-integration.mlir` | Integration tests for variant/product with RC |
+
+---
+
+## 7. Example: Full Pipeline
 
 ### CAL Source
 
@@ -1095,7 +1514,7 @@ module {
 
 ---
 
-## 7. References
+## 8. References
 
 - [MLIR Dialect Definition](https://mlir.llvm.org/docs/DefiningDialects/)
 - [MLIR Type System](https://mlir.llvm.org/docs/DefiningDialects/AttributesAndTypes/)

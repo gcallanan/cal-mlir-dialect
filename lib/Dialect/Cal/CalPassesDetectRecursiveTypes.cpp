@@ -15,6 +15,7 @@
 #include "Dialect/Cal/CalPasses.h"
 #include "Dialect/Cal/CalTypes.h"
 #include "Dialect/Fifo/FifoOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "llvm/ADT/DenseMap.h"
@@ -217,6 +218,21 @@ private:
 
     auto &deps = dependencies[name];
     for (Type fieldType : fieldTypes) {
+      // Treat LLVM pointer fields as self-referential
+      // This heuristic assumes ptr fields in algebraic types point back to self
+      if (isa<LLVM::LLVMPointerType>(fieldType)) {
+        bool found = false;
+        for (const auto &existing : deps) {
+          if (existing == name) {
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+          deps.push_back(name.str());
+        continue;
+      }
+      
       SmallVector<Type> refs;
       collectReferencedAlgebraicTypes(fieldType, refs);
       for (Type ref : refs) {
@@ -279,8 +295,15 @@ private:
   }
 
   /// Check if a field type references a recursive type.
+  /// Also treats !llvm.ptr fields as potentially recursive (self-referential).
   bool isRecursiveField(Type containingType, Type fieldType) const {
     StringRef containingName = getAlgebraicTypeName(containingType);
+    
+    // Treat LLVM pointer fields as potentially self-recursive
+    // This is a heuristic - in pre-boxed IR, ptr fields often point back to self
+    if (isa<LLVM::LLVMPointerType>(fieldType)) {
+      return true;  // Assume self-recursive
+    }
     
     SmallVector<Type> refs;
     collectReferencedAlgebraicTypes(fieldType, refs);
@@ -297,6 +320,82 @@ private:
       }
     }
     return false;
+  }
+
+  /// Get the pointee type for a recursive field.
+  /// Returns the actual type that the pointer field points to.
+  Type getPointeeType(Type containingType, Type fieldType) const {
+    SmallVector<Type> refs;
+    collectReferencedAlgebraicTypes(fieldType, refs);
+    
+    for (Type ref : refs) {
+      StringRef refName = getAlgebraicTypeName(ref);
+      if (!refName.empty() && recursiveTypes.count(refName)) {
+        return ref;
+      }
+    }
+    // Fallback: self-reference
+    return containingType;
+  }
+
+public:
+  /// Build the pointer field types map for the module attribute.
+  /// Returns a map from "TypeName::VariantName::FieldIndex" to the pointee type.
+  llvm::StringMap<Type> buildPointerFieldTypesMap() const {
+    llvm::StringMap<Type> result;
+    
+    for (auto &[typeName, type] : typesByName) {
+      if (!recursiveTypes.count(typeName))
+        continue;
+      
+      if (auto variant = dyn_cast<VariantType>(type)) {
+        // Process each variant case
+        for (Attribute variantAttr : variant.getVariants()) {
+          auto variantDict = cast<DictionaryAttr>(variantAttr);
+          auto nameAttr = variantDict.getAs<StringAttr>("name");
+          if (!nameAttr)
+            continue;
+          StringRef variantCase = nameAttr.getValue();
+          
+          auto fields = variantDict.getAs<ArrayAttr>("fields");
+          if (!fields)
+            continue;
+          
+          unsigned fieldIdx = 0;
+          for (Attribute fieldAttr : fields) {
+            auto typeAttr = dyn_cast<TypeAttr>(fieldAttr);
+            if (typeAttr) {
+              Type fieldType = typeAttr.getValue();
+              if (isRecursiveField(type, fieldType)) {
+                Type pointeeType = getPointeeType(type, fieldType);
+                std::string key = typeName.str() + "::" + variantCase.str() + 
+                                  "::" + std::to_string(fieldIdx);
+                result[key] = pointeeType;
+              }
+            }
+            ++fieldIdx;
+          }
+        }
+      } else if (auto product = dyn_cast<ProductType>(type)) {
+        // Process each product field
+        unsigned fieldIdx = 0;
+        for (Attribute fieldAttr : product.getFields()) {
+          auto fieldDict = cast<DictionaryAttr>(fieldAttr);
+          auto typeAttr = fieldDict.getAs<TypeAttr>("type");
+          if (typeAttr) {
+            Type fieldType = typeAttr.getValue();
+            if (isRecursiveField(type, fieldType)) {
+              Type pointeeType = getPointeeType(type, fieldType);
+              std::string key = typeName.str() + "::" + std::to_string(fieldIdx);
+              result[key] = pointeeType;
+            }
+          }
+          ++fieldIdx;
+        }
+      }
+    }
+    
+    return result;
   }
 
   /// Map from type name to the actual Type.
@@ -402,6 +501,19 @@ public:
         }
       }
     });
+
+    // Populate module-level pointer field types map for mutual recursion support
+    auto pointerFieldTypes = detector.buildPointerFieldTypesMap();
+    if (!pointerFieldTypes.empty()) {
+      SmallVector<NamedAttribute> attrs;
+      for (auto &[key, pointeeType] : pointerFieldTypes) {
+        attrs.push_back(NamedAttribute(
+            StringAttr::get(module->getContext(), key),
+            TypeAttr::get(pointeeType)));
+      }
+      module->setAttr("cal.pointer_field_types",
+                      DictionaryAttr::get(module->getContext(), attrs));
+    }
   }
 };
 
