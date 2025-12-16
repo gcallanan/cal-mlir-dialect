@@ -1,25 +1,24 @@
 // RUN: cal-opt %s --canonicalize  --convert-cal-to-func-with-static-schedule="print-fsm-for-testing" | FileCheck %s
 
-// CHECK: ScheduleGraph for actor: data_dependant. Type: Dynamic
+// CHECK: FSM for actor: data_dependant. Type: Dynamic
 cal.actor @data_dependant()
     ports_in(%in0: !fifo.output_port<i32>, %in1: !fifo.output_port<i32>)
     ports_out(%out0: !fifo.input_port<i32>)
 {
-    cal.action {
+    cal.action "act1"{
         %token = fifo.pop(%in0: !fifo.output_port<i32>) : i32
         fifo.push(%out0: !fifo.input_port<i32>, %token: i32)
     }
 
-    cal.action{
+    cal.action "act2"{
         %token = fifo.pop(%in1: !fifo.output_port<i32>) : i32
         fifo.push(%out0: !fifo.input_port<i32>, %token: i32)
     }
 }
 
-// CHECK: ScheduleGraph for actor: single_action. Type: SingleAction
+// CHECK: FSM for actor: single_action. Type: SingleAction
 // CHECK-NEXT:   Node 0: receive
-// CHECK-NEXT:     -> Next: Node 0 (WrapAround)
-
+// CHECK-NEXT:     -> Next: Node 0
 cal.actor @single_action ()
 	ports_in(%In: !fifo.output_port<i16>)
 {
@@ -32,25 +31,26 @@ cal.actor @single_action ()
 	}
 }
 
-// CHECK: ScheduleGraph for actor: dynamic_fsm. Type: StateMachineSchedule
-// CHECK-NEXT:   Node 0: many
-// CHECK-NEXT:     -> Next: Node 1 (Next)
-// CHECK-NEXT:   Node 1: many
-// CHECK-NEXT:     -> Next: Node 2 (Next)
-// CHECK-NEXT:   Node 2: many
-// CHECK-NEXT:     -> Next: Node 3 (Next)
-// CHECK-NEXT:   Node 3: many
-// CHECK-NEXT:     -> Next: Node 4 (Next)
-// CHECK-NEXT:   Node 4: many
-// CHECK-NEXT:     -> Next: Node 5 (Next)
-// CHECK-NEXT:   Node 5: many
-// CHECK-NEXT:     -> Next: Node 6 (Next)
-// CHECK-NEXT:   Node 6: many
-// CHECK-NEXT:     -> Next: Node 7 (Next)
-// CHECK-NEXT:   Node 7: many
-// CHECK-NEXT:     -> Next: Node 8 (Next)
-// CHECK-NEXT:   Node 8: once
-// CHECK-NEXT:     -> Next: Node 0 (WrapAround)
+//CHECK: FSM for actor: dynamic_fsm. Type: FSM (SimpleLoop)
+//CHECK-NEXT:   Node 0: many
+//CHECK-NEXT:     -> Next: Node 1
+//CHECK-NEXT:   Node 1: many
+//CHECK-NEXT:     -> Next: Node 2
+//CHECK-NEXT:   Node 2: many
+//CHECK-NEXT:     -> Next: Node 3
+//CHECK-NEXT:   Node 3: many
+//CHECK-NEXT:     -> Next: Node 4
+//CHECK-NEXT:   Node 4: many
+//CHECK-NEXT:     -> Next: Node 5
+//CHECK-NEXT:   Node 5: many
+//CHECK-NEXT:     -> Next: Node 6
+//CHECK-NEXT:   Node 6: many
+//CHECK-NEXT:     -> Next: Node 7
+//CHECK-NEXT:   Node 7: many
+//CHECK-NEXT:     -> Next: Node 8
+//CHECK-NEXT:   Node 8: once
+//CHECK-NEXT:     -> Next: Node 0
+
 
 
 cal.actor @dynamic_fsm ()
@@ -118,7 +118,7 @@ cal.actor @dynamic_fsm ()
 	}
 }
 
-// CHECK: ScheduleGraph for actor: infinite_dynamic_fsm. Type: Dynamic
+// CHECK: FSM for actor: infinite_dynamic_fsm. Type: Dynamic
 cal.actor @infinite_dynamic_fsm ()
 	ports_in(%x_in: !fifo.output_port<i22>,%cordic_angles_in: !fifo.output_port<i16>)
 	ports_out(%x_out: !fifo.input_port<i22>,%r_out: !fifo.input_port<i22>,%cordic_angles_out: !fifo.input_port<i16>)

@@ -1,0 +1,182 @@
+namespace radixsort:
+    listSize = 500000; // Number of integers to sort
+    numRadices = 32; // Number of radix passes (for 32-bit integers, 4 passes of 8 bits each)
+
+
+    // @author: Gareth Callanan
+    //
+    // Implementation of the Savina 6.6 "Radix Sort" benchmark in CAL.
+    // This benchmark demonstrates pipeline parallelism using a non-comparison
+    // based sorting algorithm that processes data through multiple stages.
+    //
+    // The benchmark consists of:
+    // - A source actor that generates a stream of integers to sort
+    // - Multiple radix sort actors arranged in a pipeline, each examining a specific bit
+    // - A sink actor that receives the final sorted output
+    //
+    // Each radix stage implements a key optimization: values with a 0-bit are
+    // immediately forwarded to the next stage, while values with a 1-bit are
+    // buffered and sent only after all inputs have been processed. This ensures
+    // the sort remains stable.
+    //
+    // This implementation demonstrates:
+    // 1. Pipeline parallelism with multiple stages
+    // 2. Message batching for performance optimization
+    // 3. Ordered processing in a distributed actor environment
+    //
+    // The benchmark is parameterized by N (listSize), the amount of data to sort,
+    // and the number of radix stages (numRadices) required to handle the input range.
+    network RadixSortNetwork() ==>:
+    entities
+        radixSortActors = [RadixSortActor(radix=numRadices-1-i): for i in 0..numRadices-1]; // Radix 0-3 for 32-bit integers
+        source = SourceActor();
+        sink = Sink();
+    structure
+        //source.Out --> sink.In {bufferSize = 1; };
+        source.Out --> radixSortActors[0].In {bufferSize = 3*3; };
+        foreach uint i in 0..numRadices-2 do
+            radixSortActors[i].Out --> radixSortActors[i+1].In {bufferSize = 3*3; };
+        end
+        radixSortActors[numRadices-1].Out --> sink.In {bufferSize = 3*3; };
+    end
+
+    actor SourceActor() ==> int Out:
+        // List of 20 randomly ordered integers to be sorted
+        List(size=100, type: int) unsortedList = [
+            523, 12, 948, 376, 45, 681, 209, 875, 332, 497,
+            58, 720, 391, 284, 650, 913, 177, 821, 404, 990,
+            33, 278, 617, 95, 874, 731, 166, 913, 429, 6,
+            812, 555, 707, 301, 219, 986, 389, 972, 749, 120,
+            568, 811, 274, 481, 973, 885, 295, 100, 927, 451,
+            680, 420, 369, 77, 823, 31, 285, 940, 366, 252,
+            899, 178, 310, 553, 738, 624, 934, 144, 228, 967,
+            292, 837, 655, 546, 119, 499, 882, 327, 205, 932,
+            859, 512, 341, 770, 432, 168, 764, 412, 874, 527,
+            395, 691, 240, 459, 606, 982, 259, 747, 560, 874
+        ];
+        int numSent := 0;
+
+        sendToken: action ==> Out:[token, 0]
+        guard numSent < listSize
+        var 
+            int token = unsortedList[numSent mod #unsortedList] + (numSent / #unsortedList) * 100, // Extend range for more varied sorting,
+            int flushBuffer := 0
+        do
+            numSent := numSent + 1;
+            if numSent = listSize then
+                flushBuffer := 1;
+            end
+        end
+
+        sendFlushSignal: action ==> Out:[0, 1]
+        guard numSent = listSize
+        do
+            //println("Source sent flush signal");
+            numSent := listSize + 1;
+        end
+    end
+
+    actor Sink() int In ==>:
+        int count := 0;
+        int numReceived := 0;
+        int previousToken := -1;
+        int(size=64) sum := 0;
+
+        receive: action In:[token, flushBuffer] ==>
+        do
+            if flushBuffer = 0 then
+                sum := sum + token;
+
+                if numReceived != 0 then
+                    //print(", ");
+                    if(previousToken > token) then
+                        println("Error: Tokens out of order! Previous: " + previousToken + " Current: " + token);
+                    end
+                end
+                previousToken := token;
+                //print("" + token);
+                numReceived := numReceived + 1;
+
+                if numReceived = listSize then
+                    //println("");
+                    println("Sink received all sorted tokens. Sum: " + sum);
+                end
+            end
+        end
+    end
+
+    actor RadixSortActor(int radix) int In ==> int Out:
+        List(size=listSize, type: int) buffer;
+        uint sendToken := 0;
+        int tokenToSend := 0;
+        uint numTokensInBuffer := 0;
+        uint numSentBufferedTokens := 0;
+        uint tokensReceived := 0;
+        uint flushBufferReceived := 0;
+
+        rxToken: action In:[token, flushBuffer] ==> 
+        guard 
+            sendToken = 0,
+            flushBufferReceived = 0
+        var uint(size=8) digit = (token >> (radix)) & 0x1
+        do
+            if flushBuffer = 1 then
+                // println("Radix " + radix + " flushing buffer");
+                flushBufferReceived := 1;
+                if numTokensInBuffer = 0 then
+                    flushBufferReceived := 2; // No buffered tokens to send
+                end
+            else
+                tokensReceived := tokensReceived + 1;
+                if(digit = 0) then
+                    tokenToSend := token;
+                    sendToken := 1;
+                else
+                    buffer[numTokensInBuffer] := token;
+                    numTokensInBuffer := numTokensInBuffer + 1;
+                    // println("Radix " + radix + " buffering token: " + token);
+                end
+            end
+        end
+
+        sendORadixToken: action ==> Out:[tokenToSend, 0]
+        guard sendToken = 1
+        do
+            // println("Radix " + radix + " sending token: " + tokenToSend);
+            sendToken := 0;
+        end
+
+        forwardFlushSignal: action ==> Out:[0, 1]
+        guard 
+            flushBufferReceived = 1,
+            sendToken = 0
+        do
+            // println("Radix " + radix + " forwarding flush signal");
+            flushBufferReceived := 2;
+        end
+
+        flushBufferedTokens: action ==> Out:[bufferedToken, 0]
+        guard 
+            flushBufferReceived = 2,
+            numSentBufferedTokens < numTokensInBuffer,
+            sendToken = 0
+        var
+            int bufferedToken = buffer[numSentBufferedTokens]
+        do
+            // println("Radix " + radix + " sending buffered token: " + bufferedToken);
+            numSentBufferedTokens := numSentBufferedTokens + 1;
+        end
+
+        completeFlush: action ==> Out:[0, 1]
+        guard 
+            flushBufferReceived = 2,
+            numSentBufferedTokens = numTokensInBuffer,
+            sendToken = 0
+        do
+            // println("Radix " + radix + " completed flush");
+            flushBufferReceived := 0;
+            numSentBufferedTokens := 0;
+            numTokensInBuffer := 0;
+        end
+    end
+end

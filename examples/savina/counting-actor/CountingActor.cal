@@ -1,0 +1,90 @@
+namespace countingactor:
+    uint N_messages = 100000000; // Number of messages to send to Counter actor
+
+    // @author: Gareth Callanan
+    //
+    // The Counting Actor benchmark measures the overhead of actor message delivery.
+    // It sends N successive messages from a Producer to a Counter actor, which 
+    // increments an internal counter for each message received. After all messages
+    // are sent, the Producer queries the accumulated value from the Counter.
+    //
+    // This benchmark:
+    // - Tests message delivery performance
+    // - Stress tests mailbox implementation that stores pending messages
+    // - Measures the message passing overhead in the actor implementation
+    //
+    // Producer: Sends N counting messages to the Counter actor, then requests
+    // the final accumulated value.
+    //
+    // Ports:
+    //     In - Receives the final accumulated value from Counter
+    //     Out - Sends increment messages to Counter
+    //     RequestTotal - Sends request for final total
+    actor Producer () float In ==> float Out, uint RequestTotal:
+        // Initial state
+        int count := N_messages;
+                
+        send_tokens: action ==> Out:[count+1.0]
+        guard count > 0
+        do
+            //println("Sending token, remaining: " + count);
+            count := count - 1;
+        end
+        
+        send_final_message: action ==> RequestTotal:[1]
+        guard count = 0
+        do
+            count := -1;
+            println("Counting Done, Requesting result!");
+        end
+
+        receive_final_message: action In:[total]  ==>
+        guard count = -1
+        do
+            println("Total accumulated value: " + total);
+        end
+
+        priority 
+            send_tokens > send_final_message;
+            send_tokens > receive_final_message;
+        end
+    end
+
+    // @author: Gareth Callanan
+    //    
+    // Counter actor receives increment messages and maintains a running total.
+    // For each message received, it increments its internal accumulator.
+    // When requested, it returns the final accumulated value.
+    //
+    // Ports:
+    //     In - Receives increment messages from Producer
+    //     RequestTotal - Receives requests to return the final total
+    //     Out - Sends the accumulated total back to Producer
+    actor Counter () float In, uint RequestTotal ==> float Out:
+        float accumulator := 0;
+
+        count: action In:[value] ==> 
+        do
+            accumulator := accumulator + value;
+            //println("Received token: " + value + ", new total: " + accumulator);
+        end
+
+        returnTotal: action RequestTotal:[request] ==> Out:[accumulator]
+        end
+
+        priority 
+            count > returnTotal;
+        end
+    end
+
+    network CountingActorNetwork() ==>:
+    entities
+        producer = Producer();
+        counter = Counter();
+    structure
+        producer.Out --> counter.In { bufferSize = 1000; };
+        counter.Out --> producer.In { bufferSize = 1; };
+        producer.RequestTotal --> counter.RequestTotal { bufferSize = 10; };
+    end
+
+end

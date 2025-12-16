@@ -6,8 +6,6 @@
 
 namespace mlir {
 
-std::unique_ptr<mlir::Pass> createConvertCalToFuncWithStaticSchedulePass();
-
 #define GEN_PASS_DECL_CONVERTCALTOFUNCWITHSTATICSCHEDULE
 #include "Conversion/Passes.h.inc"
 

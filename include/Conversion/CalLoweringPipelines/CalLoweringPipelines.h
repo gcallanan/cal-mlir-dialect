@@ -19,6 +19,16 @@ struct CalGenericPipelineOptions
       llvm::cl::desc(
           "Drain actors by default in the dynamic scheduler (non-preemptive). Per-actor annotation still applies."),
       llvm::cl::init(false)};
+
+  PassOptions::Option<bool> bypassTensorConversions{
+      *this, "bypass-tensor-conversions",
+      llvm::cl::desc(
+          "Bypass all the passes lowering tensor and linalg ops."),
+      llvm::cl::init(false)};
+};
+
+struct CalStaticSchedulingPipelineOptions
+    : public CalGenericPipelineOptions {
 };
 
 struct CalToLLVMWithGPUTensorsPipelineOptions

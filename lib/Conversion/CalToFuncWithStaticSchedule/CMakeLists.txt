@@ -1,7 +1,7 @@
 add_mlir_conversion_library(CalToFuncWithStaticSchedule
         CalToFuncWithStaticSchedule.cpp
         CycloStaticDataflowAnalysis.cpp
-        ScheduleGraphBuilder.cpp
+        FsmBuilder.cpp
         StaticNetworkSimulator.cpp
 
     DEPENDS
