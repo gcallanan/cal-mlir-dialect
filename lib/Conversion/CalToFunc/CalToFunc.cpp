@@ -28,6 +28,18 @@ namespace mlir {
 #define GEN_PASS_DEF_CONVERTCALTOFUNC
 #include "Conversion/Passes.h.inc"
 
+static ActorPartitioningMode parsePartitioningMode(const std::string &m) {
+  if (m == "single-threaded")
+    return ActorPartitioningMode::SingleThreaded;
+  else if (m == "one-actor-per-thread")
+    return ActorPartitioningMode::OneActorPerThread;
+  else {
+    llvm::report_fatal_error(llvm::Twine("Unknown actor partitioning mode: ") +
+                             m);
+    return ActorPartitioningMode::SingleThreaded; // not reached
+  }
+}
+
 /// Converts a `cal.network` operation into a top-level `func.func @main`
 /// function.
 ///
@@ -392,7 +404,15 @@ class ConvertCalCreateInstanceToFuncCall
 class ConvertCalToFuncPass
     : public impl::ConvertCalToFuncBase<ConvertCalToFuncPass> {
 public:
+  ConvertCalToFuncPass(const ConvertCalToFuncOptions &options)
+      : impl::ConvertCalToFuncBase<ConvertCalToFuncPass>(options) {}
+
+  ConvertCalToFuncPass() {}
+
   void runOnOperation() final {
+
+    ActorPartitioningMode partitioningMode =
+        parsePartitioningMode(actor_paritioning_mode);
 
     // 1. Check if the module contains any `cal.action` operations.
     // If it does, we cannot convert the module to func, as `cal.action` is
@@ -434,9 +454,3 @@ public:
 };
 
 } // namespace mlir
-
-/// Creates a pass to lower cal.network and cal.actor ops into functions and
-/// function calls.
-std::unique_ptr<mlir::Pass> mlir::createConvertCalToFuncPass() {
-  return std::make_unique<mlir::ConvertCalToFuncPass>();
-}

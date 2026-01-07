@@ -8,6 +8,7 @@
 #include "Conversion/CalToFuncWithStaticSchedule/CalToFuncWithStaticSchedule.h"
 #include "Conversion/FifoToMemref/ConvertFifoToMemref.h"
 #include "Conversion/DecomposeFifoTuples/DecomposeFifoTuples.h"
+#include "mlir/Dialect/Async/IR/Async.h"
 
 namespace mlir {
 
@@ -16,6 +17,11 @@ namespace mlir {
 enum class AllocLocation {
   HOST,
   GPU
+};
+
+enum class ActorPartitioningMode {
+  SingleThreaded,
+  OneActorPerThread
 };
 
 #define GEN_PASS_REGISTRATION

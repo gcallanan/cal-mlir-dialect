@@ -37,11 +37,16 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
         Description originally written by Gareth Callanan and refined using ChatGPT.
     }];
 
-    let constructor = "mlir::createConvertCalToFuncPass()";
+    let options = [
+      Option<"actor_paritioning_mode", "actor-paritioning-mode", "std::string",
+        /*default=*/"\"single-threaded\"",
+        "Actor partitioning mode : single-threaded | one-actor-per-thread">,
+    ];
 
     let dependentDialects = [
         "func::FuncDialect",
         "fifo::FifoDialect",
+        "async::AsyncDialect",
         "cal::CalDialect",
         "scf::SCFDialect"
     ];

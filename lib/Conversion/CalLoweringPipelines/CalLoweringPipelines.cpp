@@ -91,15 +91,29 @@ void registerLowerCalToLLVMPipeline() {
 
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::createConvertCalToFuncPass());
+
+        if (options.multithreadCalActors) {
+          ConvertCalToFuncOptions funcOptions;
+          funcOptions.actor_paritioning_mode = "one-actor-per-thread";
+          pm.addPass(mlir::createConvertCalToFunc(funcOptions));
+        } else {
+          pm.addPass(mlir::createConvertCalToFunc());
+        }
 
         // We add this pass as we often get functions that are the same but with
         // different names.
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
         pm.addPass(mlir::createLowerCalStateToMemref());
-        pm.addPass(mlir::createLowerFifoToMemrefPass());
+        if (options.multithreadCalActors) {
+          mlir::LowerFifoToMemrefPassOptions fifoOptions;
+          fifoOptions.fifo_index_mode = std::string("spsc-lockfree");
+          pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
+        } else {
+          pm.addPass(mlir::createLowerFifoToMemrefPass());
+        }
         pm.addPass(mlir::createDecomposeFifoTuples());
+        pm.addPass(mlir::createFifoMemrefAtomicizePass());
         pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
         mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
@@ -113,6 +127,12 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertLinalgToLoopsPass());
         pm.addPass(mlir::createCanonicalizerPass());
+
+        if (options.multithreadCalActors) {
+          pm.addPass(mlir::createAsyncToAsyncRuntimePass());
+          pm.addPass(mlir::createAsyncRuntimeRefCountingPass());
+          pm.addPass(mlir::createConvertAsyncToLLVMPass());
+        }
 
         // 2. Standard MLIR to LLVM lowering:
         //    The following passes lower various MLIR dialects to LLVM.
@@ -143,6 +163,8 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::createConvertControlFlowToLLVMPass());
         // Convert Index to LLVM (always needed).
         pm.addPass(mlir::createConvertIndexToLLVMPass());
+        // We add this again to catch some unconverted async functions
+        pm.addPass(mlir::createConvertFuncToLLVMPass());
         // Convert remaining unrealized_casts (always needed).
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
       });
@@ -238,7 +260,7 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
 
   pm.addPass(mlir::cal::hoistCalStateOutOfActor());
   pm.addPass(mlir::createCanonicalizerPass());
-  pm.addPass(mlir::createConvertCalToFuncPass());
+  pm.addPass(mlir::createConvertCalToFunc());
 
   // We add this pass as we often get functions that are the same but with
   // different names.
