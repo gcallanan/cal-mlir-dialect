@@ -82,7 +82,7 @@ private:
     bool isTensor = false;
 
     MemRefType memrefType;
-    if (auto tensorType = stateType.dyn_cast<TensorType>()) {
+    if (auto tensorType = mlir::dyn_cast<TensorType>(stateType)) {
       memrefType =
           MemRefType::get(tensorType.getShape(), tensorType.getElementType());
           // MemRefType::get(
@@ -90,7 +90,7 @@ private:
           // mlir::gpu::AddressSpaceAttr::get(t.getContext(),
           //                                  mlir::gpu::AddressSpace::Global));
       isTensor = true;
-    } else if (auto memrefTy = stateType.dyn_cast<MemRefType>()) {
+    } else if (auto memrefTy = mlir::dyn_cast<MemRefType>(stateType)) {
       memrefType = memrefTy;
     } else {
       memrefType = MemRefType::get(1, stateType);
@@ -152,7 +152,7 @@ class ConvertCalStateGetOpToMemref : public OpConversionPattern<StateGetOp> {
       return success();
     }
 
-    if (auto tensorType = stateType.dyn_cast<TensorType>()) {
+    if (auto tensorType = mlir::dyn_cast<TensorType>(stateType)) {
       auto toTensorOp =
           rewriter.create<bufferization::ToTensorOp>(loc, tensorType, stateRef);
       toTensorOp->setAttr("restrict", rewriter.getUnitAttr());
@@ -305,9 +305,9 @@ static void populateCalStateTypeConverterDynamic(mlir::TypeConverter &converter,
   // 2) The conversion for `cal.state` to `memref`
   converter.addConversion([&](cal::StateVarRefType type) {
     Type elemType = type.getStateType();
-    if (auto memrefType = elemType.dyn_cast<MemRefType>())
+    if (auto memrefType = mlir::dyn_cast<MemRefType>(elemType))
       return memrefType;
-    if (auto tensorType = elemType.dyn_cast<TensorType>()) {
+    if (auto tensorType = mlir::dyn_cast<TensorType>(elemType)) {
       auto memrefType =
           MemRefType::get(tensorType.getShape(), tensorType.getElementType());
       return memrefType;

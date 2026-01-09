@@ -67,10 +67,6 @@ struct PrintTensorOpInterface
     if (!mlir::isa<mlir::TensorType>(tensorArgType))
       return success();
 
-    auto tensorType = mlir::cast<mlir::TensorType>(tensorArgType);
-    auto memrefType =
-        bufferization::getMemRefTypeWithStaticIdentityLayout(tensorType);
-
     // Bufferize the tensor value to a memref.
     Value tensorValue = fifoPrintTensorOp.getTensor();
     FailureOr<Value> bufferizedValue =

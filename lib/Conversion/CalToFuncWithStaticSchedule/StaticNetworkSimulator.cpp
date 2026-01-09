@@ -69,7 +69,7 @@ cal::ActionOp fire(Actor *actor) {
   FsmNode fsmNode = actor->fsm.nodes[actor->currentState];
   actor->currentState = fsmNode.edges.front().nextNodeIndex;
   // We have looped back to the start state
-  if(actor->fsm.initialStateValue == actor->currentState) {
+  if(static_cast<int>(actor->fsm.initialStateValue) == actor->currentState) {
     actor->numFiringsLeft--;
   }
 
@@ -131,7 +131,7 @@ std::vector<cal::ActionOp> simulateNetwork(
   for (auto &pair : actorFiringsPerCycle) {
     actorOpToActorStructMap[pair.first] = Actor{
         .actorOp = pair.first,
-        .currentState = static_cast<int>(actorScheduleMap.find(pair.first)->second.initialStateValue),
+        .currentState = static_cast<int>(actorFsmMap.find(pair.first)->second.initialStateValue),
         .numFiringsLeft = pair.second,
         .fsm = actorFsmMap.find(pair.first)->second
     };

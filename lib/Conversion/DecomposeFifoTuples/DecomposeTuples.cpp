@@ -137,7 +137,6 @@ public:
                                 ValueRange convertedOperands) const override {
 
     cal::ActorOp actorOp = cast<cal::ActorOp>(op);
-    Location loc = op->getLoc();
     Region *region = &actorOp.getBody();
     Block *block = &region->front();
 
@@ -205,7 +204,6 @@ public:
                                 ValueRange convertedOperands) const override {
 
     cal::CreateInstanceOp createInstanceOp = cast<cal::CreateInstanceOp>(op);
-    Location loc = op->getLoc();
 
     // 1. Check termination condition
     // We need a termination condition or else the fixed point computation will

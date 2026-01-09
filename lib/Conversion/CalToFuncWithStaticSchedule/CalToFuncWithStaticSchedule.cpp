@@ -143,8 +143,6 @@ struct ConvertCalNetworkToMainFuncWithStaticSchedule
 
     // Step 3: Create the loop structure for static scheduling
     auto i1Type = rewriter.getI1Type();
-    auto trueConst = rewriter.create<mlir::arith::ConstantOp>(
-        loc, rewriter.getBoolAttr(true));
 
     Block *loopExitBlock =
         rewriter.createBlock(&mainFunc.getRegion(), mainFunc.getRegion().end());
@@ -204,12 +202,7 @@ struct ConvertCalNetworkToMainFuncWithStaticSchedule
         // possible for zero to be returned if the action has predicates which
         // may evaluate to false. Thus we check if the action has predicates, if
         // it does we branch or else we do not branch
-        bool hasPredicates = false;
-
-        for (auto predicateOp : actionOp.getOps<cal::Predicate>()) {
-          hasPredicates = true;
-          break;
-        }
+        bool hasPredicates = !actionOp.getOps<cal::Predicate>().empty();
 
         if (hasPredicates) {
           Block *nextActionBlock = rewriter.createBlock(

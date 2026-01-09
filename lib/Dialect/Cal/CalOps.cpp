@@ -760,7 +760,6 @@ bool ActorOp::isSimpleActor() {
     }
   }
 
-  int predicateCount = 0;
   for (Operation &op : savedActionOp.getBody().getOps()) {
     if (llvm::isa<cal::Predicate>(op)) {
       return false; // If any predicate is present in the action body, it is not a

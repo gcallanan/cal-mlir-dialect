@@ -636,7 +636,7 @@ updateMainFuncWithGpuTokens(PatternRewriter &rewriter, func::FuncOp funcOp,
         yieldOperands.push_back(mapping.lookupOrDefault(op.getOperand(0)));
         continue;
       }
-      auto clonedOp = rewriter.clone(op, mapping);
+      rewriter.clone(op, mapping);
     }
     SmallVector<Operation *, 8> opsToIterate;
     for (auto &op : bodyBlock)
@@ -860,8 +860,7 @@ public:
     RewritePatternSet patterns(ctx);
     patterns.add<UpdateFuncs>(ctx, callees, mainFunc);
 
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
       return;
     }

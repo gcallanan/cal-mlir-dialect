@@ -66,10 +66,10 @@ struct CreateStateVarOpInterface
 
     // If not a tensor type, nothing to do. But it should be a tensor type
     // if it's got this far
-    if (!stateType.isa<mlir::TensorType>())
+    if (!mlir::isa<mlir::TensorType>(stateType))
       return success();
 
-    auto tensorType = stateType.cast<mlir::TensorType>();
+    auto tensorType = mlir::cast<mlir::TensorType>(stateType);
     auto memrefType =
         bufferization::getMemRefTypeWithStaticIdentityLayout(tensorType);
 
@@ -114,10 +114,10 @@ struct StateGetOpInterface
 
     // If not a tensor type, nothing to do. But it should be a
     // tensor type if its got this far
-    if (!stateType.isa<mlir::TensorType>())
+    if (!mlir::isa<mlir::TensorType>(stateType))
       return success();
 
-    auto tensorType = stateType.cast<mlir::TensorType>();
+    auto tensorType = mlir::cast<mlir::TensorType>(stateType);
     auto memrefType =
         bufferization::getMemRefTypeWithStaticIdentityLayout(tensorType);
 
@@ -179,12 +179,8 @@ struct StateSetOpInterface
 
     // If not a tensor type, nothing to do. But it should be a
     // tensor type if its got this far
-    if (!stateType.isa<mlir::TensorType>())
+    if (!mlir::isa<mlir::TensorType>(stateType))
       return success();
-
-    auto tensorType = stateType.cast<mlir::TensorType>();
-    auto memrefType =
-        bufferization::getMemRefTypeWithStaticIdentityLayout(tensorType);
 
     auto newStateRef = stateSetOp.getStateRef();
 
