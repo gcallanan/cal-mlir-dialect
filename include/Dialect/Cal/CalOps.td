@@ -147,13 +147,17 @@ def Cal_CreateInstanceOp : Cal_Op<"create_instance", [DeclareOpInterfaceMethods<
     instances of the same actor to exist in a system.
 
     Example:
-      cal.create_instance @merge "merge" (%c0: i32)
+      cal.create_instance @merge "merge" device_affinity="cpu0" (%c0: i32)
         ports_in (%outputPort, %outputPort_2 : !fifo.output_port<i32>, !fifo.output_port<i32>)
         ports_out (%inputPort_3 : !fifo.input_port<i32>)
 
-    This creates an instance of the `@merge` actor with the name `"merge"`, and
-    connects its input and output ports to the specified FIFO ports. ports_in
-    and ports_out are optional.
+    This creates an instance of the `@merge` actor with the name `"merge"`, sets
+    its CPU affinity to "cpu0", and connects its input and output ports to the
+    specified FIFO ports. ports_in, ports_out, and cpu_affinity are optional.
+
+    The device_affinity attribute allows specifying a device or core affinity hint
+    for the actor instance (e.g., "cpu0", "core1"). This can be used by runtime
+    systems or schedulers to bind the actor to specific hardware resources.
 
     It is required (and verified by the passer) that the standard argument
     operands and the operands in ports_out and ports_in match what is specified
@@ -165,6 +169,7 @@ def Cal_CreateInstanceOp : Cal_Op<"create_instance", [DeclareOpInterfaceMethods<
   let arguments = (ins
     FlatSymbolRefAttr:$actorRef, // Reference to the actor definition
     OptionalAttr<StrAttr>:$instanceName, // Optional name for the instance
+    OptionalAttr<StrAttr>:$deviceAffinity, // Optional device affinity (e.g. "cpu0", "core1")
     Variadic<AnyType>:$operands // The operands to be passed to the actor instance
   );
 

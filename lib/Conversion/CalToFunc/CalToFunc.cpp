@@ -46,9 +46,9 @@ static constexpr int64_t CACHE_LINE_SIZE_I32 =
 /// @throws llvm::report_fatal_error if the mode string is not recognized
 static ActorPartitioningMode parsePartitioningMode(const std::string &mode) {
   if (mode == "single-threaded")
-    return ActorPartitioningMode::SingleThreaded;
-  else if (mode == "one-actor-per-thread")
-    return ActorPartitioningMode::OneActorPerThread;
+    return ActorPartitioningMode::Singlethreaded;
+  else if (mode == "multi-threaded")
+    return ActorPartitioningMode::Multithreaded;
   else {
     llvm::report_fatal_error(llvm::Twine("Unknown actor partitioning mode: ") +
                              mode);
@@ -66,10 +66,10 @@ static ActorPartitioningMode parsePartitioningMode(const std::string &mode) {
 ///    all actor threads check this flag (with optimized non-atomic loads
 ///    before atomic operations) and terminate.
 ///
-/// 2. **Progress flags array** (memref<numActors x CACHE_LINE_SIZE_I32 x i32>)
+/// 2. **Progress flags array** (memref<numThreads x CACHE_LINE_SIZE_I32 x i32>)
 ///    with each element initialized to 1:
-///    Used to track whether each actor has made progress in the current
-///    iteration. Each actor sets its flag to 1 when it performs work
+///    Used to track whether each actor group has made progress in the current
+///    iteration. Each group sets its flag to 1 when it performs work
 ///    (using optimized check-before-atomic-write). The monitoring loop
 ///    reads these flags atomically (resetting them to 0) to detect global
 ///    progress. Array elements are padded by CACHE_LINE_SIZE_I32 to avoid false
@@ -83,34 +83,25 @@ static ActorPartitioningMode parsePartitioningMode(const std::string &mode) {
 /// %termination_flag = memref.alloc() : memref<1xi32>
 /// %init_term = memref.atomic_rmw assign %c0_i32, %termination_flag[%c0] :
 ///   (i32, memref<1xi32>) -> i32
-/// %progress_flags = memref.alloc() : memref<numActors*CACHE_LINE_SIZE_I32 x
+/// %progress_flags = memref.alloc() : memref<numThreads*CACHE_LINE_SIZE_I32 x
 /// i32> %init_progress_0 = memref.atomic_rmw assign %c1_i32,
 /// %progress_flags[%c0] :
 ///   (i32, memref<...xi32>) -> i32
 /// %init_progress_1 = memref.atomic_rmw assign %c1_i32,
 /// %progress_flags[%c_CACHE_LINE_SIZE_I32] :
 ///   (i32, memref<...xi32>) -> i32
-/// // ... one initialization per actor, spaced by CACHE_LINE_SIZE_I32
+/// // ... one initialization per group, spaced by CACHE_LINE_SIZE_I32
 /// ```
 ///
 /// @param rewriter The pattern rewriter used to create operations
 /// @param loc The location to associate with created operations
 /// @param networkBody The block containing actor function calls (used to count
 ///   actors)
-/// @return A tuple containing (terminationFlag, progressFlags, numActors)
+/// @param numThreads The number of actor groups (threads) to create flags for
+/// @return A tuple containing (terminationFlag, progressFlags, numThreads)
 static std::tuple<Value, Value, int>
 createActorSynchronizationFlags(PatternRewriter &rewriter, Location loc,
-                                Block &networkBody) {
-
-  // Count the number of actor calls in the network body
-  int numActors = 0;
-  for (Operation &op : networkBody) {
-    if (auto callOp = llvm::dyn_cast<func::CallOp>(op)) {
-      if (callOp->hasAttr("from_create_instance")) {
-        numActors++;
-      }
-    }
-  }
+                                Block &networkBody, int numThreads) {
 
   // Create constant values for initialization
   auto c0_i32 =
@@ -130,16 +121,16 @@ createActorSynchronizationFlags(PatternRewriter &rewriter, Location loc,
                                        c0_i32, terminationFlag,
                                        ValueRange{c0_index});
 
-  // Create progress flags array: memref<numActors x CACHE_LINE_SIZE_I32 x i32>
+  // Create progress flags array: memref<numThreads x CACHE_LINE_SIZE_I32 x i32>
   // Multiply by CACHE_LINE_SIZE_I32 for padding to avoid false sharing between
   // threads
-  auto progressFlagsType =
-      MemRefType::get({numActors * CACHE_LINE_SIZE_I32}, rewriter.getI32Type());
+  auto progressFlagsType = MemRefType::get({numThreads * CACHE_LINE_SIZE_I32},
+                                           rewriter.getI32Type());
   Value progressFlags =
       rewriter.create<memref::AllocOp>(loc, progressFlagsType);
 
   // Initialize each progress flag to 1
-  for (int i = 0; i < numActors; i++) {
+  for (int i = 0; i < numThreads; i++) {
     auto indexConst = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getIndexAttr(i * CACHE_LINE_SIZE_I32));
     rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
@@ -147,7 +138,7 @@ createActorSynchronizationFlags(PatternRewriter &rewriter, Location loc,
                                          ValueRange{indexConst});
   }
 
-  return std::make_tuple(terminationFlag, progressFlags, numActors);
+  return std::make_tuple(terminationFlag, progressFlags, numThreads);
 }
 
 /// Declares the `usleep` external function at module level if not already
@@ -185,77 +176,29 @@ static void declareUsleepFunction(PatternRewriter &rewriter, Location loc,
   }
 }
 
-/// Wraps each actor function call in an `async.execute` block with an infinite
-/// loop.
+/// Wraps groups of actor function calls in `async.execute` blocks with infinite
+/// loops.
 ///
-/// This function iterates through all actor function calls in the network body
-/// and wraps each one in its own `async.execute` region containing an infinite
-/// while loop. Each actor monitors a shared termination flag and updates its
-/// progress flag to coordinate with the monitoring loop.
-///
-/// **Optimization**: The termination flag check uses a non-atomic load first.
-/// Only if the flag appears to be set (equals 1) does it perform an expensive
-/// atomic read. This significantly reduces cache line contention.
-///
-/// **Optimization**: The progress flag update also uses a non-atomic load to
-/// check the current value. Only if the flag is currently 0 does it perform
-/// an atomic write to set it to 1. This avoids redundant atomic operations.
-///
-/// The generated structure for each actor:
-/// ```
-/// %token = async.execute {
-///   scf.while (%arg0 = %true) : (i1) -> () {
-///     // Optimized termination flag check: non-atomic load first
-///     %current_term = memref.load %termination_flag[%c0] : memref<1xi32>
-///     %is_one = arith.cmpi eq, %current_term, %c1_i32 : i32
-///     %term_val = scf.if %is_one -> (i32) {
-///       // Only do atomic read if non-atomic load showed flag = 1
-///       %atomic = memref.atomic_rmw addi %c0_i32, %termination_flag[%c0] :
-///         (i32, memref<1xi32>) -> i32
-///       scf.yield %atomic : i32
-///     } else {
-///       scf.yield %c0_i32 : i32
-///     }
-///     %should_continue = arith.cmpi eq, %term_val, %c0_i32 : i32
-///     scf.condition(%should_continue)
-///   } do {
-///     // Call the actor function
-///     %result = func.call @actor(...) : (...) -> i1
-///     // Update progress flag if actor made progress (returned true)
-///     scf.if %result {
-///       // Optimized progress flag update: check before atomic write
-///       %current_val = memref.load %progress_flags[%actor_idx] : memref<Nxi32>
-///       %needs_update = arith.cmpi eq, %current_val, %c0_i32 : i32
-///       scf.if %needs_update {
-///         // Only do atomic write if flag is currently 0
-///         memref.atomic_rmw assign %c1_i32, %progress_flags[%actor_idx] :
-///           (i32, memref<Nxi32>) -> i32
-///       }
-///     }
-///     scf.yield %true : i1
-///   }
-///   async.yield
-/// }
-/// ```
+/// This function processes groups of actors (grouped by device_affinity) and
+/// wraps each group in its own `async.execute` region. Actors within the same
+/// group (same device_affinity) are executed sequentially within a single
+/// thread.
 ///
 /// @param rewriter The pattern rewriter used to create operations
 /// @param loc The location to associate with created operations
-/// @param networkBody The block containing actor function calls to wrap
+/// @param actorGroups Groups of actor calls (by device_affinity)
 /// @param terminationFlag The shared termination flag memref
-/// @param progressFlags The shared progress flags array memref (with cache line
-/// padding)
-/// @return A vector of async tokens, one for each wrapped actor call
-static SmallVector<Value>
-wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
-                             Block &networkBody, Value terminationFlag,
-                             Value progressFlags) {
+/// @param progressFlags The shared progress flags array memref
+/// @return A vector of async tokens, one for each group
+static SmallVector<Value> wrapActorGroupsInAsyncExecute(
+    PatternRewriter &rewriter, Location loc,
+    const SmallVector<SmallVector<Operation *>> &actorGroups,
+    Value terminationFlag, Value progressFlags) {
   SmallVector<Value> asyncTokens;
 
-  int actorIndex = 0;
-  while (!networkBody.empty()) {
-    Operation &actorCall = networkBody.front();
-
-    // Create async.execute block for this actor
+  int groupIndex = 0;
+  for (const auto &actorGroup : actorGroups) {
+    // Create async.execute block for this group
     auto executeOp = rewriter.create<async::ExecuteOp>(
         loc, TypeRange{}, ValueRange{}, ValueRange{});
 
@@ -287,15 +230,12 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
     auto idx0 =
         rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
 
-    // Check termination flag with non-atomic load first to avoid expensive
-    // atomic operations
+    // Check termination flag with non-atomic load first
     auto currentTermValue =
         rewriter.create<memref::LoadOp>(loc, terminationFlag, ValueRange{idx0});
     auto isOne = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, currentTermValue, c1_i32.getResult());
 
-    // Only perform atomic read if non-atomic load showed flag = 1, otherwise
-    // return 0
     auto ifOp = rewriter.create<scf::IfOp>(
         loc, TypeRange{rewriter.getI32Type()}, isOne, /*hasElse=*/true);
     rewriter.setInsertionPointToStart(ifOp.thenBlock());
@@ -310,7 +250,6 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
     rewriter.setInsertionPointAfter(ifOp);
     Value termVal = ifOp.getResult(0);
 
-    // Check if we should terminate (flag != 0)
     auto shouldContinue = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, termVal, c0_i32.getResult());
 
@@ -322,33 +261,42 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
     Block &bodyBlock = whileOp.getAfter().front();
     rewriter.setInsertionPointToStart(&bodyBlock);
 
-    // Move the actor function call into the while loop body
-    actorCall.moveBefore(&bodyBlock, bodyBlock.end());
-    Value actorResult = actorCall.getResult(0);
+    // Initialize progress flag for this group
+    auto constFalse =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+    Value groupProgress = constFalse.getResult();
 
-    // If actor made progress (returned true), set progress flag to 1
-    auto ifOp2 = rewriter.create<scf::IfOp>(loc, TypeRange{}, actorResult,
+    // Move all actor calls in this group into the while loop body
+    for (Operation *actorCall : actorGroup) {
+      actorCall->moveBefore(&bodyBlock, bodyBlock.end());
+      Value actorResult = actorCall->getResult(0);
+
+      // OR this actor's result with the group's progress
+      auto orOp =
+          rewriter.create<arith::OrIOp>(loc, groupProgress, actorResult);
+      groupProgress = orOp.getResult();
+    }
+
+    // If any actor in the group made progress, update the progress flag
+    auto ifOp2 = rewriter.create<scf::IfOp>(loc, TypeRange{}, groupProgress,
                                             /*hasElse=*/false);
     rewriter.setInsertionPointToStart(ifOp2.thenBlock());
 
-    auto cActorIdx = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getIndexAttr(actorIndex * CACHE_LINE_SIZE_I32));
+    auto cGroupIdx = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getIndexAttr(groupIndex * CACHE_LINE_SIZE_I32));
 
-    // Check current value with non-atomic load before performing expensive
-    // atomic operation
+    // Check current value with non-atomic load before atomic operation
     auto currentValue = rewriter.create<memref::LoadOp>(loc, progressFlags,
-                                                        ValueRange{cActorIdx});
+                                                        ValueRange{cGroupIdx});
     auto needsUpdate = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, currentValue, c0_i32.getResult());
 
-    // Only perform atomic write if flag is currently 0 to avoid redundant
-    // atomic operations
     auto innerIfOp = rewriter.create<scf::IfOp>(loc, TypeRange{}, needsUpdate,
                                                 /*hasElse=*/false);
     rewriter.setInsertionPointToStart(innerIfOp.thenBlock());
     rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
                                          c1_i32, progressFlags,
-                                         ValueRange{cActorIdx});
+                                         ValueRange{cGroupIdx});
 
     // Continue the infinite loop
     rewriter.setInsertionPointAfter(ifOp2);
@@ -361,23 +309,23 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
     // Store the async token for synchronization
     asyncTokens.push_back(executeOp.getToken());
 
-    // Move to next actor
+    // Move to next group
     rewriter.setInsertionPointAfter(executeOp);
-    actorIndex++;
+    groupIndex++;
   }
 
   return asyncTokens;
 }
 
-/// Creates the monitoring while loop that checks actor progress and manages
-/// termination.
+/// Creates the monitoring while loop that checks actor group progress and
+/// manages termination.
 ///
 /// This function generates a while loop that:
 /// 1. Reads all progress flags atomically and resets them to 0
 ///    Note: Currently uses unconditional atomic operations. This could be
 ///    optimized further with non-atomic loads first, but the monitoring loop
 ///    runs less frequently so the impact is lower.
-/// 2. ORs them together to check if any actor made progress
+/// 2. ORs them together to check if any actor group made progress
 /// 3. Sleeps briefly (50ms) to avoid busy-waiting
 /// 4. Continues looping if progress was made, otherwise exits
 /// 5. Sets the termination flag when no progress is detected
@@ -404,7 +352,7 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
 ///
 /// @param rewriter The pattern rewriter used to create operations
 /// @param loc The location to associate with created operations
-/// @param numThreads The number of actor threads to monitor
+/// @param numThreads The number of actor groups to monitor
 /// @param terminationFlag The termination flag memref to set when stopping
 /// @param progressFlags The progress flags array memref to monitor (with cache
 /// line padding)
@@ -553,12 +501,69 @@ static void createSingleThreadedRoundRobinLoop(PatternRewriter &rewriter,
   rewriter.setInsertionPointToEnd(entryBlock);
 }
 
-/// Creates a multi-threaded execution model with one thread per actor.
+/// Groups actor function calls by their device_affinity attribute.
+///
+/// This function partitions actor calls into groups based on their
+/// device_affinity:
+/// - Actors with the same device_affinity string are grouped together
+/// - Actors without device_affinity each get their own individual group
+///
+/// @param networkBody The block containing actor function calls
+/// @return A vector of groups, where each group contains actor calls with the
+/// same affinity
+static SmallVector<SmallVector<Operation *>>
+groupActorCallsByAffinity(Block &networkBody) {
+  // Map from device_affinity string to list of operations
+  llvm::StringMap<SmallVector<Operation *>> affinityGroups;
+  SmallVector<Operation *> noAffinityOps;
+
+  for (Operation &op : networkBody) {
+    if (auto callOp = llvm::dyn_cast<func::CallOp>(op)) {
+      if (callOp->hasAttr("from_create_instance")) {
+        if (auto deviceAffinity =
+                callOp->getAttrOfType<mlir::StringAttr>("device_affinity")) {
+          affinityGroups[deviceAffinity.getValue()].push_back(&op);
+        } else {
+          noAffinityOps.push_back(&op);
+        }
+      }
+    }
+  }
+
+  // Build the result: groups with affinity first, then individual groups for
+  // no-affinity actors
+  SmallVector<SmallVector<Operation *>> result;
+
+  // Add groups with device_affinity
+  for (auto &entry : affinityGroups) {
+    result.push_back(std::move(entry.second));
+  }
+
+  // Add individual groups for actors without affinity
+  for (Operation *op : noAffinityOps) {
+    SmallVector<Operation *> singleGroup;
+    singleGroup.push_back(op);
+    result.push_back(std::move(singleGroup));
+  }
+
+  return result;
+}
+
+/// Creates a multi-threaded execution model with one thread per actor group.
 ///
 /// This function generates a multi-threaded runtime structure where each actor
-/// runs in its own `async.execute` block with an infinite loop. A central
-/// monitoring loop tracks progress across all actors using atomic flags and
-/// coordinates global termination when no actor makes progress.
+/// group (actors with the same device_affinity) runs in its own `async.execute`
+/// block with an infinite loop. Actors within the same group execute
+/// sequentially in a single thread. A central monitoring loop tracks progress
+/// across all groups using atomic flags and coordinates global termination when
+/// no group makes progress.
+///
+/// **Actor Grouping:**
+/// - Actors with the same `device_affinity` attribute are grouped together and
+///   execute sequentially within a single thread
+/// - Actors without `device_affinity` each get their own individual thread
+/// - This enables explicit control over actor-to-core mappings for performance
+/// tuning
 ///
 /// **Performance Optimizations:**
 /// - Termination flag checks use non-atomic loads before atomic operations
@@ -570,14 +575,15 @@ static void createSingleThreadedRoundRobinLoop(PatternRewriter &rewriter,
 /// The generated structure consists of three main components:
 ///
 /// 1. **Synchronization Infrastructure:**
-///    - Termination flag (memref<1xi32>): Signals when all actors should stop
+///    - Termination flag (memref<1xi32>): Signals when all actor groups should
+///    stop
 ///    - Progress flags array (memref<N*CACHE_LINE_SIZE_I32 x i32>): Tracks
 ///    whether
-///      each actor made progress, with cache line padding to avoid false
+///      each actor group made progress, with cache line padding to avoid false
 ///      sharing
 ///
-/// 2. **Per-Actor Async Blocks:**
-///    Each actor is wrapped in its own async.execute containing:
+/// 2. **Per-Group Async Blocks:**
+///    Each actor group is wrapped in its own async.execute containing:
 ///    ```
 ///    %token = async.execute {
 ///      scf.while (%arg0 = %true) : (i1) -> () {
@@ -593,13 +599,16 @@ static void createSingleThreadedRoundRobinLoop(PatternRewriter &rewriter,
 ///        %should_continue = arith.cmpi eq, %term_val, %c0_i32 : i1
 ///        scf.condition(%should_continue)
 ///      } do {
-///        %result = func.call @actor(...) : (...) -> i1
-///        scf.if %result {
+///        // Call all actors in this group sequentially
+///        %result1 = func.call @actor1(...) : (...) -> i1
+///        %result2 = func.call @actor2(...) : (...) -> i1
+///        %group_progress = arith.ori %result1, %result2 : i1
+///        scf.if %group_progress {
 ///          // Optimized progress update: check before atomic write
-///          %current_val = memref.load %progress_flags[%actor_idx]
+///          %current_val = memref.load %progress_flags[%group_idx]
 ///          %needs_update = arith.cmpi eq, %current_val, %c0_i32
 ///          scf.if %needs_update {
-///            memref.atomic_rmw assign %c1_i32, %progress_flags[%actor_idx]
+///            memref.atomic_rmw assign %c1_i32, %progress_flags[%group_idx]
 ///          }
 ///        }
 ///        scf.yield %true : i1
@@ -611,14 +620,14 @@ static void createSingleThreadedRoundRobinLoop(PatternRewriter &rewriter,
 /// 3. **Progress Monitoring Loop:**
 ///    A central loop that:
 ///    - Atomically reads and resets all progress flags to 0
-///    - ORs them together to check if any actor made progress
+///    - ORs them together to check if any actor group made progress
 ///    - Sleeps briefly (50ms) to avoid busy-waiting
-///    - Exits when no progress is detected across all actors
-///    - Sets the termination flag to signal all actors to stop
+///    - Exits when no progress is detected across all groups
+///    - Sets the termination flag to signal all groups to stop
 ///
 /// 4. **Synchronization Barrier:**
 ///    After setting the termination flag, awaits all async tokens to ensure
-///    all actor threads have completed before returning.
+///    all actor groups have completed before returning.
 ///
 /// @param rewriter The pattern rewriter used to create operations
 /// @param loc The location to associate with created operations
@@ -630,20 +639,24 @@ static void createOneThreadPerActorRuntimeLoop(PatternRewriter &rewriter,
   // Step 1: Ensure usleep is declared in the module for progress monitoring
   declareUsleepFunction(rewriter, loc, entryBlock);
 
-  // Step 2: Create and initialize synchronization flags
-  auto [terminationFlag, progressFlags, numThreads] =
-      createActorSynchronizationFlags(rewriter, loc, networkBody);
+  // Step 2: Group actors by device_affinity
+  auto actorGroups = groupActorCallsByAffinity(networkBody);
+  int numThreads = actorGroups.size();
 
-  // Step 3: Wrap all actor calls in async.execute blocks and collect their
+  // Step 3: Create and initialize synchronization flags
+  auto [terminationFlag, progressFlags, _] =
+      createActorSynchronizationFlags(rewriter, loc, networkBody, numThreads);
+
+  // Step 4: Wrap all actor groups in async.execute blocks and collect their
   // tokens
-  SmallVector<Value> asyncTokens = wrapActorCallsInAsyncExecute(
-      rewriter, loc, networkBody, terminationFlag, progressFlags);
+  SmallVector<Value> asyncTokens = wrapActorGroupsInAsyncExecute(
+      rewriter, loc, actorGroups, terminationFlag, progressFlags);
 
-  // Step 4: Create the progress monitoring loop that checks actor progress
+  // Step 5: Create the progress monitoring loop that checks actor progress
   createProgressMonitoringLoop(rewriter, loc, numThreads, terminationFlag,
                                progressFlags);
 
-  // Step 5: Wait for all async tokens to ensure all actor threads complete
+  // Step 6: Wait for all async tokens to ensure all actor threads complete
   for (Value token : asyncTokens) {
     rewriter.create<async::AwaitOp>(loc, token);
   }
@@ -678,9 +691,12 @@ static void createOneThreadPerActorRuntimeLoop(PatternRewriter &rewriter,
 /// the loop, which continues as long as at least one actor reports progress.
 ///
 /// **Multi-threaded mode (one-actor-per-thread):**
-/// Each actor call is wrapped in its own `async.execute` block containing an
-/// infinite loop. A separate monitoring loop tracks progress across all actors
-/// using atomic flags and coordinates termination when no actor makes progress.
+/// Actors are grouped by their `device_affinity` attribute. Actors with the
+/// same affinity execute sequentially in the same thread, while actors without
+/// affinity each get their own thread. Each group is wrapped in its own
+/// `async.execute` block containing an infinite loop. A separate monitoring
+/// loop tracks progress across all groups using atomic flags and coordinates
+/// termination when no group makes progress.
 ///
 /// Example Input:
 /// ```
@@ -785,10 +801,10 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
     }
 
     // Step 2: Create the scheduling loop based on partitioning mode
-    if (partitioningMode == ActorPartitioningMode::SingleThreaded) {
+    if (partitioningMode == ActorPartitioningMode::Singlethreaded) {
       createSingleThreadedRoundRobinLoop(rewriter, loc, networkBody,
                                          entryBlock);
-    } else if (partitioningMode == ActorPartitioningMode::OneActorPerThread) {
+    } else if (partitioningMode == ActorPartitioningMode::Multithreaded) {
       createOneThreadPerActorRuntimeLoop(rewriter, loc, networkBody,
                                          entryBlock);
     } else {
@@ -972,6 +988,9 @@ class ConvertCalCreateInstanceToFuncCall
         op.getLoc(), op.getActorRef(), resultTypes, op.getOperands());
 
     funcCall->setAttr("from_create_instance", rewriter.getUnitAttr());
+    if (auto deviceAffinity = op.getDeviceAffinityAttr()) {
+      funcCall->setAttr("device_affinity", deviceAffinity);
+    }
 
     rewriter.eraseOp(op);
     return success();

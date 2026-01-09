@@ -20,8 +20,8 @@ enum class AllocLocation {
 };
 
 enum class ActorPartitioningMode {
-  SingleThreaded,
-  OneActorPerThread
+  Singlethreaded,
+  Multithreaded
 };
 
 #define GEN_PASS_REGISTRATION

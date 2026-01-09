@@ -81,7 +81,8 @@ void registerLowerCalToLLVMPipeline() {
   mlir::PassPipelineRegistration<CalToLLVMWithMultithreadedFlagsOptions>(
       "lower-cal-to-llvm",
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect.",
-      [](mlir::OpPassManager &pm, const CalToLLVMWithMultithreadedFlagsOptions &options) {
+      [](mlir::OpPassManager &pm,
+         const CalToLLVMWithMultithreadedFlagsOptions &options) {
         // 1. FIFO/CAL-specific lowering
         if (options.mergeSimpleCalActors)
           pm.addPass(mlir::cal::createMergeSimpleCalActors());
@@ -94,7 +95,7 @@ void registerLowerCalToLLVMPipeline() {
 
         if (options.multithreadCalActors) {
           ConvertCalToFuncOptions funcOptions;
-          funcOptions.actor_paritioning_mode = "one-actor-per-thread";
+          funcOptions.actor_paritioning_mode = "multi-threaded";
           pm.addPass(mlir::createConvertCalToFunc(funcOptions));
         } else {
           pm.addPass(mlir::createConvertCalToFunc());

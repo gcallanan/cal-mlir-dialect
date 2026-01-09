@@ -52,4 +52,10 @@ cal.network{
     // CHECK: cal.create_instance @inputs_and_output(%c10_i32 : i32)
     // CHECK:     ports_in (%outputPort, %outputPort_1 : !fifo.output_port<i32>, !fifo.output_port<i32>)
     // CHECK:     ports_out (%inputPort : !fifo.input_port<i32>)
+
+    cal.create_instance @simple device_affinity="cpu0" ()
+    // CHECK: cal.create_instance @simple device_affinity="cpu0" ()
+    
+    cal.create_instance @simple "actor3" device_affinity="cpu0" ()
+    // CHECK: cal.create_instance @simple "actor3" device_affinity="cpu0" ()
 }

@@ -100,7 +100,7 @@ cal.actor @sink(%print_threshold: i32)
 }
 
 cal.network {
-    %maxTokens = arith.constant 100000 : i32
+    %maxTokens = arith.constant 200000 : i32
     %printThreshold = arith.constant 10000 : i32
 
     // Create FIFO channels connecting the actors
@@ -113,26 +113,26 @@ cal.network {
     fifo.print("Starting Pipeline Network\0A\00")
 
     // Instantiate the actors in order: src -> forward1 -> forward2 -> forward3 -> forward4 -> sink
-    cal.create_instance @src "source" (%maxTokens : i32)
+    cal.create_instance @src "source" device_affinity="CPU0" (%maxTokens : i32)
         ports_out(%in0 : !fifo.input_port<i32>)
 
-    cal.create_instance @forward "forwarder1" ()
+    cal.create_instance @forward "forwarder1" device_affinity="CPU1" ()
         ports_in(%out0 : !fifo.output_port<i32>)
         ports_out(%in1 : !fifo.input_port<i32>)
 
-    cal.create_instance @forward "forwarder2" ()
+    cal.create_instance @forward "forwarder2" device_affinity="CPU2"()
         ports_in(%out1 : !fifo.output_port<i32>)
         ports_out(%in2 : !fifo.input_port<i32>)
 
-    cal.create_instance @forward "forwarder3" ()
+    cal.create_instance @forward "forwarder3" device_affinity="CPU3"()
         ports_in(%out2 : !fifo.output_port<i32>)
         ports_out(%in3 : !fifo.input_port<i32>)
 
-    cal.create_instance @forward "forwarder4" ()
+    cal.create_instance @forward "forwarder4" device_affinity="CPU4"()
         ports_in(%out3 : !fifo.output_port<i32>)
         ports_out(%in4 : !fifo.input_port<i32>)
 
-    cal.create_instance @sink "sink" (%printThreshold : i32)
+    cal.create_instance @sink "sink" device_affinity="CPU0" (%printThreshold : i32)
         ports_in(%out4 : !fifo.output_port<i32>)
 
     fifo.print("Pipeline Network Setup Complete\0A\00")

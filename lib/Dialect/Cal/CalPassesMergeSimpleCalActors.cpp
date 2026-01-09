@@ -615,9 +615,10 @@ void replaceChainInstancesWithMerged(cal::NetworkOp networkOp,
 
     // 3. Create the CreateInstanceOp for the merged actor
     std::string instanceName = "merged_instance_" + std::to_string(chainIndex);
+    mlir::StringAttr deviceAffinity = chain.nodes[0].getDeviceAffinityAttr();
     builder.create<cal::CreateInstanceOp>(
-        builder.getUnknownLoc(), builder.getStringAttr(mergedActorName),
-        /*instanceName=*/builder.getStringAttr(instanceName), mergedOperands);
+        builder.getUnknownLoc(), builder.getStringAttr(mergedActorName), 
+        /*instanceName=*/builder.getStringAttr(instanceName), /*deviceAffinity=*/deviceAffinity, mergedOperands);
 
     // 4. Delete all fifos and nodes in the chain
     // 4.1 Get list of fifos to delete
