@@ -25,6 +25,10 @@
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 
+// Async dialect
+#include "mlir/Dialect/Async/IR/Async.h"
+#include "mlir/Dialect/Async/Passes.h"
+
 // MLIR Dialect Transforms
 #include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
@@ -51,8 +55,8 @@
 // Project-specific conversions and Transformations
 #include "Conversion/Passes.h"
 #include "Dialect/Fifo/BufferizableOpInterfaceImpl.h"
-#include "Transforms/Passes.h"
 #include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
+#include "Transforms/Passes.h"
 
 // All the CAL pipelines
 #include "Conversion/CalLoweringPipelines/CalLoweringPipelines.h"
@@ -69,10 +73,10 @@ int main(int argc, char **argv) {
   registry.insert<
       mlir::cal::CalDialect, mlir::fifo::FifoDialect, mlir::arith::ArithDialect,
       mlir::func::FuncDialect, mlir::memref::MemRefDialect,
-      mlir::index::IndexDialect, mlir::LLVM::LLVMDialect,
-      mlir::cf::ControlFlowDialect, mlir::scf::SCFDialect,
-      mlir::math::MathDialect, mlir::func::FuncDialect, mlir::gpu::GPUDialect,
-      mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
+      mlir::async::AsyncDialect, mlir::index::IndexDialect,
+      mlir::LLVM::LLVMDialect, mlir::cf::ControlFlowDialect,
+      mlir::scf::SCFDialect, mlir::math::MathDialect, mlir::func::FuncDialect,
+      mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
       mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect,
       mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect,
       mlir::affine::AffineDialect, mlir::ub::UBDialect>();

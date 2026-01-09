@@ -10,9 +10,11 @@
 #include "Dialect/Cal/CalPasses.h"
 #include "Dialect/Cal/CalTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Async/IR/Async.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
@@ -28,6 +30,529 @@ namespace mlir {
 #define GEN_PASS_DEF_CONVERTCALTOFUNC
 #include "Conversion/Passes.h.inc"
 
+/// Parses the actor partitioning mode from a string option.
+///
+/// This function converts a string representation of the actor partitioning
+/// mode into the corresponding `ActorPartitioningMode` enum value. It is used
+/// to configure how actors are scheduled and executed in the generated code.
+///
+/// @param mode The string representation of the partitioning mode
+/// @return The corresponding ActorPartitioningMode enum value
+/// @throws llvm::report_fatal_error if the mode string is not recognized
+static ActorPartitioningMode parsePartitioningMode(const std::string &mode) {
+  if (mode == "single-threaded")
+    return ActorPartitioningMode::SingleThreaded;
+  else if (mode == "one-actor-per-thread")
+    return ActorPartitioningMode::OneActorPerThread;
+  else {
+    llvm::report_fatal_error(llvm::Twine("Unknown actor partitioning mode: ") +
+                             mode);
+  }
+}
+
+/// Creates and initializes the termination and progress flags for
+/// multi-threaded actor execution.
+///
+/// This function allocates and initializes two memory regions used for
+/// coordinating multi-threaded actor execution:
+///
+/// 1. **Termination flag** (memref<1xi32>) initialized to 0:
+///    Used to signal when all actors should stop executing. When set to 1,
+///    all actor threads check this flag and terminate.
+///
+/// 2. **Progress flags array** (memref<numActors x i32>) with each element
+///    initialized to 0:
+///    Used to track whether each actor has made progress in the current
+///    iteration. Each actor resets its flag to 0 when it performs work.
+///    The monitoring loop reads these flags (resetting them to 1) to detect
+///    global progress.
+///
+/// The generated structure:
+/// ```
+/// %c0_i32 = arith.constant 0 : i32
+/// %c0 = arith.constant 0 : index
+/// %termination_flag = memref.alloc() : memref<1xi32>
+/// %init_term = memref.atomic_rmw assign %c0_i32, %termination_flag[%c0] :
+///   (i32, memref<1xi32>) -> i32
+/// %progress_flags = memref.alloc() : memref<4xi32>
+/// %init_progress_0 = memref.atomic_rmw assign %c0_i32, %progress_flags[%c0] :
+///   (i32, memref<4xi32>) -> i32
+/// %init_progress_1 = memref.atomic_rmw assign %c0_i32, %progress_flags[%c1] :
+///   (i32, memref<4xi32>) -> i32
+/// // ... one initialization per actor
+/// ```
+///
+/// @param rewriter The pattern rewriter used to create operations
+/// @param loc The location to associate with created operations
+/// @param networkBody The block containing actor function calls (used to count
+///   actors)
+/// @return A tuple containing (terminationFlag, progressFlags, numActors)
+static std::tuple<Value, Value, int>
+createActorSynchronizationFlags(PatternRewriter &rewriter, Location loc,
+                                Block &networkBody) {
+
+  // Count the number of actor calls in the network body
+  int numActors = 0;
+  for (Operation &op : networkBody) {
+    if (auto callOp = llvm::dyn_cast<func::CallOp>(op)) {
+      if (callOp->hasAttr("from_create_instance")) {
+        numActors++;
+      }
+    }
+  }
+
+  // Create constant values for initialization
+  auto c0_i32 =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+  auto c0_index =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
+
+  // Create termination flag: memref<1xi32>
+  auto terminationFlagType = MemRefType::get({1}, rewriter.getI32Type());
+  Value terminationFlag =
+      rewriter.create<memref::AllocOp>(loc, terminationFlagType);
+
+  // Initialize termination flag to 0
+  rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
+                                       c0_i32, terminationFlag,
+                                       ValueRange{c0_index});
+
+  // Create progress flags array: memref<numActors x i32>
+  auto progressFlagsType = MemRefType::get({numActors}, rewriter.getI32Type());
+  Value progressFlags =
+      rewriter.create<memref::AllocOp>(loc, progressFlagsType);
+
+  // Initialize each progress flag to 0
+  for (int i = 0; i < numActors; i++) {
+    auto indexConst =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i));
+    rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
+                                         c0_i32, progressFlags,
+                                         ValueRange{indexConst});
+  }
+
+  return std::make_tuple(terminationFlag, progressFlags, numActors);
+}
+
+/// Declares the `usleep` external function at module level if not already
+/// present.
+///
+/// This function ensures that `llvm.func @usleep(i32) -> i32` is declared in
+/// the module before any calls to it are made. The declaration is inserted at
+/// the beginning of the module.
+///
+/// @param rewriter The pattern rewriter used to create operations
+/// @param loc The location to associate with the declaration
+/// @param entryBlock The entry block of the function where usleep will be
+/// called
+static void declareUsleepFunction(PatternRewriter &rewriter, Location loc,
+                                  Block *entryBlock) {
+  // Get the parent module to declare the usleep function
+  Operation *parentOp = entryBlock->getParentOp();
+  while (parentOp && !isa<ModuleOp>(parentOp)) {
+    parentOp = parentOp->getParentOp();
+  }
+
+  if (auto moduleOp = dyn_cast_or_null<ModuleOp>(parentOp)) {
+    // Check if usleep is already declared, if not, declare it
+    if (!moduleOp.lookupSymbol("usleep")) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(moduleOp.getBody());
+
+      auto i32Type = rewriter.getI32Type();
+      auto usleepFuncType = LLVM::LLVMFunctionType::get(i32Type, {i32Type});
+      rewriter.create<LLVM::LLVMFuncOp>(loc, "usleep", usleepFuncType);
+    }
+  } else {
+    llvm::report_fatal_error(
+        "Failed to find parent ModuleOp for usleep declaration");
+  }
+}
+
+/// Wraps each actor function call in an `async.execute` block with an infinite
+/// loop.
+///
+/// This function iterates through all actor function calls in the network body
+/// and wraps each one in its own `async.execute` region containing an infinite
+/// while loop. Each actor monitors a shared termination flag and updates its
+/// progress flag to coordinate with the monitoring loop.
+///
+/// The generated structure for each actor:
+/// ```
+/// %token = async.execute {
+///   scf.while (%arg0 = %true) : (i1) -> () {
+///     // Check termination flag atomically
+///     %term_val = memref.atomic_rmw addi %c0_i32, %termination_flag[%c0] :
+///       (i32, memref<1xi32>) -> i32
+///     %should_terminate = arith.cmpi ne, %term_val, %c0_i32 : i32
+///     %should_continue = arith.xori %should_terminate, %true : i1
+///     scf.condition(%should_continue)
+///   } do {
+///     // Call the actor function
+///     %result = func.call @actor(...) : (...) -> i1
+///     // Update progress flag if actor made progress (returned true)
+///     scf.if %result {
+///       memref.atomic_rmw assign %c0_i32, %progress_flags[%actor_idx] :
+///         (i32, memref<Nxi32>) -> i32
+///     }
+///     scf.yield %true : i1
+///   }
+///   async.yield
+/// }
+/// ```
+///
+/// @param rewriter The pattern rewriter used to create operations
+/// @param loc The location to associate with created operations
+/// @param networkBody The block containing actor function calls to wrap
+/// @param terminationFlag The shared termination flag memref
+/// @param progressFlags The shared progress flags array memref
+/// @return A vector of async tokens, one for each wrapped actor call
+static SmallVector<Value>
+wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
+                             Block &networkBody, Value terminationFlag,
+                             Value progressFlags) {
+  SmallVector<Value> asyncTokens;
+
+  int actorIndex = 0;
+  while (!networkBody.empty()) {
+    Operation &actorCall = networkBody.front();
+
+    // Create async.execute block for this actor
+    auto executeOp = rewriter.create<async::ExecuteOp>(
+        loc, TypeRange{}, ValueRange{}, ValueRange{});
+
+    // Clear the default block that comes with async.execute
+    executeOp.getRegion().getBlocks().clear();
+
+    // Create a new block for the async body
+    Block *executeBody = rewriter.createBlock(&executeOp.getBodyRegion());
+    rewriter.setInsertionPointToStart(executeBody);
+
+    // Create an infinite while loop inside the async.execute block
+    auto trueVal =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
+
+    auto whileOp =
+        rewriter.create<scf::WhileOp>(loc, TypeRange{}, ValueRange{trueVal});
+
+    // Create the condition check block that monitors the termination flag
+    rewriter.createBlock(&whileOp.getBefore());
+    Block &condBlock = whileOp.getBefore().front();
+    condBlock.addArgument(rewriter.getI1Type(), loc);
+    rewriter.setInsertionPointToStart(&condBlock);
+
+    // Create constants needed for termination check
+    auto c0_i32 =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+    auto idx0 =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
+
+    // Atomically read termination flag
+    auto termVal = rewriter.create<memref::AtomicRMWOp>(
+        loc, arith::AtomicRMWKind::addi, c0_i32, terminationFlag,
+        ValueRange{idx0});
+
+    // Check if we should terminate (flag != 0)
+    auto shouldTerminate = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ne, termVal, c0_i32.getResult());
+
+    // Invert to get "should continue" condition
+    auto shouldContinue = rewriter.create<arith::XOrIOp>(
+        loc, shouldTerminate.getResult(), trueVal.getResult());
+
+    rewriter.create<scf::ConditionOp>(loc, shouldContinue.getResult(),
+                                      ValueRange{});
+
+    // Create the loop body block
+    rewriter.createBlock(&whileOp.getAfter());
+    Block &bodyBlock = whileOp.getAfter().front();
+    rewriter.setInsertionPointToStart(&bodyBlock);
+
+    // Move the actor function call into the while loop body
+    actorCall.moveBefore(&bodyBlock, bodyBlock.end());
+    Value actorResult = actorCall.getResult(0);
+
+    // If actor made progress (returned true), reset its progress flag to 0
+    auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange{}, actorResult,
+                                           /*hasElse=*/false);
+    rewriter.setInsertionPointToStart(ifOp.thenBlock());
+
+    auto cActorIdx = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getIndexAttr(actorIndex));
+    rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
+                                         c0_i32, progressFlags,
+                                         ValueRange{cActorIdx});
+
+    // Continue the infinite loop
+    rewriter.setInsertionPointAfter(ifOp);
+    rewriter.create<scf::YieldOp>(loc, ValueRange{trueVal});
+
+    // Add async.yield terminator after the while loop
+    rewriter.setInsertionPointToEnd(executeBody);
+    rewriter.create<async::YieldOp>(loc, ValueRange{});
+
+    // Store the async token for synchronization
+    asyncTokens.push_back(executeOp.getToken());
+
+    // Move to next actor
+    rewriter.setInsertionPointAfter(executeOp);
+    actorIndex++;
+  }
+
+  return asyncTokens;
+}
+
+/// Creates the monitoring while loop that checks actor progress and manages
+/// termination.
+///
+/// This function generates a while loop that:
+/// 1. Reads all progress flags atomically (resetting them to 0)
+/// 2. ORs them together to check if any actor made progress
+/// 3. Sleeps briefly to avoid busy-waiting
+/// 4. Continues looping if progress was made, otherwise exits
+/// 5. Sets the termination flag when no progress is detected
+///
+/// The generated structure:
+/// ```
+/// scf.while (%arg0 = %true) : (i1) -> () {
+///   scf.condition(%arg0)
+/// } do {
+///   %prog_0 = memref.atomic_rmw assign %c1_i32, %progress_flags[%c0] : (i32,
+///   memref<4xi32>) -> i32
+//    %prog_1 = memref.atomic_rmw assign %c1_i32, %progress_flags[%c1] : (i32,
+//    memref<4xi32>) -> i32
+///   ...
+///   %any_progress = arith.ori %prog_0, %prog_1 : i32
+///   %has_progress = arith.cmpi ne, %any_progress, %c0_i32 : i32
+///   %sleep_res = llvm.call @usleep(%sleep_us) : (i32) -> i32
+///   scf.yield %has_progress : i1
+/// }
+/// %set_term = memref.atomic_rmw assign %c1_i32, %termination_flag[%c0] : (i32,
+/// memref<1xi32>) -> i32
+/// ```
+///
+/// @param rewriter The pattern rewriter used to create operations
+/// @param loc The location to associate with created operations
+/// @param numThreads The number of actor threads to monitor
+/// @param terminationFlag The termination flag memref to set when stopping
+/// @param progressFlags The progress flags array memref to monitor
+static void createProgressMonitoringLoop(PatternRewriter &rewriter,
+                                         Location loc, int numThreads,
+                                         Value terminationFlag,
+                                         Value progressFlags) {
+  // Create initial true value for loop initialization
+  auto trueVal =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
+
+  // Create the while loop structure
+  auto whileOp =
+      rewriter.create<scf::WhileOp>(loc, TypeRange{}, ValueRange{trueVal});
+
+  // Create the condition check block
+  rewriter.createBlock(&whileOp.getBefore());
+  Block &condBlock = whileOp.getBefore().front();
+  condBlock.addArgument(rewriter.getI1Type(), loc);
+  rewriter.setInsertionPointToStart(&condBlock);
+  Value argToCheck = condBlock.getArgument(0);
+  rewriter.create<scf::ConditionOp>(loc, argToCheck, ValueRange{});
+
+  // Create the loop body block
+  rewriter.createBlock(&whileOp.getAfter());
+  Block &bodyBlock = whileOp.getAfter().front();
+  rewriter.setInsertionPointToStart(&bodyBlock);
+
+  // Create constant values needed for atomic operations
+  auto c0_i32 =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+  auto c1_i32 =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(1));
+
+  // Read all progress flags atomically and reset them to 1
+  SmallVector<Value> progressFlagValues;
+  for (int i = 0; i < numThreads; i++) {
+    auto indexConst =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i));
+    auto progressValue = rewriter.create<memref::AtomicRMWOp>(
+        loc, arith::AtomicRMWKind::assign, c1_i32, progressFlags,
+        ValueRange{indexConst});
+    progressFlagValues.push_back(progressValue.getResult());
+  }
+
+  // OR all progress flags together to check if any thread made progress
+  Value anyProgress = progressFlagValues[0];
+  for (int i = 1; i < numThreads; i++) {
+    anyProgress =
+        rewriter.create<arith::OrIOp>(loc, anyProgress, progressFlagValues[i])
+            .getResult();
+  }
+
+  // Convert i32 to i1 for condition check
+  // If anyProgress == 0, then no actor made progress and we should terminate
+  auto hasProgress = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, anyProgress, c0_i32.getResult());
+
+  // Sleep for 50ms using usleep to avoid busy-waiting
+  auto sleepUs = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI32IntegerAttr(50000));
+
+  auto i32Type = rewriter.getI32Type();
+  auto usleepType = LLVM::LLVMFunctionType::get(i32Type, {i32Type});
+  rewriter.create<LLVM::CallOp>(loc, usleepType, "usleep", ValueRange{sleepUs});
+
+  // Yield the progress check result to determine if loop continues
+  rewriter.create<scf::YieldOp>(loc, ValueRange{hasProgress});
+
+  // After the while loop exits, set the termination flag
+  rewriter.setInsertionPointAfter(whileOp);
+
+  auto idx0 = rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
+  rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
+                                       c1_i32, terminationFlag,
+                                       ValueRange{idx0});
+}
+
+/// Creates a single-threaded round-robin scheduling loop for actor execution.
+///
+/// This function generates an `scf.while` loop that repeatedly invokes all
+/// actor functions in round-robin fashion until no actor reports progress.
+/// Each actor function call returns an `i1` flag indicating whether it
+/// performed an action. These flags are OR'ed together to determine if the
+/// loop should continue.
+///
+/// The generated structure:
+/// ```
+/// scf.while (%arg0 = %true) : (i1) -> () {
+///   scf.condition(%arg0)
+/// } do {
+///   %0 = func.call @actor1(...) -> i1
+///   %1 = func.call @actor2(...) -> i1
+///   %progress = arith.ori %0, %1 : i1
+///   scf.yield %progress : i1
+/// }
+/// ```
+static void createSingleThreadedRoundRobinLoop(PatternRewriter &rewriter,
+                                               Location loc, Block &networkBody,
+                                               Block *entryBlock) {
+  // Create initial true value for loop initialization
+  auto trueVal =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
+
+  // Create the while loop structure
+  auto whileOp =
+      rewriter.create<scf::WhileOp>(loc, TypeRange{}, ValueRange{trueVal});
+
+  // Create the condition check block
+  rewriter.createBlock(&whileOp.getBefore());
+  Block &condBlock = whileOp.getBefore().front();
+  condBlock.addArgument(rewriter.getI1Type(), loc);
+  rewriter.setInsertionPointToStart(&condBlock);
+  Value argToCheck = condBlock.getArgument(0);
+  rewriter.create<scf::ConditionOp>(loc, argToCheck, ValueRange{});
+
+  // Create the loop body block
+  rewriter.createBlock(&whileOp.getAfter());
+  Block &bodyBlock = whileOp.getAfter().front();
+  rewriter.setInsertionPointToStart(&bodyBlock);
+
+  // Initialize progress flag to false
+  auto constFalse =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+  Value actionPerformedFlag = constFalse.getResult();
+
+  // Move all actor function calls into the loop body and OR their results
+  while (!networkBody.empty()) {
+    Operation &opToMove = networkBody.front();
+    opToMove.moveBefore(&bodyBlock, bodyBlock.end());
+    Value result = opToMove.getResult(0);
+    auto newActionPerformedFlag =
+        rewriter.create<arith::OrIOp>(loc, result, actionPerformedFlag);
+    actionPerformedFlag = newActionPerformedFlag.getResult();
+  }
+
+  // Yield the combined progress flag back to the condition block
+  rewriter.create<scf::YieldOp>(loc, ValueRange{actionPerformedFlag});
+
+  // Reset insertion point to continue building the main function
+  rewriter.setInsertionPointToEnd(entryBlock);
+}
+
+/// Creates a multi-threaded execution model with one thread per actor.
+///
+/// This function generates a multi-threaded runtime structure where each actor
+/// runs in its own `async.execute` block with an infinite loop. A central
+/// monitoring loop tracks progress across all actors using atomic flags and
+/// coordinates global termination when no actor makes progress.
+///
+/// The generated structure consists of three main components:
+///
+/// 1. **Synchronization Infrastructure:**
+///    - Termination flag (memref<1xi32>): Signals when all actors should stop
+///    - Progress flags array (memref<Nxi32>): Tracks whether each actor made
+///    progress
+///
+/// 2. **Per-Actor Async Blocks:**
+///    Each actor is wrapped in its own async.execute containing:
+///    ```
+///    %token = async.execute {
+///      scf.while (%arg0 = %true) : (i1) -> () {
+///        %term_val = memref.atomic_rmw addi %c0_i32, %termination_flag[%c0]
+///        %should_continue = arith.xori %should_terminate, %true : i1
+///        scf.condition(%should_continue)
+///      } do {
+///        %result = func.call @actor(...) : (...) -> i1
+///        scf.if %result {
+///          memref.atomic_rmw assign %c0_i32, %progress_flags[%actor_idx]
+///        }
+///        scf.yield %true : i1
+///      }
+///      async.yield
+///    }
+///    ```
+///
+/// 3. **Progress Monitoring Loop:**
+///    A central loop that:
+///    - Atomically reads and resets all progress flags
+///    - ORs them together to check if any actor made progress
+///    - Sleeps briefly (50ms) to avoid busy-waiting
+///    - Exits when no progress is detected across all actors
+///    - Sets the termination flag to signal all actors to stop
+///
+/// 4. **Synchronization Barrier:**
+///    After setting the termination flag, awaits all async tokens to ensure
+///    all actor threads have completed before returning.
+///
+/// @param rewriter The pattern rewriter used to create operations
+/// @param loc The location to associate with created operations
+/// @param networkBody The block containing actor function calls to wrap
+/// @param entryBlock The entry block of the main function being constructed
+static void createOneThreadPerActorRuntimeLoop(PatternRewriter &rewriter,
+                                               Location loc, Block &networkBody,
+                                               Block *entryBlock) {
+  // Step 1: Ensure usleep is declared in the module for progress monitoring
+  declareUsleepFunction(rewriter, loc, entryBlock);
+
+  // Step 2: Create and initialize synchronization flags
+  auto [terminationFlag, progressFlags, numThreads] =
+      createActorSynchronizationFlags(rewriter, loc, networkBody);
+
+  // Step 3: Wrap all actor calls in async.execute blocks and collect their
+  // tokens
+  SmallVector<Value> asyncTokens = wrapActorCallsInAsyncExecute(
+      rewriter, loc, networkBody, terminationFlag, progressFlags);
+
+  // Step 4: Create the progress monitoring loop that checks actor progress
+  createProgressMonitoringLoop(rewriter, loc, numThreads, terminationFlag,
+                               progressFlags);
+
+  // Step 5: Wait for all async tokens to ensure all actor threads complete
+  for (Value token : asyncTokens) {
+    rewriter.create<async::AwaitOp>(loc, token);
+  }
+
+  // Reset insertion point to continue building the main function
+  rewriter.setInsertionPointToEnd(entryBlock);
+}
+
 /// Converts a `cal.network` operation into a top-level `func.func @main`
 /// function.
 ///
@@ -42,22 +567,31 @@ namespace mlir {
 /// appropriate result SSA values.
 /// - `fifo.print` operations are lowered directly to their runtime equivalents.
 /// - Each `cal.create_instance` is replaced with a call to a function
-/// representing the actor,
-///   preserving operand and port associations. These calls are wrapped in an
-///   `scf.while` loop, simulating the actor network's scheduling by re-invoking
-///   the actor functions in each iteration. The boolean return flag from each
-///   call indicates whether an action was successfully fired. These flags are
-///   `OR`ed together to determine whether to continue the loop.
+/// representing the actor, preserving operand and port associations.
 ///
-/// The loop continues as long as at least one actor reports progress,
-/// effectively emulating a cooperative actor scheduler at runtime. Example
-/// Input: cal.network {
+/// The execution model depends on the selected actor partitioning mode:
+///
+/// **Single-threaded mode:**
+/// Actor calls are wrapped in an `scf.while` loop that simulates round-robin
+/// scheduling by re-invoking actor functions in each iteration. The boolean
+/// return flag from each call indicates whether an action was successfully
+/// fired. These flags are `OR`ed together to determine whether to continue
+/// the loop, which continues as long as at least one actor reports progress.
+///
+/// **Multi-threaded mode (one-actor-per-thread):**
+/// Each actor call is wrapped in its own `async.execute` block containing an
+/// infinite loop. A separate monitoring loop tracks progress across all actors
+/// using atomic flags and coordinates termination when no actor makes progress.
+///
+/// Example Input:
+/// ```
+/// cal.network {
 ///   %0 = arith.constant 11 : i32
 ///   %1 = arith.constant 12 : i32
 ///
 ///   %in0, %out0 = fifo.create<i32>(3) : !fifo.input_port<i32>,
-///   !fifo.output_port<i32> %in1, %out1 = fifo.create<i32>(3) :
-///   !fifo.input_port<i32>, !fifo.output_port<i32>
+///       !fifo.output_port<i32> %in1, %out1 = fifo.create<i32>(3) :
+///       !fifo.input_port<i32>, !fifo.output_port<i32>
 ///
 ///   fifo.print("start\n\00")
 ///
@@ -67,16 +601,19 @@ namespace mlir {
 ///   cal.create_instance @src "srcB" (%1: i32)
 ///       ports_out(%in1 : !fifo.input_port<i32>)
 /// }
+/// ```
 ///
-/// Example Output:
+/// Example Output (single-threaded mode):
+/// ```
 /// func.func @main() {
 ///   %true = arith.constant true
 ///   %c11_i32 = arith.constant 11 : i32
 ///   %c12_i32 = arith.constant 12 : i32
 ///
 ///   %inputPort, %outputPort = fifo.create<i32>(3) : !fifo.input_port<i32>,
-///   !fifo.output_port<i32> %inputPort_0, %outputPort_1 = fifo.create<i32>(3) :
-///   !fifo.input_port<i32>, !fifo.output_port<i32>
+///       !fifo.output_port<i32>
+///   %inputPort_0, %outputPort_1 = fifo.create<i32>(3) :
+///       !fifo.input_port<i32>, !fifo.output_port<i32>
 ///
 ///   fifo.print("start\0A\00")
 ///
@@ -84,21 +621,27 @@ namespace mlir {
 ///     scf.condition(%arg0)
 ///   } do {
 ///     %0 = func.call @src(%c11_i32, %inputPort) {from_create_instance} : (i32,
-///     !fifo.input_port<i32>) -> i1 %1 = func.call @src(%c12_i32, %inputPort_0)
-///     {from_create_instance} : (i32, !fifo.input_port<i32>) -> i1 %2 =
-///     arith.ori %1, %0 : i1 scf.yield %2 : i1
+///        !fifo.input_port<i32>) -> i1
+///     %1 = func.call @src(%c12_i32, %inputPort_0) {from_create_instance} :
+///        (i32, !fifo.input_port<i32>) -> i1
+///     %2 = arith.ori %1, %0 : i1
+///     scf.yield %2 : i1
 ///   }
 ///   return
 /// }
+/// ```
 struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
-  using OpRewritePattern::OpRewritePattern;
+
+  ActorPartitioningMode partitioningMode;
+
+  ConvertCalNetworkToMainFunc(MLIRContext *context, ActorPartitioningMode mode)
+      : OpRewritePattern<cal::NetworkOp>(context), partitioningMode(mode) {}
 
   LogicalResult matchAndRewrite(cal::NetworkOp op,
                                 PatternRewriter &rewriter) const override {
 
-    // Walk through the network body and check for any cal.create_instance ops.
-    // If any are found, return failure. We need them to be transformed into
-    // func.func calls first.
+    // Verify that all cal.create_instance ops have been converted to func.call.
+    // This pattern expects to process only the lowered representation.
     for (Operation &innerOp : op.getBody().front()) {
       if (mlir::isa<cal::CreateInstanceOp>(innerOp)) {
         return failure();
@@ -111,8 +654,7 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
     Block *entryBlock = function.addEntryBlock();
     rewriter.setInsertionPointToStart(entryBlock);
 
-    // Ensure the network op has a body with at least one block.
-    // If not, create an empty main function.
+    // Handle empty network - create a minimal main function
     if (op.getBody().empty()) {
       rewriter.create<func::ReturnOp>(function.getLoc());
       rewriter.replaceOp(op, function);
@@ -120,70 +662,43 @@ struct ConvertCalNetworkToMainFunc : public OpRewritePattern<cal::NetworkOp> {
     }
 
     Block &networkBody = op.getBody().front();
-    // 1. Here we put all instructions that need to be executed once before the
-    // while loop starts.
 
+    // Step 1: Move initialization operations (constants, FIFO creation, prints)
+    // into the main function entry block before the scheduling loop.
+    // Actor function calls (marked with "from_create_instance") are skipped
+    // and will be processed in Step 2.
     auto beginIt = networkBody.begin();
     auto endIt = networkBody.end();
 
     for (auto it = beginIt; it != endIt;) {
-      Operation &opToMove = *it; // reference to the operation
-      ++it; // increment iterator before moving the operation
+      Operation &opToMove = *it;
+      // Increment iterator before moving to avoid invalidation
+      ++it;
 
+      // Skip actor calls - these go into the scheduling loop
       if (auto callOp = llvm::dyn_cast<func::CallOp>(opToMove)) {
         if (callOp->hasAttr("from_create_instance")) {
-          continue; // Skip operations that are from CreateInstance
+          continue;
         }
       }
 
-      // llvm::outs() << "Moving operation: " << opToMove << "\n";
       opToMove.moveBefore(entryBlock, entryBlock->end());
     }
 
-    // 2. Here we create a while loop that will execute all actors in a round
-    // robin fashion until none of them performs any action.
-    auto trueVal = rewriter.create<mlir::arith::ConstantOp>(
-        loc, rewriter.getBoolAttr(true));
-
-    // 2.1 Create the while loop (do not fill in its body/condition blocks yet).
-    // This loop executes all actors in a round robin fahsion until none of them
-    // performs any action.
-    auto whileOp = rewriter.create<mlir::scf::WhileOp>(loc, TypeRange{},
-                                                       ValueRange{trueVal});
-
-    // 2.2 Create the condition check block, basically just check that a
-    // condition representing progress was made in the previous iteration. If no
-    // progress was made, the loop terminates.
-    rewriter.createBlock(&whileOp.getBefore());
-    Block &condBlock = whileOp.getBefore().front();
-    condBlock.addArgument(rewriter.getI1Type(), loc);
-    rewriter.setInsertionPointToStart(&condBlock);
-    Value argToCheck = condBlock.getArgument(0);
-    rewriter.create<mlir::scf::ConditionOp>(loc, argToCheck, ValueRange{});
-
-    // 2.3 Now we can create the body of the while loop, which will contain the
-    // logic to execute all actors. This block will be executed repeatedly
-    // until no actor performs any action.
-
-    rewriter.createBlock(&whileOp.getAfter());
-    Block &bodyBlock = whileOp.getAfter().front();
-    rewriter.setInsertionPointToStart(&bodyBlock);
-
-    auto constFalse = rewriter.create<mlir::arith::ConstantOp>(
-        loc, rewriter.getBoolAttr(false));
-    Value actionPerformedFlag = constFalse.getResult();
-    while (!networkBody.empty()) {
-      Operation &opToMove = networkBody.front();
-      opToMove.moveBefore(&bodyBlock, bodyBlock.end());
-      Value result = opToMove.getResult(0);
-      auto newActionPerformedFlag =
-          rewriter.create<mlir::arith::OrIOp>(loc, result, actionPerformedFlag);
-      actionPerformedFlag = newActionPerformedFlag.getResult();
+    // Step 2: Create the scheduling loop based on partitioning mode
+    if (partitioningMode == ActorPartitioningMode::SingleThreaded) {
+      createSingleThreadedRoundRobinLoop(rewriter, loc, networkBody,
+                                         entryBlock);
+    } else if (partitioningMode == ActorPartitioningMode::OneActorPerThread) {
+      createOneThreadPerActorRuntimeLoop(rewriter, loc, networkBody,
+                                         entryBlock);
+    } else {
+      // This should never happen due to validation in parsePartitioningMode,
+      // but handle defensively
+      return failure();
     }
 
-    rewriter.create<scf::YieldOp>(loc, ValueRange{actionPerformedFlag});
-
-    // 3. Finally, we add the return operation to the main function.
+    // Step 3: Add the return terminator to complete the main function
     rewriter.setInsertionPointToEnd(entryBlock);
     rewriter.create<func::ReturnOp>(function.getLoc());
 
@@ -267,7 +782,7 @@ class ConvertCalActorToFunc : public OpRewritePattern<cal::ActorOp> {
         hasExecutionBody = true;
         // The last operation in the body can be an ExecutionBody it contains
         // a region with the actual execution logic. We need to clone all the
-        // instructions in this region into the function body. We do not
+        // instructions in this region into the function body.
         auto execBodyOp = mlir::cast<cal::ExecutionBody>(opToClone);
         auto beginExecBodyIt = execBodyOp.getBody().op_begin();
         auto endExecBodyIt = execBodyOp.getBody().op_end();
@@ -378,13 +893,10 @@ class ConvertCalCreateInstanceToFuncCall
 ///     boolean flag that indicates whether the actor performed any action.
 ///   - The top-level `cal.network` op is rewritten into a `func.func` named
 ///     "main". This function executes any one-time initialization logic and
-///     contains a `scf.while` loop that invokes each actor in a round-robin
-///     fashion until no actor reports progress.
+///     contains either a single-threaded round-robin scheduling loop or a
+///     multi-threaded execution model with async.execute blocks and progress
+///     monitoring, depending on the selected actor partitioning mode.
 ///
-/// The rewrite patterns are applied greedily. While the ordering of patterns
-/// is not strictly enforced, the `ConvertCalNetworkToMainFunc` pattern is
-/// assigned the lowest benefit to suggest it should be applied last, after all
-/// actors and terminators have been lowered.
 ///
 /// This pass enables the transformation of a CAL program into a purely
 /// `func`-based representation, which is directly compatible with downstream
@@ -392,7 +904,15 @@ class ConvertCalCreateInstanceToFuncCall
 class ConvertCalToFuncPass
     : public impl::ConvertCalToFuncBase<ConvertCalToFuncPass> {
 public:
+  ConvertCalToFuncPass(const ConvertCalToFuncOptions &options)
+      : impl::ConvertCalToFuncBase<ConvertCalToFuncPass>(options) {}
+
+  ConvertCalToFuncPass() {}
+
   void runOnOperation() final {
+
+    ActorPartitioningMode partitioningMode =
+        parsePartitioningMode(actor_paritioning_mode);
 
     // 1. Check if the module contains any `cal.action` operations.
     // If it does, we cannot convert the module to func, as `cal.action` is
@@ -419,13 +939,7 @@ public:
     patterns.add<ConvertCalActorToFunc>(&getContext());
     patterns.add<ConvertCalTerminatorToFuncTerminator>(&getContext());
     patterns.add<ConvertCalCreateInstanceToFuncCall>(&getContext());
-    // We set the benefit to 0 for the ConvertCalNetworkToMainFunc pattern
-    // to ensure it is applied last, after all other patterns.
-    // This is because it relies on the fact that all actors have been converted
-    // to functions. I am not actually sure if this works properly, changing the
-    // benefit did not change the behaviour. So we just watch this space for
-    // future errors.
-    patterns.add<ConvertCalNetworkToMainFunc>(&getContext(), /*benefit=*/0);
+    patterns.add<ConvertCalNetworkToMainFunc>(&getContext(), partitioningMode);
 
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
@@ -434,9 +948,3 @@ public:
 };
 
 } // namespace mlir
-
-/// Creates a pass to lower cal.network and cal.actor ops into functions and
-/// function calls.
-std::unique_ptr<mlir::Pass> mlir::createConvertCalToFuncPass() {
-  return std::make_unique<mlir::ConvertCalToFuncPass>();
-}

@@ -6,7 +6,7 @@ include "Dialect/Cal/CalDialect.td"
 include "Dialect/Fifo/FifoDialect.td"
 
 def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
-    let summary = "A pass that converts CAL actors and networks to a series of functions that are called in a loop";
+    let summary = "A pass that converts CAL actors and networks to function calls and a main function";
     let description = [{
         Creates a pass to lower CAL dialect operations (`cal.actor`, `cal.network`,
         and related constructs) into standard MLIR `func` operations suitable for
@@ -19,11 +19,14 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
           - Rewrite `cal.action_done` into a `func.return` to signal action
             completion.
           - Transform the top-level `cal.network` into a `func.func` called "main",
-            which initializes the network and then repeatedly calls each actor
-            function in a `scf.while` loop until no actor performs any further work.
+            which initializes the network and starts the execution.
         After this transformation, the CAL program is expressed entirely in terms of
         `func.func`, `func.call`, and other core dialects, enabling straightforward
         lowering to LLVM.
+
+        This pass supports creation of a multi-threaded implementation by allowing
+        actors to be executed in single threads. This is controlled via the
+        `--actor-partitioning-mode` flag.
 
         NOTE: This pass only supports cal.actors containing a cal.execution_body
         and does not support cal.actors containing cal.action operations. If
@@ -37,13 +40,20 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
         Description originally written by Gareth Callanan and refined using ChatGPT.
     }];
 
-    let constructor = "mlir::createConvertCalToFuncPass()";
+    let options = [
+      Option<"actor_paritioning_mode", "actor-paritioning-mode", "std::string",
+        /*default=*/"\"single-threaded\"",
+        "Actor partitioning mode : single-threaded | one-actor-per-thread">,
+    ];
 
     let dependentDialects = [
         "func::FuncDialect",
         "fifo::FifoDialect",
+        "async::AsyncDialect",
+        "LLVM::LLVMDialect",
         "cal::CalDialect",
-        "scf::SCFDialect"
+        "scf::SCFDialect",
+        "memref::MemRefDialect",
     ];
 }
 
@@ -63,7 +73,7 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
       `cal.get` retrieves from buffer and converts to tensor using `bufferization.to_tensor`,
       and `cal.set` converts tensor to memref using `bufferization.to_memref` and copies.
 
-    Memory deallocation can be handled by other MLIR passes (--buffer-deallocation).
+    Memory deallocation can be handled by other MLIR passes (such as --buffer-deallocation).
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
@@ -155,14 +165,30 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
     This pass works by transforming FIFO buffer operations (such as `fifo.create`, `fifo.push`,
     and `fifo.pop`) into MemRef-based operations that represent memory buffers. The pass
     supports scalar, tensor, and memref element types, handling tensor-to-memref conversions
-    as needed for FIFO operations. The pass is not thread-safe, meaning it should be used
-    in single-threaded execution contexts to avoid issues with concurrent transformations.
+    as needed for FIFO operations. 
+
+    Thread-safety / concurrency:
+
+    By default (index mode `legacy`) the lowered representation uses a circular buffer with
+    read/write indices stored modulo (capacity + 1) and assumes single-threaded scheduling.
+    An experimental SPSC lock-free mode can be enabled with the option
+    `--fifo-index-mode=spsc-lockfree`. In this mode the indices are treated as monotonically
+    increasing counters (no extra sentinel slot) and each push/pop uses the counter modulo
+    capacity for the physical slot. This mode is intended for Single-Producer / Single-Consumer
+    scenarios possibly executed on different threads orchestrated by the async dialect or host
+    threading. Atomics are not yet inserted at this lowering stage; correctness under true
+    parallel execution requires a subsequent pass (or future enhancement) to turn the loads /
+    stores of the index counters into acquire/release atomic operations. Until that follow-up
+    is implemented the SPSC mode should only be used in environments where the compiler or
+    runtime preserves program order between producer and consumer steps.
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
   let options = [
     Option<"which_alloc", "which-alloc", "std::string", /*default=*/"\"HOST\"",
            "Choose allocation target for tensor types: HOST | GPU">,
+    Option<"fifo_index_mode", "fifo-index-mode", "std::string", /*default=*/"\"legacy\"",
+      "FIFO index management mode: legacy | spsc-lockfree">,
   ];
   let dependentDialects = [
     "memref::MemRefDialect",

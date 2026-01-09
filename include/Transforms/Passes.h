@@ -7,6 +7,7 @@
 #include "Transforms/GPUAwareBufferize/GPUAwareBufferize.h"
 #include "Transforms/HoistAllocs/HoistAllocs.h"
 #include "Transforms/CalPrepareGpuAsyncRegions/CalPrepareGpuAsyncRegions.h"
+#include "Transforms/FifoAtomicize/FifoAtomicize.h"
 #include "mlir/Pass/Pass.h"
 
 namespace mlir {

@@ -28,6 +28,16 @@ struct CalStaticSchedulingPipelineOptions
           "Bypass all the passes lowering tensor and linalg ops."),
       llvm::cl::init(false)};
 };
+    
+    
+struct CalToLLVMWithMultithreadedFlagsOptions
+    : public CalGenericPipelineOptions {
+  PassOptions::Option<bool> multithreadCalActors{
+      *this, "multithread-cal-actors",
+      llvm::cl::desc("Assign each CAL actor to its own thread - this is an "
+                     "experimental flag."),
+      llvm::cl::init(false)};
+};
 
 struct CalToLLVMWithGPUTensorsPipelineOptions
     : public CalGenericPipelineOptions {
