@@ -78,10 +78,10 @@ void registerCalPipelines() {
  * the code author.
  */
 void registerLowerCalToLLVMPipeline() {
-  mlir::PassPipelineRegistration<CalGenericPipelineOptions>(
+  mlir::PassPipelineRegistration<CalToLLVMWithMultithreadedFlagsOptions>(
       "lower-cal-to-llvm",
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect.",
-      [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
+      [](mlir::OpPassManager &pm, const CalToLLVMWithMultithreadedFlagsOptions &options) {
         // 1. FIFO/CAL-specific lowering
         if (options.mergeSimpleCalActors)
           pm.addPass(mlir::cal::createMergeSimpleCalActors());
@@ -123,7 +123,15 @@ void registerLowerCalToLLVMPipeline() {
         if (!options.disableHoistAllocs)
           pm.addPass(mlir::createHoistAllocsPass());
         pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+
+        // Async functions last after their region exists which the buffer
+        // deallocation pass does not understand. Thus deallocation happens in
+        // the wrong place. Just skipping it for now when using multithreading.
+        // It does not create problems as memory is only allocated in the main
+        // function.
+        if (!options.multithreadCalActors) {
+          pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        }
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createConvertLinalgToLoopsPass());
         pm.addPass(mlir::createCanonicalizerPass());

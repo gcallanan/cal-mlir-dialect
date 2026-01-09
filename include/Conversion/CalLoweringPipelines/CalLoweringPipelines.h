@@ -18,10 +18,14 @@ struct CalGenericPipelineOptions
       llvm::cl::desc("Merge chains of single action actors with a single input "
                      "and output port together."),
       llvm::cl::init(false)};
+};
+
+struct CalToLLVMWithMultithreadedFlagsOptions
+    : public CalGenericPipelineOptions {
   PassOptions::Option<bool> multithreadCalActors{
       *this, "multithread-cal-actors",
       llvm::cl::desc("Assign each CAL actor to its own thread - this is an "
-                     "experimental pass."),
+                     "experimental flag."),
       llvm::cl::init(false)};
 };
 

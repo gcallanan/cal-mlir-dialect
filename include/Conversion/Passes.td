@@ -6,7 +6,7 @@ include "Dialect/Cal/CalDialect.td"
 include "Dialect/Fifo/FifoDialect.td"
 
 def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
-    let summary = "A pass that converts CAL actors and networks to a series of functions that are called in a loop";
+    let summary = "A pass that converts CAL actors and networks to function calls and a main function";
     let description = [{
         Creates a pass to lower CAL dialect operations (`cal.actor`, `cal.network`,
         and related constructs) into standard MLIR `func` operations suitable for
@@ -19,11 +19,14 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
           - Rewrite `cal.action_done` into a `func.return` to signal action
             completion.
           - Transform the top-level `cal.network` into a `func.func` called "main",
-            which initializes the network and then repeatedly calls each actor
-            function in a `scf.while` loop until no actor performs any further work.
+            which initializes the network and starts the execution.
         After this transformation, the CAL program is expressed entirely in terms of
         `func.func`, `func.call`, and other core dialects, enabling straightforward
         lowering to LLVM.
+
+        This pass supports creation of a multi-threaded implementation by allowing
+        actors to be executed in single threads. This is controlled via the
+        `--actor-partitioning-mode` flag.
 
         NOTE: This pass only supports cal.actors containing a cal.execution_body
         and does not support cal.actors containing cal.action operations. If
@@ -47,8 +50,10 @@ def ConvertCalToFunc : Pass<"convert-cal-to-func"> {
         "func::FuncDialect",
         "fifo::FifoDialect",
         "async::AsyncDialect",
+        "LLVM::LLVMDialect",
         "cal::CalDialect",
-        "scf::SCFDialect"
+        "scf::SCFDialect",
+        "memref::MemRefDialect",
     ];
 }
 
@@ -68,7 +73,7 @@ def LowerCalStateToMemref: Pass<"lower-cal-state-to-memref"> {
       `cal.get` retrieves from buffer and converts to tensor using `bufferization.to_tensor`,
       and `cal.set` converts tensor to memref using `bufferization.to_memref` and copies.
 
-    Memory deallocation can be handled by other MLIR passes (--buffer-deallocation).
+    Memory deallocation can be handled by other MLIR passes (such as --buffer-deallocation).
 
     Description originally written by Gareth Callanan and refined using ChatGPT.
   }];
