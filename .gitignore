@@ -2,3 +2,4 @@ build/
 llvm-project/
 .vscode/
 .png
+main_executable_from_mlir_multicore

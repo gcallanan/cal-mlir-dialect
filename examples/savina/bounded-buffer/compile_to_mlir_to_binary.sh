@@ -6,7 +6,7 @@ echo " -O (default 3) Set the llvm optimisation level, valid values between 0 an
 echo " -C (default 3) The number of consumers."
 echo " -P (default 3) The number of producers"
 echo " -B (default 50) The amount of slots in the buffer actors"
-echo " -N (default 10000) The number of items produced by each producer"
+echo " -m (default false) Enable multi-threaded actor execution"
 echo
 set -e
 
@@ -15,9 +15,10 @@ O=3
 C=3
 P=3
 B=50
-N=10000
+N=3
+m=false
 
-while getopts O:C:P:B:N: flag
+while getopts O:C:P:B:N:m flag
 do
     case "${flag}" in
         O) O=${OPTARG};;
@@ -25,8 +26,15 @@ do
         P) P=${OPTARG};;
         B) B=${OPTARG};;
         N) N=${OPTARG};;
+        m) m=true;;
     esac
 done
+
+if [ "$m" = true ]; then
+    parallel="multithread-cal-actors"
+else
+    parallel="''"
+fi
 
 set -e
 
@@ -55,9 +63,8 @@ echo "2. Generating a binary from the mlir file"
 
 mkdir myproject/generated
 
-cal-opt --lower-cal-to-llvm myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > myproject/generated/main.ll
-opt -O$O myproject/generated/main.ll -o myproject/generated/main.opt.ll
-llc -relocation-model=pic myproject/generated/main.opt.ll -filetype=obj -o myproject/generated/main.o
-clang myproject/generated/main.o -o main_executable_from_mlir
+echo $parallel
+cal-opt --lower-cal-to-llvm="$parallel" myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > myproject/generated/main.ll
+clang -O$O myproject/generated/main.ll -o main_executable_from_mlir -L"../../../llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread
 
 echo "3. Binary 'main_executable_from_mlir' Generated succesfully"

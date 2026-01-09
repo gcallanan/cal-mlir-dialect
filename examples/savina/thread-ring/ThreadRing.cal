@@ -1,6 +1,6 @@
 namespace threadRing:
-    uint N = 20; // Number of actors
-    uint R = 3000000; // Number of pings
+    uint N = 10; // Number of actors
+    uint R = 100000000; // Number of pings
 
     // @author: Gareth Callanan
     //

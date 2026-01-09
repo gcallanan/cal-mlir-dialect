@@ -83,9 +83,9 @@ module {
   // CHECK: func.func @main() {
   // CHECK-DAG: %[[C50000_I32:.*]] = arith.constant 50000 : i32
   // CHECK-DAG: %[[TRUE:.*]] = arith.constant true
-  // CHECK-DAG: %[[C3:.*]] = arith.constant 3 : index
-  // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : index
-  // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+  // CHECK-DAG: %[[C48:.*]] = arith.constant 48 : index
+  // CHECK-DAG: %[[C32:.*]] = arith.constant 32 : index
+  // CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index
   // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
   // CHECK-DAG: %[[C0_I32:.*]] = arith.constant 0 : i32
   // CHECK-DAG: %[[C10_I32:.*]] = arith.constant 10 : i32
@@ -108,24 +108,34 @@ module {
     // Create flags used for termination detection
     // CHECK-NEXT: %[[TERM_FLAG:.*]] = memref.alloc() : memref<1xi32>
     // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
-    // CHECK-NEXT: %[[PROG_FLAGS:.*]] = memref.alloc() : memref<4xi32>
-    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C0]]] : (i32, memref<4xi32>) -> i32
-    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C1]]] : (i32, memref<4xi32>) -> i32
-    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C2]]] : (i32, memref<4xi32>) -> i32
-    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C3]]] : (i32, memref<4xi32>) -> i32
+    // CHECK-NEXT: %[[PROG_FLAGS:.*]] = memref.alloc() : memref<64xi32>
+    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C0]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C16]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C32]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT: %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C48]]] : (i32, memref<64xi32>) -> i32
 
     cal.create_instance @src "srcA" (%c10_i32, %c1_i32 : i32, i32)
         ports_out (%inputPort : !fifo.input_port<i32>)
     // CHECK-NEXT: %[[TOKEN_0:.*]] = async.execute {
     // CHECK-NEXT:   scf.while (%arg0 = %[[TRUE]]) : (i1) -> () {
-    // CHECK-NEXT:     %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
-    // CHECK-NEXT:     %{{.*}} = arith.cmpi ne, %{{.*}}, %[[C0_I32]] : i32
-    // CHECK-NEXT:     %{{.*}} = arith.xori %{{.*}}, %[[TRUE]] : i1
+    // CHECK-NEXT:     %{{.*}} = memref.load %[[TERM_FLAG]][%[[C0]]] : memref<1xi32>
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C1_I32]] : i32
+    // CHECK-NEXT:     %{{.*}} = scf.if %{{.*}} -> (i32) {
+    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
+    // CHECK-NEXT:       scf.yield %{{.*}} : i32
+    // CHECK-NEXT:     } else {
+    // CHECK-NEXT:       scf.yield %[[C0_I32]] : i32
+    // CHECK-NEXT:     }
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
     // CHECK-NEXT:     scf.condition(%{{.*}})
     // CHECK-NEXT:   } do {
     // CHECK-NEXT:     %{{.*}} = func.call @src(%[[C10_I32]], %[[C1_I32]], %[[INPUT_PORT]]) {from_create_instance} : (i32, i32, !fifo.input_port<i32>) -> i1
     // CHECK-NEXT:     scf.if %{{.*}} {
-    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C0]]] : (i32, memref<4xi32>) -> i32
+    // CHECK-NEXT:       %{{.*}} = memref.load %[[PROG_FLAGS]][%[[C0]]] : memref<64xi32>
+    // CHECK-NEXT:       %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
+    // CHECK-NEXT:       scf.if %{{.*}} {
+    // CHECK-NEXT:         %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C0]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT:       }
     // CHECK-NEXT:     }
     // CHECK-NEXT:     scf.yield %[[TRUE]] : i1
     // CHECK-NEXT:   }
@@ -136,14 +146,24 @@ module {
         ports_out (%inputPort_0 : !fifo.input_port<i32>)
     // CHECK-NEXT: %[[TOKEN_1:.*]] = async.execute {
     // CHECK-NEXT:   scf.while (%arg0 = %[[TRUE]]) : (i1) -> () {
-    // CHECK-NEXT:     %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
-    // CHECK-NEXT:     %{{.*}} = arith.cmpi ne, %{{.*}}, %[[C0_I32]] : i32
-    // CHECK-NEXT:     %{{.*}} = arith.xori %{{.*}}, %[[TRUE]] : i1
+    // CHECK-NEXT:     %{{.*}} = memref.load %[[TERM_FLAG]][%[[C0]]] : memref<1xi32>
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C1_I32]] : i32
+    // CHECK-NEXT:     %{{.*}} = scf.if %{{.*}} -> (i32) {
+    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
+    // CHECK-NEXT:       scf.yield %{{.*}} : i32
+    // CHECK-NEXT:     } else {
+    // CHECK-NEXT:       scf.yield %[[C0_I32]] : i32
+    // CHECK-NEXT:     }
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
     // CHECK-NEXT:     scf.condition(%{{.*}})
     // CHECK-NEXT:   } do {
     // CHECK-NEXT:     %{{.*}} = func.call @src(%[[C10_I32]], %[[C2_I32]], %[[INPUT_PORT_0]]) {from_create_instance} : (i32, i32, !fifo.input_port<i32>) -> i1
     // CHECK-NEXT:     scf.if %{{.*}} {
-    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C1]]] : (i32, memref<4xi32>) -> i32
+    // CHECK-NEXT:       %{{.*}} = memref.load %[[PROG_FLAGS]][%[[C16]]] : memref<64xi32>
+    // CHECK-NEXT:       %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
+    // CHECK-NEXT:       scf.if %{{.*}} {
+    // CHECK-NEXT:         %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C16]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT:       }
     // CHECK-NEXT:     }
     // CHECK-NEXT:     scf.yield %[[TRUE]] : i1
     // CHECK-NEXT:   }
@@ -155,14 +175,24 @@ module {
         ports_out (%inputPort_2 : !fifo.input_port<i32>)
     // CHECK-NEXT: %[[TOKEN_2:.*]] = async.execute {
     // CHECK-NEXT:   scf.while (%arg0 = %[[TRUE]]) : (i1) -> () {
-    // CHECK-NEXT:     %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
-    // CHECK-NEXT:     %{{.*}} = arith.cmpi ne, %{{.*}}, %[[C0_I32]] : i32
-    // CHECK-NEXT:     %{{.*}} = arith.xori %{{.*}}, %[[TRUE]] : i1
+    // CHECK-NEXT:     %{{.*}} = memref.load %[[TERM_FLAG]][%[[C0]]] : memref<1xi32>
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C1_I32]] : i32
+    // CHECK-NEXT:     %{{.*}} = scf.if %{{.*}} -> (i32) {
+    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
+    // CHECK-NEXT:       scf.yield %{{.*}} : i32
+    // CHECK-NEXT:     } else {
+    // CHECK-NEXT:       scf.yield %[[C0_I32]] : i32
+    // CHECK-NEXT:     }
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
     // CHECK-NEXT:     scf.condition(%{{.*}})
     // CHECK-NEXT:   } do {
     // CHECK-NEXT:     %{{.*}} = func.call @merge(%[[OUTPUT_PORT]], %[[OUTPUT_PORT_1]], %[[INPUT_PORT_2]]) {from_create_instance} : (!fifo.output_port<i32>, !fifo.output_port<i32>, !fifo.input_port<i32>) -> i1
     // CHECK-NEXT:     scf.if %{{.*}} {
-    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C2]]] : (i32, memref<4xi32>) -> i32
+    // CHECK-NEXT:       %{{.*}} = memref.load %[[PROG_FLAGS]][%[[C32]]] : memref<64xi32>
+    // CHECK-NEXT:       %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
+    // CHECK-NEXT:       scf.if %{{.*}} {
+    // CHECK-NEXT:         %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C32]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT:       }
     // CHECK-NEXT:     }
     // CHECK-NEXT:     scf.yield %[[TRUE]] : i1
     // CHECK-NEXT:   }
@@ -173,14 +203,24 @@ module {
         ports_in (%outputPort_3 : !fifo.output_port<i32>)
     // CHECK-NEXT: %[[TOKEN_3:.*]] = async.execute {
     // CHECK-NEXT:   scf.while (%arg0 = %[[TRUE]]) : (i1) -> () {
-    // CHECK-NEXT:     %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
-    // CHECK-NEXT:     %{{.*}} = arith.cmpi ne, %{{.*}}, %[[C0_I32]] : i32
-    // CHECK-NEXT:     %{{.*}} = arith.xori %{{.*}}, %[[TRUE]] : i1
+    // CHECK-NEXT:     %{{.*}} = memref.load %[[TERM_FLAG]][%[[C0]]] : memref<1xi32>
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C1_I32]] : i32
+    // CHECK-NEXT:     %{{.*}} = scf.if %{{.*}} -> (i32) {
+    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw addi %[[C0_I32]], %[[TERM_FLAG]][%[[C0]]] : (i32, memref<1xi32>) -> i32
+    // CHECK-NEXT:       scf.yield %{{.*}} : i32
+    // CHECK-NEXT:     } else {
+    // CHECK-NEXT:       scf.yield %[[C0_I32]] : i32
+    // CHECK-NEXT:     }
+    // CHECK-NEXT:     %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
     // CHECK-NEXT:     scf.condition(%{{.*}})
     // CHECK-NEXT:   } do {
     // CHECK-NEXT:     %{{.*}} = func.call @sink(%[[OUTPUT_PORT_3]]) {from_create_instance} : (!fifo.output_port<i32>) -> i1
     // CHECK-NEXT:     scf.if %{{.*}} {
-    // CHECK-NEXT:       %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C3]]] : (i32, memref<4xi32>) -> i32
+    // CHECK-NEXT:       %{{.*}} = memref.load %[[PROG_FLAGS]][%[[C48]]] : memref<64xi32>
+    // CHECK-NEXT:       %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
+    // CHECK-NEXT:       scf.if %{{.*}} {
+    // CHECK-NEXT:         %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C48]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT:       }
     // CHECK-NEXT:     }
     // CHECK-NEXT:     scf.yield %[[TRUE]] : i1
     // CHECK-NEXT:   }
@@ -191,14 +231,14 @@ module {
     // CHECK-NEXT: scf.while (%arg0 = %[[TRUE]]) : (i1) -> () {
     // CHECK-NEXT:   scf.condition(%arg0)
     // CHECK-NEXT: } do {
-    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C0]]] : (i32, memref<4xi32>) -> i32
-    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C1]]] : (i32, memref<4xi32>) -> i32
-    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C2]]] : (i32, memref<4xi32>) -> i32
-    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C1_I32]], %[[PROG_FLAGS]][%[[C3]]] : (i32, memref<4xi32>) -> i32
+    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C0]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C16]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C32]]] : (i32, memref<64xi32>) -> i32
+    // CHECK-NEXT:   %{{.*}} = memref.atomic_rmw assign %[[C0_I32]], %[[PROG_FLAGS]][%[[C48]]] : (i32, memref<64xi32>) -> i32
     // CHECK-NEXT:   %{{.*}} = arith.ori %{{.*}}, %{{.*}} : i32
     // CHECK-NEXT:   %{{.*}} = arith.ori %{{.*}}, %{{.*}} : i32
     // CHECK-NEXT:   %{{.*}} = arith.ori %{{.*}}, %{{.*}} : i32
-    // CHECK-NEXT:   %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C0_I32]] : i32
+    // CHECK-NEXT:   %{{.*}} = arith.cmpi eq, %{{.*}}, %[[C1_I32]] : i32
     // CHECK-NEXT:   %{{.*}} = llvm.call @usleep(%[[C50000_I32]]) : (i32) -> i32
     // CHECK-NEXT:   scf.yield %{{.*}} : i1
     // CHECK-NEXT: }

@@ -18,7 +18,7 @@ benchmarks["precise-pi"]="-O 3 |true"
 iterations=6
 sleep_time=1
 
-echo "benchmark,args,iterations,c_mean (ms),c_stddev (ms),cpp_mean (ms),cpp_stddev (ms),mlir_mean (ms),mlir_stddev (ms),mlir_static_mean (ms),mlir_static_stddev (ms)" > results.csv
+echo "benchmark,args,iterations,c_mean (ms),c_stddev (ms),cpp_mean (ms),cpp_stddev (ms),mlir_mean (ms),mlir_stddev (ms),mlir_multicore_mean (ms),mlir_multicore_stddev (ms),mlir_static_mean (ms),mlir_static_stddev (ms)" > results.csv
 
 # Loop through benchmarks
 for name in "${!benchmarks[@]}"; do
@@ -36,6 +36,8 @@ for name in "${!benchmarks[@]}"; do
     cd $name
     bash compile_to_c_to_binary.sh $args
     bash compile_to_cpp_to_binary.sh $args
+    bash compile_to_mlir_to_binary.sh -m $args
+    cp main_executable_from_mlir main_executable_from_mlir_multicore
     bash compile_to_mlir_to_binary.sh $args
     if [ "$enabled" = true ]; then
         bash compile_to_mlir_to_binary.sh -s
@@ -45,6 +47,7 @@ for name in "${!benchmarks[@]}"; do
     c_times=()
     cpp_times=()
     mlir_times=()
+    mlir_times_multicore=()
     mlir_times_static=()
 
     sleep $sleep_time
@@ -77,6 +80,15 @@ for name in "${!benchmarks[@]}"; do
         mlir_times+=($(( (end - start) / 1000 )))
         sleep $sleep_time
 
+        # Time MLIR multicore binary
+        echo "Running mlir multicore binary"
+        start=$(date +%s%6N)
+        ./main_executable_from_mlir_multicore
+        end=$(date +%s%6N)
+        # Convert microseconds to milliseconds
+        mlir_times_multicore+=($(( (end - start) / 1000 )))
+        sleep $sleep_time
+
         if [ "$enabled" = true ]; then
             # Time MLIR static binary
             set +e
@@ -96,6 +108,7 @@ for name in "${!benchmarks[@]}"; do
         echo "  C time: ${c_times[$((i-1))]}"
         echo "  C++ time: ${cpp_times[$((i-1))]}"
         echo "  MLIR time: ${mlir_times[$((i-1))]}"
+        echo "  MLIR multicore time: ${mlir_times_multicore[$((i-1))]}"
         echo "  MLIR static time: ${mlir_times_static[$((i-1))]}"
     done
 
@@ -122,14 +135,16 @@ for name in "${!benchmarks[@]}"; do
     c_stats=($(calc_stats "${c_times[@]}"))
     cpp_stats=($(calc_stats "${cpp_times[@]}"))
     mlir_stats=($(calc_stats "${mlir_times[@]}"))
+    mlir_multicore_stats=($(calc_stats "${mlir_times_multicore[@]}"))
     mlir_static_stats=($(calc_stats "${mlir_times_static[@]}"))
 
     echo "C: mean=${c_stats[0]}, stddev=${c_stats[1]}"
     echo "C++: mean=${cpp_stats[0]}, stddev=${cpp_stats[1]}"
     echo "MLIR: mean=${mlir_stats[0]}, stddev=${mlir_stats[1]}"
+    echo "MLIR multicore: mean=${mlir_multicore_stats[0]}, stddev=${mlir_multicore_stats[1]}"
     echo "MLIR static: mean=${mlir_static_stats[0]}, stddev=${mlir_static_stats[1]}"
 
-    echo "$name,$args,$iterations,${c_stats[0]},${c_stats[1]},${cpp_stats[0]},${cpp_stats[1]},${mlir_stats[0]},${mlir_stats[1]},${mlir_static_stats[0]},${mlir_static_stats[1]}" >> ../results.csv
+    echo "$name,$args,$iterations,${c_stats[0]},${c_stats[1]},${cpp_stats[0]},${cpp_stats[1]},${mlir_stats[0]},${mlir_stats[1]},${mlir_multicore_stats[0]},${mlir_multicore_stats[1]},${mlir_static_stats[0]},${mlir_static_stats[1]}" >> ../results.csv
 
     cd ..
 done

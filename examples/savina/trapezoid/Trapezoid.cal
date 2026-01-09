@@ -4,7 +4,7 @@ namespace trapezoid:
     import System.math.exp;
     import System.math.sqrt;
 
-    int W = 30; // num workers
+    int W = 5; // num workers
     int N = W * 30000000; // num trapezoids
     float L = 1.0; // left end-point
     float R = 5.0; // right end-point
@@ -34,8 +34,8 @@ namespace trapezoid:
         coordinator = Coordinator();
     structure
         foreach uint i in 0..W-1 do
-            coordinator.Out[i] --> workers[i].In {bufferSize = 4; };
-            workers[i].Out --> coordinator.In[i] {bufferSize = 4; };
+            coordinator.Out[i] --> workers[i].In {bufferSize = 100; };
+            workers[i].Out --> coordinator.In[i] {bufferSize = 100; };
         end
     end
 

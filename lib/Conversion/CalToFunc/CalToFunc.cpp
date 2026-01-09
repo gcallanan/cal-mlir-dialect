@@ -30,6 +30,11 @@ namespace mlir {
 #define GEN_PASS_DEF_CONVERTCALTOFUNC
 #include "Conversion/Passes.h.inc"
 
+// Cache line size in bytes for padding to avoid false sharing.
+constexpr int64_t CACHE_LINE_SIZE = 64;
+static constexpr int64_t CACHE_LINE_SIZE_I32 =
+    CACHE_LINE_SIZE / sizeof(int32_t);
+
 /// Parses the actor partitioning mode from a string option.
 ///
 /// This function converts a string representation of the actor partitioning
@@ -58,28 +63,34 @@ static ActorPartitioningMode parsePartitioningMode(const std::string &mode) {
 ///
 /// 1. **Termination flag** (memref<1xi32>) initialized to 0:
 ///    Used to signal when all actors should stop executing. When set to 1,
-///    all actor threads check this flag and terminate.
+///    all actor threads check this flag (with optimized non-atomic loads
+///    before atomic operations) and terminate.
 ///
-/// 2. **Progress flags array** (memref<numActors x i32>) with each element
-///    initialized to 0:
+/// 2. **Progress flags array** (memref<numActors x CACHE_LINE_SIZE_I32 x i32>)
+///    with each element initialized to 1:
 ///    Used to track whether each actor has made progress in the current
-///    iteration. Each actor resets its flag to 0 when it performs work.
-///    The monitoring loop reads these flags (resetting them to 1) to detect
-///    global progress.
+///    iteration. Each actor sets its flag to 1 when it performs work
+///    (using optimized check-before-atomic-write). The monitoring loop
+///    reads these flags atomically (resetting them to 0) to detect global
+///    progress. Array elements are padded by CACHE_LINE_SIZE_I32 to avoid false
+///    sharing.
 ///
 /// The generated structure:
 /// ```
 /// %c0_i32 = arith.constant 0 : i32
+/// %c1_i32 = arith.constant 1 : i32
 /// %c0 = arith.constant 0 : index
 /// %termination_flag = memref.alloc() : memref<1xi32>
 /// %init_term = memref.atomic_rmw assign %c0_i32, %termination_flag[%c0] :
 ///   (i32, memref<1xi32>) -> i32
-/// %progress_flags = memref.alloc() : memref<4xi32>
-/// %init_progress_0 = memref.atomic_rmw assign %c0_i32, %progress_flags[%c0] :
-///   (i32, memref<4xi32>) -> i32
-/// %init_progress_1 = memref.atomic_rmw assign %c0_i32, %progress_flags[%c1] :
-///   (i32, memref<4xi32>) -> i32
-/// // ... one initialization per actor
+/// %progress_flags = memref.alloc() : memref<numActors*CACHE_LINE_SIZE_I32 x
+/// i32> %init_progress_0 = memref.atomic_rmw assign %c1_i32,
+/// %progress_flags[%c0] :
+///   (i32, memref<...xi32>) -> i32
+/// %init_progress_1 = memref.atomic_rmw assign %c1_i32,
+/// %progress_flags[%c_CACHE_LINE_SIZE_I32] :
+///   (i32, memref<...xi32>) -> i32
+/// // ... one initialization per actor, spaced by CACHE_LINE_SIZE_I32
 /// ```
 ///
 /// @param rewriter The pattern rewriter used to create operations
@@ -104,6 +115,8 @@ createActorSynchronizationFlags(PatternRewriter &rewriter, Location loc,
   // Create constant values for initialization
   auto c0_i32 =
       rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+  auto c1_i32 =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(1));
   auto c0_index =
       rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
 
@@ -117,17 +130,20 @@ createActorSynchronizationFlags(PatternRewriter &rewriter, Location loc,
                                        c0_i32, terminationFlag,
                                        ValueRange{c0_index});
 
-  // Create progress flags array: memref<numActors x i32>
-  auto progressFlagsType = MemRefType::get({numActors}, rewriter.getI32Type());
+  // Create progress flags array: memref<numActors x CACHE_LINE_SIZE_I32 x i32>
+  // Multiply by CACHE_LINE_SIZE_I32 for padding to avoid false sharing between
+  // threads
+  auto progressFlagsType =
+      MemRefType::get({numActors * CACHE_LINE_SIZE_I32}, rewriter.getI32Type());
   Value progressFlags =
       rewriter.create<memref::AllocOp>(loc, progressFlagsType);
 
-  // Initialize each progress flag to 0
+  // Initialize each progress flag to 1
   for (int i = 0; i < numActors; i++) {
-    auto indexConst =
-        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i));
+    auto indexConst = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getIndexAttr(i * CACHE_LINE_SIZE_I32));
     rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
-                                         c0_i32, progressFlags,
+                                         c1_i32, progressFlags,
                                          ValueRange{indexConst});
   }
 
@@ -177,23 +193,44 @@ static void declareUsleepFunction(PatternRewriter &rewriter, Location loc,
 /// while loop. Each actor monitors a shared termination flag and updates its
 /// progress flag to coordinate with the monitoring loop.
 ///
+/// **Optimization**: The termination flag check uses a non-atomic load first.
+/// Only if the flag appears to be set (equals 1) does it perform an expensive
+/// atomic read. This significantly reduces cache line contention.
+///
+/// **Optimization**: The progress flag update also uses a non-atomic load to
+/// check the current value. Only if the flag is currently 0 does it perform
+/// an atomic write to set it to 1. This avoids redundant atomic operations.
+///
 /// The generated structure for each actor:
 /// ```
 /// %token = async.execute {
 ///   scf.while (%arg0 = %true) : (i1) -> () {
-///     // Check termination flag atomically
-///     %term_val = memref.atomic_rmw addi %c0_i32, %termination_flag[%c0] :
-///       (i32, memref<1xi32>) -> i32
-///     %should_terminate = arith.cmpi ne, %term_val, %c0_i32 : i32
-///     %should_continue = arith.xori %should_terminate, %true : i1
+///     // Optimized termination flag check: non-atomic load first
+///     %current_term = memref.load %termination_flag[%c0] : memref<1xi32>
+///     %is_one = arith.cmpi eq, %current_term, %c1_i32 : i32
+///     %term_val = scf.if %is_one -> (i32) {
+///       // Only do atomic read if non-atomic load showed flag = 1
+///       %atomic = memref.atomic_rmw addi %c0_i32, %termination_flag[%c0] :
+///         (i32, memref<1xi32>) -> i32
+///       scf.yield %atomic : i32
+///     } else {
+///       scf.yield %c0_i32 : i32
+///     }
+///     %should_continue = arith.cmpi eq, %term_val, %c0_i32 : i32
 ///     scf.condition(%should_continue)
 ///   } do {
 ///     // Call the actor function
 ///     %result = func.call @actor(...) : (...) -> i1
 ///     // Update progress flag if actor made progress (returned true)
 ///     scf.if %result {
-///       memref.atomic_rmw assign %c0_i32, %progress_flags[%actor_idx] :
-///         (i32, memref<Nxi32>) -> i32
+///       // Optimized progress flag update: check before atomic write
+///       %current_val = memref.load %progress_flags[%actor_idx] : memref<Nxi32>
+///       %needs_update = arith.cmpi eq, %current_val, %c0_i32 : i32
+///       scf.if %needs_update {
+///         // Only do atomic write if flag is currently 0
+///         memref.atomic_rmw assign %c1_i32, %progress_flags[%actor_idx] :
+///           (i32, memref<Nxi32>) -> i32
+///       }
 ///     }
 ///     scf.yield %true : i1
 ///   }
@@ -205,7 +242,8 @@ static void declareUsleepFunction(PatternRewriter &rewriter, Location loc,
 /// @param loc The location to associate with created operations
 /// @param networkBody The block containing actor function calls to wrap
 /// @param terminationFlag The shared termination flag memref
-/// @param progressFlags The shared progress flags array memref
+/// @param progressFlags The shared progress flags array memref (with cache line
+/// padding)
 /// @return A vector of async tokens, one for each wrapped actor call
 static SmallVector<Value>
 wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
@@ -244,21 +282,37 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
     // Create constants needed for termination check
     auto c0_i32 =
         rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+    auto c1_i32 =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(1));
     auto idx0 =
         rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
 
-    // Atomically read termination flag
-    auto termVal = rewriter.create<memref::AtomicRMWOp>(
+    // Check termination flag with non-atomic load first to avoid expensive
+    // atomic operations
+    auto currentTermValue =
+        rewriter.create<memref::LoadOp>(loc, terminationFlag, ValueRange{idx0});
+    auto isOne = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, currentTermValue, c1_i32.getResult());
+
+    // Only perform atomic read if non-atomic load showed flag = 1, otherwise
+    // return 0
+    auto ifOp = rewriter.create<scf::IfOp>(
+        loc, TypeRange{rewriter.getI32Type()}, isOne, /*hasElse=*/true);
+    rewriter.setInsertionPointToStart(ifOp.thenBlock());
+    auto atomicTermVal = rewriter.create<memref::AtomicRMWOp>(
         loc, arith::AtomicRMWKind::addi, c0_i32, terminationFlag,
         ValueRange{idx0});
+    rewriter.create<scf::YieldOp>(loc, ValueRange{atomicTermVal.getResult()});
+
+    rewriter.setInsertionPointToStart(ifOp.elseBlock());
+    rewriter.create<scf::YieldOp>(loc, ValueRange{c0_i32.getResult()});
+
+    rewriter.setInsertionPointAfter(ifOp);
+    Value termVal = ifOp.getResult(0);
 
     // Check if we should terminate (flag != 0)
-    auto shouldTerminate = rewriter.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::ne, termVal, c0_i32.getResult());
-
-    // Invert to get "should continue" condition
-    auto shouldContinue = rewriter.create<arith::XOrIOp>(
-        loc, shouldTerminate.getResult(), trueVal.getResult());
+    auto shouldContinue = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, termVal, c0_i32.getResult());
 
     rewriter.create<scf::ConditionOp>(loc, shouldContinue.getResult(),
                                       ValueRange{});
@@ -272,19 +326,32 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
     actorCall.moveBefore(&bodyBlock, bodyBlock.end());
     Value actorResult = actorCall.getResult(0);
 
-    // If actor made progress (returned true), reset its progress flag to 0
-    auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange{}, actorResult,
-                                           /*hasElse=*/false);
-    rewriter.setInsertionPointToStart(ifOp.thenBlock());
+    // If actor made progress (returned true), set progress flag to 1
+    auto ifOp2 = rewriter.create<scf::IfOp>(loc, TypeRange{}, actorResult,
+                                            /*hasElse=*/false);
+    rewriter.setInsertionPointToStart(ifOp2.thenBlock());
 
     auto cActorIdx = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getIndexAttr(actorIndex));
+        loc, rewriter.getIndexAttr(actorIndex * CACHE_LINE_SIZE_I32));
+
+    // Check current value with non-atomic load before performing expensive
+    // atomic operation
+    auto currentValue = rewriter.create<memref::LoadOp>(loc, progressFlags,
+                                                        ValueRange{cActorIdx});
+    auto needsUpdate = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, currentValue, c0_i32.getResult());
+
+    // Only perform atomic write if flag is currently 0 to avoid redundant
+    // atomic operations
+    auto innerIfOp = rewriter.create<scf::IfOp>(loc, TypeRange{}, needsUpdate,
+                                                /*hasElse=*/false);
+    rewriter.setInsertionPointToStart(innerIfOp.thenBlock());
     rewriter.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::assign,
-                                         c0_i32, progressFlags,
+                                         c1_i32, progressFlags,
                                          ValueRange{cActorIdx});
 
     // Continue the infinite loop
-    rewriter.setInsertionPointAfter(ifOp);
+    rewriter.setInsertionPointAfter(ifOp2);
     rewriter.create<scf::YieldOp>(loc, ValueRange{trueVal});
 
     // Add async.yield terminator after the while loop
@@ -306,9 +373,12 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
 /// termination.
 ///
 /// This function generates a while loop that:
-/// 1. Reads all progress flags atomically (resetting them to 0)
+/// 1. Reads all progress flags atomically and resets them to 0
+///    Note: Currently uses unconditional atomic operations. This could be
+///    optimized further with non-atomic loads first, but the monitoring loop
+///    runs less frequently so the impact is lower.
 /// 2. ORs them together to check if any actor made progress
-/// 3. Sleeps briefly to avoid busy-waiting
+/// 3. Sleeps briefly (50ms) to avoid busy-waiting
 /// 4. Continues looping if progress was made, otherwise exits
 /// 5. Sets the termination flag when no progress is detected
 ///
@@ -317,13 +387,14 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
 /// scf.while (%arg0 = %true) : (i1) -> () {
 ///   scf.condition(%arg0)
 /// } do {
-///   %prog_0 = memref.atomic_rmw assign %c1_i32, %progress_flags[%c0] : (i32,
-///   memref<4xi32>) -> i32
-//    %prog_1 = memref.atomic_rmw assign %c1_i32, %progress_flags[%c1] : (i32,
-//    memref<4xi32>) -> i32
+///   // Atomically read and reset progress flags (spaced by
+///   CACHE_LINE_SIZE_I32) %prog_0 = memref.atomic_rmw assign %c0_i32,
+///   %progress_flags[%c0] : (i32, memref<Nxi32>) -> i32 %prog_1 =
+///   memref.atomic_rmw assign %c0_i32, %progress_flags[%c_CACHE_LINE_SIZE_I32]
+///   : (i32, memref<Nxi32>) -> i32
 ///   ...
 ///   %any_progress = arith.ori %prog_0, %prog_1 : i32
-///   %has_progress = arith.cmpi ne, %any_progress, %c0_i32 : i32
+///   %has_progress = arith.cmpi eq, %any_progress, %c1_i32 : i32
 ///   %sleep_res = llvm.call @usleep(%sleep_us) : (i32) -> i32
 ///   scf.yield %has_progress : i1
 /// }
@@ -335,7 +406,8 @@ wrapActorCallsInAsyncExecute(PatternRewriter &rewriter, Location loc,
 /// @param loc The location to associate with created operations
 /// @param numThreads The number of actor threads to monitor
 /// @param terminationFlag The termination flag memref to set when stopping
-/// @param progressFlags The progress flags array memref to monitor
+/// @param progressFlags The progress flags array memref to monitor (with cache
+/// line padding)
 static void createProgressMonitoringLoop(PatternRewriter &rewriter,
                                          Location loc, int numThreads,
                                          Value terminationFlag,
@@ -361,21 +433,29 @@ static void createProgressMonitoringLoop(PatternRewriter &rewriter,
   Block &bodyBlock = whileOp.getAfter().front();
   rewriter.setInsertionPointToStart(&bodyBlock);
 
+  // Sleep using usleep to avoid busy-waiting
+  auto sleepUs = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI32IntegerAttr(50000)); // 50 milliseconds
+
   // Create constant values needed for atomic operations
   auto c0_i32 =
       rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
   auto c1_i32 =
       rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(1));
 
-  // Read all progress flags atomically and reset them to 1
+  // Read all progress flags atomically and reset them to 0
+  // Each flag is spaced by CACHE_LINE_SIZE_I32 to avoid false sharing
   SmallVector<Value> progressFlagValues;
   for (int i = 0; i < numThreads; i++) {
-    auto indexConst =
-        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i));
-    auto progressValue = rewriter.create<memref::AtomicRMWOp>(
-        loc, arith::AtomicRMWKind::assign, c1_i32, progressFlags,
+    auto indexConst = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getIndexAttr(i * CACHE_LINE_SIZE_I32));
+
+    // Atomic read-and-reset operation
+    auto atomicResult = rewriter.create<memref::AtomicRMWOp>(
+        loc, arith::AtomicRMWKind::assign, c0_i32, progressFlags,
         ValueRange{indexConst});
-    progressFlagValues.push_back(progressValue.getResult());
+
+    progressFlagValues.push_back(atomicResult.getResult());
   }
 
   // OR all progress flags together to check if any thread made progress
@@ -387,13 +467,10 @@ static void createProgressMonitoringLoop(PatternRewriter &rewriter,
   }
 
   // Convert i32 to i1 for condition check
-  // If anyProgress == 0, then no actor made progress and we should terminate
+  // If anyProgress == 1, then at least one actor made progress and we should
+  // continue
   auto hasProgress = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::eq, anyProgress, c0_i32.getResult());
-
-  // Sleep for 50ms using usleep to avoid busy-waiting
-  auto sleepUs = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32IntegerAttr(50000));
+      loc, arith::CmpIPredicate::eq, anyProgress, c1_i32.getResult());
 
   auto i32Type = rewriter.getI32Type();
   auto usleepType = LLVM::LLVMFunctionType::get(i32Type, {i32Type});
@@ -416,7 +493,7 @@ static void createProgressMonitoringLoop(PatternRewriter &rewriter,
 /// This function generates an `scf.while` loop that repeatedly invokes all
 /// actor functions in round-robin fashion until no actor reports progress.
 /// Each actor function call returns an `i1` flag indicating whether it
-/// performed an action. These flags are OR'ed together to determine if the
+/// performed an action. These flags are `OR`ed together to determine if the
 /// loop should continue.
 ///
 /// The generated structure:
@@ -483,25 +560,47 @@ static void createSingleThreadedRoundRobinLoop(PatternRewriter &rewriter,
 /// monitoring loop tracks progress across all actors using atomic flags and
 /// coordinates global termination when no actor makes progress.
 ///
+/// **Performance Optimizations:**
+/// - Termination flag checks use non-atomic loads before atomic operations
+/// - Progress flag updates use non-atomic loads to avoid redundant atomic
+/// writes
+/// - Progress flags are padded by cache line size to prevent false sharing
+/// - Monitoring loop sleeps to avoid busy-waiting
+///
 /// The generated structure consists of three main components:
 ///
 /// 1. **Synchronization Infrastructure:**
 ///    - Termination flag (memref<1xi32>): Signals when all actors should stop
-///    - Progress flags array (memref<Nxi32>): Tracks whether each actor made
-///    progress
+///    - Progress flags array (memref<N*CACHE_LINE_SIZE_I32 x i32>): Tracks
+///    whether
+///      each actor made progress, with cache line padding to avoid false
+///      sharing
 ///
 /// 2. **Per-Actor Async Blocks:**
 ///    Each actor is wrapped in its own async.execute containing:
 ///    ```
 ///    %token = async.execute {
 ///      scf.while (%arg0 = %true) : (i1) -> () {
-///        %term_val = memref.atomic_rmw addi %c0_i32, %termination_flag[%c0]
-///        %should_continue = arith.xori %should_terminate, %true : i1
+///        // Optimized termination check: non-atomic load first
+///        %current = memref.load %termination_flag[%c0]
+///        %is_set = arith.cmpi eq, %current, %c1_i32
+///        %term_val = scf.if %is_set {
+///          %atomic = memref.atomic_rmw addi %c0_i32, %termination_flag[%c0]
+///          scf.yield %atomic
+///        } else {
+///          scf.yield %c0_i32
+///        }
+///        %should_continue = arith.cmpi eq, %term_val, %c0_i32 : i1
 ///        scf.condition(%should_continue)
 ///      } do {
 ///        %result = func.call @actor(...) : (...) -> i1
 ///        scf.if %result {
-///          memref.atomic_rmw assign %c0_i32, %progress_flags[%actor_idx]
+///          // Optimized progress update: check before atomic write
+///          %current_val = memref.load %progress_flags[%actor_idx]
+///          %needs_update = arith.cmpi eq, %current_val, %c0_i32
+///          scf.if %needs_update {
+///            memref.atomic_rmw assign %c1_i32, %progress_flags[%actor_idx]
+///          }
 ///        }
 ///        scf.yield %true : i1
 ///      }
@@ -511,7 +610,7 @@ static void createSingleThreadedRoundRobinLoop(PatternRewriter &rewriter,
 ///
 /// 3. **Progress Monitoring Loop:**
 ///    A central loop that:
-///    - Atomically reads and resets all progress flags
+///    - Atomically reads and resets all progress flags to 0
 ///    - ORs them together to check if any actor made progress
 ///    - Sleeps briefly (50ms) to avoid busy-waiting
 ///    - Exits when no progress is detected across all actors
