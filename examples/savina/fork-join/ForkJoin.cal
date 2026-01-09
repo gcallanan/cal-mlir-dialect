@@ -1,0 +1,85 @@
+namespace forkjoin:
+    K = 10;         // Number of worker actors
+    M = 100000000;  // Total number of messages to be sent
+
+
+    // @author: Gareth Callanan
+    //
+    // Implementation of the Java Grande Forum Fork-Join benchmark (throughput variant).
+    // This benchmark measures messaging throughput - the rate at which messages are processed.
+    // 
+    // The network creates K worker actors, and the coordinator sends a total of M messages
+    // to these workers in a round-robin manner. Each worker performs minimal processing
+    // for each message and terminates after processing its share of messages (M/K).
+    //
+    // This benchmark tests actor message processing efficiency rather than mailbox concurrency
+    // since there is only one sender (coordinator). Performance improvements can be achieved
+    // through batch processing of messages.
+    network ForkJoinNetwork() ==>:
+    entities
+        workers = [Worker(dummy=0): for i in 0..K-1];
+        coordinator = Coordinator();
+    structure
+        foreach uint i in 0..K-1 do
+            coordinator.Out[i] --> workers[i].In {bufferSize = 10; };
+        end
+    end
+
+    // @author: Gareth Callanan
+    //    
+    // Coordinator that distributes work to K worker actors. It sends M total messages
+    // in a round-robin fashion to all workers. Each message contains a simple value
+    // to process.
+    //
+    // Ports:
+    //     Out - An array of K outputs, one connected to each worker actor, to transmit
+    //           messages for processing.
+    actor Coordinator () ==> float Out[K] :
+        int state := 0;
+        int numSent := 0;
+
+        foreach uint i in 0..K-1 generate
+            transmit: action ==> Out[i]:[numSent]
+            guard 
+                state = i,
+                numSent < M
+            do
+                numSent := numSent + 1;
+                state := (state + 1) mod K;
+
+                //println("Coordinator sent token to worker " + i);
+                if numSent = M then
+                    println("Coordinator sent last token");
+                end
+            end
+            
+        end    
+    end
+
+    // @author: Gareth Callanan
+    //
+    // Worker that performs minimal processing on each received message.
+    // Each worker terminates after processing its share of messages (M/K).
+    //
+    // Parameters:
+    //     dummy - Just insert 0 here. The tycho compiler was buggy at the time of writing
+    //             and could not evaluate [Worker(dummy=0): for i in 0..W-1] in the network
+    //             without this dummy variable.
+    // Ports:
+    //     In - Tokens from the coordinator are received here.
+    actor Worker (int dummy) float In ==> :
+        uint received := 0;
+        uint sum := 0;
+
+        consume: action In:[token] ==> 
+        do
+            received := received + 1;
+            sum := sum + token;
+            //println("Worker received token " + received);
+            if received = M/K then
+                println("Worker received last token " + received + " sum: " + sum);
+            end
+        end
+        
+    end
+end

@@ -66,11 +66,12 @@ cal::ActionOp fire(Actor *actor) {
   }
 
   // Advance the actors internal state machine
-  ScheduleNode fsmNode = actor->fsm.nodes[actor->currentState];
-  if (fsmNode.edgeTypeToNextNode == ScheduleEdgeType::WrapAround) {
+  FsmNode fsmNode = actor->fsm.nodes[actor->currentState];
+  actor->currentState = fsmNode.edges.front().nextNodeIndex;
+  // We have looped back to the start state
+  if(actor->fsm.initialStateValue == actor->currentState) {
     actor->numFiringsLeft--;
   }
-  actor->currentState = fsmNode.nextNodeIndex;
 
   return actionOp; // Return the action that was fired
 }
@@ -123,8 +124,7 @@ getActorAndPort(mlir::Value fifoEnd) {
 std::vector<cal::ActionOp> simulateNetwork(
     cal::NetworkOp networkOp,
     const llvm::MapVector<cal::ActorOp, int> &actorFiringsPerCycle,
-    const llvm::MapVector<cal::ActorOp, ScheduleGraph> &actorScheduleMap) {
-    
+    const llvm::MapVector<cal::ActorOp, Fsm> &actorFsmMap) {
   // Step 1: Create actors structs for each actor
   llvm::MapVector<cal::ActorOp, Actor> actorOpToActorStructMap;
   std::vector<Actor *> actors;
@@ -133,7 +133,7 @@ std::vector<cal::ActionOp> simulateNetwork(
         .actorOp = pair.first,
         .currentState = static_cast<int>(actorScheduleMap.find(pair.first)->second.initialStateValue),
         .numFiringsLeft = pair.second,
-        .fsm = actorScheduleMap.find(pair.first)->second
+        .fsm = actorFsmMap.find(pair.first)->second
     };
   }
 
@@ -204,7 +204,6 @@ std::vector<cal::ActionOp> simulateNetwork(
       }
     }
   } while (!worklist.empty());
-
   return schedule;
 }
 

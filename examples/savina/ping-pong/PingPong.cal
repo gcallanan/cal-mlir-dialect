@@ -1,0 +1,67 @@
+namespace pingpong:
+    uint PING_COUNT = 300000000; // Number of pings to perform before terminating
+
+    // @author: Gareth Callanan
+    //
+    // PingActor sends a message to the Pong actor and waits for a response.
+    // It decrements the count each time before sending.
+    // When the count reaches zero, the benchmark terminates.
+    //
+    // Ports:
+    //     In - Receives responses from the Pong actor
+    //     Out - Sends messages to the Pong actor
+    actor PingActor () uint In ==> uint Out:
+        // Initial state
+        int count := PING_COUNT;
+        int toPing := 1;
+        int sum := 0;
+        
+        ping: action ==> Out:[count]
+        guard
+            count > 0,
+            toPing = 1
+        do
+            count := count - 1; 
+            toPing := 0;
+            //println("Ping: " + count);
+            if count = 0 then
+                println("PingPong Done, sum: " + sum);
+            end
+        end
+
+        pong: action In:[value] ==>
+        guard
+            toPing = 0
+        do
+            toPing := 1;
+            sum := sum + value;
+            //println("Pong: " + value + ", sum: " + sum);
+        end
+
+    end
+
+    // @author: Gareth Callanan
+    //    
+    // PongActor receives messages from the Ping actor and sends them back.
+    //
+    // Ports:
+    //     In - Receives messages from the Ping actor
+    //     Out - Sends responses back to the Ping actor
+    actor PongActor () uint In ==> uint Out:
+        // Simply bounce back any message received
+        pong: action In:[value] ==> Out:[value]
+        do
+            // Just pass the value back without modification
+        end
+    end
+
+    network PingPongNetwork() ==>:
+    entities
+        ping = PingActor();
+        pong = PongActor();
+    structure
+        ping.Out --> pong.In { bufferSize = 1; };
+        pong.Out --> ping.In { bufferSize = 1; };
+    end
+
+end

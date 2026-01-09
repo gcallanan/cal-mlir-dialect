@@ -49,7 +49,7 @@ rm -fr myproject
 echo "1. Generating MLIR from .cal files"
 echo 
 
-streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --set bypass-AM-generation=on --source-path config.cal:BndBufferNetwork.cal:Buffer.cal:Sink.cal:Producer.cal:Consumer.cal:helperFunctions.cal --target-path myproject bndBuffer.BndBufferNetwork
+streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --source-path config.cal:BndBufferNetwork.cal:Buffer.cal:Sink.cal:Producer.cal:Consumer.cal:helperFunctions.cal --target-path myproject bndBuffer.BndBufferNetwork
 
 echo "2. Generating a binary from the mlir file"
 

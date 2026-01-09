@@ -1,0 +1,97 @@
+namespace threadRing:
+    uint N = 20; // Number of actors
+    uint R = 3000000; // Number of pings
+
+    // @author: Gareth Callanan
+    //
+    // Actor connected in the the thread ring. Receives a token, decrements its
+    // value by one and passes the token on. The token is not forwarded if when
+    // value reaches 0. 
+    //
+    // Parameters:
+    //     firstActor - One actor in the ring needs to inject the token into
+    //                  the ring for the first time. If this parameter is set to
+    //                  one, then this actor will be the one that creates that
+    //                  first token.
+    //
+    // Ports:
+    //     In - Port that receives the token travelling around the ring.
+    //     Out - Port where the received token is transmitted on.
+    actor ThreadRingActor (uint firstActor) uint In ==> uint Out:
+        
+        // Guard that will determine in the initialise action is run.
+        uint sendToken := firstActor;
+        uint tokenValue := R;
+        uint sum := 0;
+
+        txToken: action ==> Out:[tokenValue]
+        guard 
+            tokenValue > 0,
+            sendToken = 1
+        do
+            tokenValue := tokenValue - 1;
+            sendToken := 0;
+            sum := sum + tokenValue;
+            if tokenValue = 0 then
+                println("Done transmitting tokens: " + sum);
+            end
+            //println("Transmitted Token: " + tokenValue);
+        end
+
+        rxToken: action In:[token] ==> 
+        guard sendToken = 0
+        do
+            //println("Received Token: " + token);
+            tokenValue := token;
+            sendToken := 1;
+        end
+
+        // int tokenValue := -1;
+
+        // rxToken: action In:[token] ==>
+        // do
+        //     //println("Received Token: " + token);
+        //     tokenValue := token;
+        // end
+
+        // txToken: action ==> Out:[output]
+        // guard tokenValue > 0
+        // var
+        //     uint output := tokenValue - 1
+        // do
+        //     tokenValue := -1;
+        // end
+
+        // done: action ==>
+        // guard tokenValue = 0
+        // do
+        //     println("Actor done");
+        //     tokenValue := -1;
+        // end
+
+        // // Initialise action that injects the first token into the ring.
+        // // This actions is run exactly once. And only if firstActor is equal
+        // // to 1.
+        // initialise: action ==> Out:[R]
+        // guard
+        //     runInit = 1
+        // do
+        //     runInit := 0;
+        //     println("Start");
+        // end
+    end
+
+    network ThreadRing () ==>:
+    entities 
+        // Create all the ThreadRingActors and set the first one to have a firstActor value of 1
+        // All the rest have this value set to zero to prevent multiple tokens being transmitted
+        // around the loop.
+        actors = [ThreadRingActor(firstActor=(if i = 0 then 1 else 0 end)): for i in 0..N-1];
+    structure
+        // Connect all the actors in the ring
+        foreach uint i in 0..N-1 do
+            actors[i].Out --> actors[(i + 1) % N].In;
+        end
+    end
+
+end

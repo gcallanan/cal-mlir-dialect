@@ -14,39 +14,43 @@
 
 namespace mlir {
 
-void printScheduleGraph(ScheduleGraph &graph) {
-  std::string scheduleType;
-  switch (graph.type) {
-  case GraphType::SingleAction:
-    scheduleType = "SingleAction";
+void printFsm(Fsm &fsm) {
+  std::string fsmType;
+  switch (fsm.type) {
+  case FsmType::SingleAction:
+    fsmType = "SingleAction";
     break;
-  case GraphType::StateMachineSchedule:
-    scheduleType = "StateMachineSchedule";
+  case FsmType::FSM_Unclassified:
+    fsmType = "FSM (Unclassified)";
     break;
-  case GraphType::Dynamic:
-    scheduleType = "Dynamic";
+  case FsmType::FSM_SimpleLoop:
+    fsmType = "FSM (SimpleLoop)";
+    break;
+  case FsmType::Dynamic:
+    fsmType = "Dynamic";
     break;
   }
 
-  llvm::outs() << "ScheduleGraph for actor: " << graph.actor.getSymName()
-               << ". Type: " << scheduleType << "\n";
+  llvm::outs() << "FSM for actor: " << fsm.actor.getSymName()
+               << ". Type: " << fsmType << "\n";
 
-  for (size_t i = 0; i < graph.nodes.size(); ++i) {
-    auto &node = graph.nodes[i];
-    llvm::outs() << "  Node " << i << ": "
-                 << node.action.getActionNameAttr().getValue() << "\n";
+  for (size_t i = 0; i < fsm.nodes.size(); ++i) {
+    auto &node = fsm.nodes[i];
+    std::string actionName;
+    if (node.action != nullptr)
+      actionName = node.action.getActionNameAttr().getValue();
+    else
+      actionName = "<null>";
+    llvm::outs() << "  Node " << i << ": " << actionName << "\n";
 
-    llvm::outs() << "    -> Next: Node " << node.nextNodeIndex;
-
-    switch (node.edgeTypeToNextNode) {
-    case ScheduleEdgeType::Next:
-      llvm::outs() << " (Next)";
-      break;
-    case ScheduleEdgeType::WrapAround:
-      llvm::outs() << " (WrapAround)";
-      break;
+    if (node.edges.empty()) {
+      llvm::outs() << "    -> (no edges)\n";
+    } else {
+      for (const auto &edge : node.edges) {
+        llvm::outs() << "    -> Next: Node " << edge.nextNodeIndex;
+        llvm::outs() << "\n";
+      }
     }
-    llvm::outs() << "\n";
   }
 }
 
@@ -109,19 +113,25 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   case StateVarUpdateKind::Increment:
     os << "= " << ssaName << " + ";
     break;
+  case StateVarUpdateKind::IncrementAndModK:
+    os << "= (" << ssaName << " + ";
+    break;
   }
-  os << " " << info.value << ")";
+  os << " " << info.value;
+  if (info.kind == StateVarUpdateKind::IncrementAndModK) {
+    os << ") % " << info.modK;
+  }
   return os;
 }
 
 CycloStaticDataflowAnalysis::CycloStaticDataflowAnalysis(Operation *op) {
   for (auto actor : op->getRegion(0).front().getOps<mlir::cal::ActorOp>()) {
-    determineActorSchedule(actor);
+    determineActorFsm(actor);
   }
 }
 
 void CycloStaticDataflowAnalysis::printActorStateMachine(cal::ActorOp actorOp) {
-  printScheduleGraph(actorScheduleMap[actorOp]);
+  printFsm(actorFsmMap[actorOp]);
 }
 
 void CycloStaticDataflowAnalysis::printCSDFPhases(cal::ActorOp actorOp) {
@@ -151,25 +161,26 @@ void CycloStaticDataflowAnalysis::printCSDFPhases(cal::ActorOp actorOp) {
   }
 }
 
-void CycloStaticDataflowAnalysis::determineActorSchedule(cal::ActorOp actorOp) {
+void CycloStaticDataflowAnalysis::determineActorFsm(cal::ActorOp actorOp) {
   int actionCount = 0;
   for (auto actionOp : actorOp.getOps<cal::ActionOp>()) {
+    (void)actionOp;
     ++actionCount;
   }
 
   if (actionCount == 1) {
-    actorScheduleMap[actorOp] = generateSingleActionSchedule(actorOp);
+    actorFsmMap[actorOp] = generateSingleActionFsm(actorOp);
   } else {
-    actorScheduleMap[actorOp] = generateMultiActionSchedule(actorOp);
+    actorFsmMap[actorOp] = generateMultiActionFsm(actorOp);
   }
 }
 
-ScheduleGraph CycloStaticDataflowAnalysis::generateSingleActionSchedule(
+Fsm CycloStaticDataflowAnalysis::generateSingleActionFsm(
     cal::ActorOp actorOp) {
-  ScheduleGraph graph;
-  graph.actor = actorOp;
-  graph.type = GraphType::SingleAction;
-  graph.initialStateValue = 0; // Single action, so initial state is 0
+  Fsm fsm;
+  fsm.actor = actorOp;
+  fsm.type = FsmType::SingleAction;
+  fsm.initialStateValue = 0; // Single action, so initial state is 0
 
   // Find the single action
   cal::ActionOp singleAction = nullptr;
@@ -179,56 +190,58 @@ ScheduleGraph CycloStaticDataflowAnalysis::generateSingleActionSchedule(
   }
 
   // Create a single node for the action
-  ScheduleNode node;
+  FsmNode node;
   node.action = singleAction;
-  node.nextNodeIndex = 0;
-  node.edgeTypeToNextNode = ScheduleEdgeType::WrapAround;
+  FsmEdge edge;
+  edge.nextNodeIndex = 0;
+  node.edges.push_back(edge);
+  fsm.nodes.push_back(node);
 
-  graph.nodes.push_back(node);
-
-  // Store or process the graph as needed (not shown)
-  return graph;
+  // Store or process the fsm as needed (not shown)
+  return fsm;
 }
 
-ScheduleGraph
-CycloStaticDataflowAnalysis::generateMultiActionSchedule(cal::ActorOp actorOp) {
-  ScheduleGraphBuilder builder(actorOp);
+Fsm
+CycloStaticDataflowAnalysis::generateMultiActionFsm(cal::ActorOp actorOp) {
+  FsmBuilder builder(actorOp);
   return builder.generateFsm();
 }
 
 std::optional<llvm::SmallVector<CycloStaticDataflowAnalysis::SDFPhase, 4>>
 CycloStaticDataflowAnalysis::getSDFPhases(cal::ActorOp actorOp) {
 
-  ScheduleGraph &graph = actorScheduleMap[actorOp];
+  Fsm &fsm = actorFsmMap[actorOp];
 
-  if (graph.type == GraphType::Dynamic) {
+  if (fsm.type == FsmType::Dynamic) {
     return std::nullopt;
   }
 
-  if (graph.type == GraphType::SingleAction) {
+  if (fsm.type == FsmType::FSM_Unclassified) {
+    return std::nullopt;
+  }
+
+  if (fsm.type == FsmType::SingleAction) {
     llvm::SmallVector<SDFPhase, 4> phases;
     SDFPhase phase;
-    phase.actionOp = graph.nodes[0].action;
+    phase.actionOp = fsm.nodes[0].action;
     phase.portRates = phase.actionOp.getPortRates();
     phases.push_back(phase);
     return phases;
   }
 
-  if (graph.type == GraphType::StateMachineSchedule) {
+  if (fsm.type == FsmType::FSM_SimpleLoop) {
     llvm::SmallVector<SDFPhase, 4> phases;
 
-    ScheduleNode node = graph.nodes[graph.initialStateValue];
-    while (node.edgeTypeToNextNode != ScheduleEdgeType::WrapAround) {
+    FsmNode node = fsm.nodes[fsm.initialStateValue];
+    size_t nodeIndex = -1;
+    do {
       SDFPhase phase;
       phase.actionOp = node.action;
       phase.portRates = phase.actionOp.getPortRates();
       phases.push_back(phase);
-      node = graph.nodes[node.nextNodeIndex];
-    }
-    SDFPhase phase;
-    phase.actionOp = node.action;
-    phase.portRates = phase.actionOp.getPortRates();
-    phases.push_back(phase);
+      nodeIndex = node.edges.front().nextNodeIndex;
+      node = fsm.nodes[nodeIndex];
+    } while (nodeIndex != fsm.initialStateValue);
 
     return phases;
   }
@@ -422,7 +435,7 @@ CycloStaticDataflowAnalysis::generateScheduleThroughSimulation(
     cal::NetworkOp networkOp) {
   auto balanceEquations = generateBalanceEquations(networkOp);
   auto actorFiringsPerCycle = solveBalanceEquations(balanceEquations);
-  return simulateNetwork(networkOp, actorFiringsPerCycle, actorScheduleMap);
+  return simulateNetwork(networkOp, actorFiringsPerCycle, actorFsmMap);
 }
 
 std::vector<cal::ActorOp>
@@ -435,8 +448,8 @@ CycloStaticDataflowAnalysis::getNonSchedulableActors(cal::NetworkOp networkOp) {
         createInstanceOp, actorRef);
     if (!actorOp)
       continue;
-    auto it = actorScheduleMap.find(actorOp);
-    if (it != actorScheduleMap.end() && it->second.type == GraphType::Dynamic) {
+    auto it = actorFsmMap.find(actorOp);
+    if (it != actorFsmMap.end() && it->second.type != FsmType::FSM_SimpleLoop && it->second.type != FsmType::SingleAction) {
       result.push_back(actorOp);
     }
   }
@@ -453,8 +466,8 @@ CycloStaticDataflowAnalysis::getSchedulableActors(cal::NetworkOp networkOp) {
         createInstanceOp, actorRef);
     if (!actorOp)
       continue;
-    auto it = actorScheduleMap.find(actorOp);
-    if (it != actorScheduleMap.end() && it->second.type != GraphType::Dynamic) {
+    auto it = actorFsmMap.find(actorOp);
+    if (it != actorFsmMap.end() && it->second.type != FsmType::Dynamic) {
       result.push_back(actorOp);
     }
   }
