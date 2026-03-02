@@ -82,7 +82,7 @@ namespace big:
                 else
                     pingInFlight := 0;
                     numPingsComplete := numPingsComplete + 1;
-                    nextDestination :=  nextDestination mod (N-1); //randInt(N - 1);
+                    nextDestination :=  (nextDestination+1) mod (N-1); //randInt(N - 1);
                     //println("Actor: " + index + " received pong " + numPingsComplete + " of " + P + " on port " + i + "! Next destination: " + nextDestination);
                 end
             end
