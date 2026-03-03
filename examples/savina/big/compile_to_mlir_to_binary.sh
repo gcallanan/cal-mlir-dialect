@@ -53,8 +53,16 @@ echo "2. Generating a binary from the mlir file"
 
 mkdir myproject/generated
 
-echo $parallel
-cal-opt --lower-cal-to-llvm="$parallel" myproject/code-gen/main.mlir | cal-translate --mlir-to-llvmir > myproject/generated/main.ll
-clang -O3 myproject/generated/main.ll -o main_executable_from_mlir -L"../../../llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread
+if [ "$m" = true ]; then
+    output_binary="main_executable_from_mlir_multicore"
+    bash roughwork/assign_mlir_cpu_affinities.sh
+    i=myproject/code-gen/main_multicore.mlir
+else
+    output_binary="main_executable_from_mlir"
+    i=myproject/code-gen/main.mlir
+fi
 
-echo "3. Binary 'main_executable_from_mlir' Generated succesfully"
+cal-opt --lower-cal-to-llvm="$parallel" "$i" | cal-translate --mlir-to-llvmir > myproject/generated/main.ll
+clang -O3 myproject/generated/main.ll -o "$output_binary" -L"../../../llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread
+
+echo "3. Binary '$output_binary' Generated succesfully"

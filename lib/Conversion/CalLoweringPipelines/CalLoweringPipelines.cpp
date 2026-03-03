@@ -106,15 +106,15 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
         pm.addPass(mlir::createLowerCalStateToMemref());
-        if (options.multithreadCalActors) {
-          mlir::LowerFifoToMemrefPassOptions fifoOptions;
-          fifoOptions.fifo_index_mode = std::string("spsc-lockfree");
-          pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
-        } else {
-          pm.addPass(mlir::createLowerFifoToMemrefPass());
-        }
-        pm.addPass(mlir::createDecomposeFifoTuples());
+        // if (options.multithreadCalActors) {
+        mlir::LowerFifoToMemrefPassOptions fifoOptions;
+        fifoOptions.fifo_index_mode = std::string("spsc-lockfree");
+        pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
+        // } else {
+        //   pm.addPass(mlir::createLowerFifoToMemrefPass());
+        // }
         pm.addPass(mlir::createFifoMemrefAtomicizePass());
+        pm.addPass(mlir::createDecomposeFifoTuples());
         pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
         mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;

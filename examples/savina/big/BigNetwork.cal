@@ -16,14 +16,14 @@ namespace big:
         // Link messenger actor ports to each other
         foreach uint i in 0..numMessengers-1 do
             foreach uint j in i..numMessengers-2 do // -2 as the each actor has N-1 Out/In ports.
-                messengers[i].Out[j] --> messengers[j+1].In[i] {bufferSize = 10;};
-                messengers[j+1].Out[i] --> messengers[i].In[j] {bufferSize = 10;};
+                messengers[i].Out[j] --> messengers[j+1].In[i] {bufferSize = 256;};
+                messengers[j+1].Out[i] --> messengers[i].In[j] {bufferSize = 256;};
             end
         end
 
         // Link the OutToSink port on each messenger actor to the sink actor.
         foreach uint i in 0..numMessengers-1 do
-            messengers[i].OutToSink --> sink.In[i] {bufferSize = 1;};
+            messengers[i].OutToSink --> sink.In[i] {bufferSize = 256;};
         end
     end
 
