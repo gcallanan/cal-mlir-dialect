@@ -4,3 +4,5 @@ main_executable_from_mlir
 main_executable_from_c
 main_executable
 results.csv
+config_partitioned.xml
+config.xml

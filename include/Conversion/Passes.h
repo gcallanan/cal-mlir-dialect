@@ -14,6 +14,8 @@ namespace mlir {
 
 //===- Generated passes ---------------------------------------------------===//
 
+constexpr int64_t CACHE_LINE_SIZE = 64;
+
 enum class AllocLocation {
   HOST,
   GPU

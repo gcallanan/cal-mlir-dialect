@@ -40,6 +40,9 @@ namespace mlir {
 
 using namespace fifo;
 
+// Cache line size in bytes for padding to avoid false sharing.
+static constexpr int64_t CACHE_LINE_SIZE_I64 = CACHE_LINE_SIZE / sizeof(int64_t);
+
 /// Indexing strategy mode
 enum class FifoIndexMode { LegacyModulo, SPSCLockFree };
 
@@ -171,16 +174,19 @@ private:
 
     // 2. Allocate the metadata memref and zero its elements
     // Legacy: metadata = [readIdx(i32), writeIdx(i32)]
-    // SPSC lock-free: use 64-bit monotonically increasing counters for
-    // reduced wrap risk: [readCount(i64), writeCount(i64)]
+    // SPSC lock-free: use 64-bit monotonically increasing counters with 
+    // cache line padding to avoid false sharing: [readCount(i64), <padding>, writeCount(i64)]
     Value zeroMetaInit;
     Type metaElemType;
+    MemRefType memRefType_metadata;
     if (indexMode == FifoIndexMode::SPSCLockFree) {
       metaElemType = rewriter.getI64Type();
+      // Use cache line padding: 2 * CACHE_LINE_SIZE_I64 elements
+      memRefType_metadata = MemRefType::get(2 * CACHE_LINE_SIZE_I64, metaElemType);
     } else {
       metaElemType = rewriter.getI32Type();
+      memRefType_metadata = MemRefType::get(2, metaElemType);
     }
-    auto memRefType_metadata = MemRefType::get(2, metaElemType);
     auto alloc_metadata =
         rewriter.create<memref::AllocOp>(loc, memRefType_metadata);
 
@@ -214,7 +220,13 @@ private:
           loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
     }
     Value index0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value index1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value index1;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      index1 = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      index1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
     rewriter.create<memref::StoreOp>(loc, zeroVal, alloc_metadata, index0);
     rewriter.create<memref::StoreOp>(loc, zeroVal, alloc_metadata, index1);
 
@@ -352,9 +364,9 @@ private:
       auto slot =
           rewriter.create<arith::RemSIOp>(loc, readCountIndex, capacityIndex);
       readIndex = slot.getResult();
-      // Optionally load writeCount if needed for empty checks in future.
+      // Load writeCount from cache line boundary index
       Value writeLocationIndex =
-          rewriter.create<arith::ConstantIndexOp>(loc, 1);
+          rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
       writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                       writeLocationIndex);
     } else {
@@ -553,7 +565,13 @@ private:
         loc, tupleType.getType(2), adaptor.getInputPort(), 2);
 
     // 1. Get the write index and convert it to type index
-    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
     auto writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                          writeLocationIndex);
     Value writeIndex;
@@ -680,7 +698,13 @@ private:
         loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
 
     // 1. Get the write and read index and convert it to type index
-    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
     auto writeI32 = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                     writeLocationIndex);
 
@@ -773,7 +797,13 @@ private:
         loc, tupleType.getType(2), adaptor.getInputPort(), 2);
 
     // 1. Get the write and read index and convert it to type index
-    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
     auto writeI32 = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                     writeLocationIndex);
 
@@ -796,10 +826,8 @@ private:
       auto step1 = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
       auto step2 = rewriter.create<arith::AddIOp>(loc, step1, bufferSizeVal);
       auto step3 = rewriter.create<arith::RemSIOp>(loc, step2, bufferSizeVal);
-      auto step4 = rewriter.create<arith::SubIOp>(loc, bufferSizeVal, step3);
-      auto space = rewriter.create<arith::SubIOp>(loc, step4, oneI32);
-      spaceIndex = rewriter.create<arith::IndexCastOp>(
-          loc, rewriter.getIndexType(), space);
+      auto space = rewriter.create<arith::SubIOp>(loc, bufferSizeVal, step3);
+      spaceIndex = rewriter.create<arith::SubIOp>(loc, space, oneI32);
     }
 
     // 3. Replace eraseOp with the new calculated size
@@ -936,7 +964,11 @@ static mlir::Type createFifoPortTupleType(mlir::Type elementType,
                           ? mlir::IntegerType::get(context, 64)
                           : mlir::IntegerType::get(context, 32);
   
-  auto memRefType_metadata = MemRefType::get(2, metaElemType);
+  // Use cache line padding for SPSC lock-free mode to avoid false sharing
+  int64_t metadataSize = (indexMode == FifoIndexMode::SPSCLockFree)
+                             ? 2 * CACHE_LINE_SIZE_I64
+                             : 2;
+  auto memRefType_metadata = MemRefType::get(metadataSize, metaElemType);
   auto tupleType =
       TupleType::get(context, {memRefType_data, memRefType_metadata, metaElemType});
   return tupleType;

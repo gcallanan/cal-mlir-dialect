@@ -31,7 +31,6 @@ namespace mlir {
 #include "Conversion/Passes.h.inc"
 
 // Cache line size in bytes for padding to avoid false sharing.
-constexpr int64_t CACHE_LINE_SIZE = 64;
 static constexpr int64_t CACHE_LINE_SIZE_I32 =
     CACHE_LINE_SIZE / sizeof(int32_t);
 
