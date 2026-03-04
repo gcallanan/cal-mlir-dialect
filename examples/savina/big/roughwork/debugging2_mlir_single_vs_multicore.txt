@@ -1,0 +1,33 @@
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e L1-dcache-loads,L1-dcache-load-misses,LLC-loads,LLC-load-misses ./main_executable_from_mlir_multicore_6
+Finished processing pings from 6 messengers
+
+ Performance counter stats for './main_executable_from_mlir_multicore_6':
+
+    25 063 143 292      L1-dcache-loads                                             
+     4 998 674 926      L1-dcache-load-misses     #   19,94% of all L1-dcache accesses
+     3 308 000 799      LLC-loads                                                   
+            24 502      LLC-load-misses           #    0,00% of all LL-cache accesses
+
+       9,169171443 seconds time elapsed
+
+      36,663914000 seconds user
+       0,000000000 seconds sys
+
+
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e L1-dcache-loads,L1-dcache-load-misses,LLC-loads,LLC-load-misses ./main_executable_from_mlir_6
+Finished processing pings from 6 messengers
+
+ Performance counter stats for './main_executable_from_mlir_6':
+
+    10 669 883 017      L1-dcache-loads                                             
+           171 952      L1-dcache-load-misses     #    0,00% of all L1-dcache accesses
+            38 870      LLC-loads                                                   
+            10 013      LLC-load-misses           #   25,76% of all LL-cache accesses
+
+       2,630333714 seconds time elapsed
+
+       2,630255000 seconds user
+       0,000000000 seconds sys
+
+
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ 

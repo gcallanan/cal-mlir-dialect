@@ -1,0 +1,72 @@
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e branch-instructions,branch-misses,br_inst_retired.conditional,br_misp_retired.conditional,br_inst_retired.near_call,br_misp_retired.near_call ./main_executable_from_mlir_6
+Finished processing pings from 6 messengers
+
+ Performance counter stats for './main_executable_from_mlir_6':
+
+     6 435 200 456      branch-instructions                                           (66,55%)
+            74 682      branch-misses             #    0,00% of all branches          (66,84%)
+     6 061 803 947      br_inst_retired.conditional                                     (66,72%)
+            54 649      br_misp_retired.conditional                                     (66,71%)
+           487 619      br_inst_retired.near_call                                     (66,74%)
+             4 317      br_misp_retired.near_call                                     (66,45%)
+
+       2,644781252 seconds time elapsed
+
+       2,639193000 seconds user
+       0,000000000 seconds sys
+
+
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e branch-instructions,branch-misses,br_inst_retired.conditional,br_misp_retired.conditional,br_inst_retired.near_call,br_misp_retired.near_call ./main_executable_from_mlir_7
+Finished processing pings from 7 messengers
+
+ Performance counter stats for './main_executable_from_mlir_7':
+
+     7 302 296 265      branch-instructions                                           (66,69%)
+           102 226      branch-misses             #    0,00% of all branches          (66,67%)
+     6 899 821 743      br_inst_retired.conditional                                     (66,56%)
+            69 915      br_misp_retired.conditional                                     (66,61%)
+           538 219      br_inst_retired.near_call                                     (66,75%)
+             5 473      br_misp_retired.near_call                                     (66,73%)
+
+       3,073640464 seconds time elapsed
+
+       3,066742000 seconds user
+       0,000000000 seconds sys
+
+
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e branch-instructions,branch-misses,br_inst_retired.conditional,br_misp_retired.conditional,br_inst_retired.near_call,br_misp_retired.near_call ./main_executable_from_mlir_8
+Finished processing pings from 8 messengers
+
+ Performance counter stats for './main_executable_from_mlir_8':
+
+    11 875 282 665      branch-instructions                                           (66,66%)
+       623 159 483      branch-misses             #    5,25% of all branches          (66,66%)
+    11 343 888 452      br_inst_retired.conditional                                     (66,66%)
+       623 553 871      br_misp_retired.conditional                                     (66,67%)
+           456 521      br_inst_retired.near_call                                     (66,67%)
+            10 019      br_misp_retired.near_call                                     (66,67%)
+
+       9,887259737 seconds time elapsed
+
+       9,886960000 seconds user
+       0,000000000 seconds sys
+
+
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e branch-instructions,branch-misses,br_inst_retired.conditional,br_misp_retired.conditional,br_inst_retired.near_call,br_misp_retired.near_call ./main_executable_from_mlir_9
+Finished processing pings from 9 messengers
+
+ Performance counter stats for './main_executable_from_mlir_9':
+
+    14 895 269 756      branch-instructions                                           (66,66%)
+       655 262 271      branch-misses             #    4,40% of all branches          (66,69%)
+    14 190 779 435      br_inst_retired.conditional                                     (66,69%)
+       655 138 068      br_misp_retired.conditional                                     (66,69%)
+           591 759      br_inst_retired.near_call                                     (66,66%)
+            12 733      br_misp_retired.near_call                                     (66,63%)
+
+      12,055175047 seconds time elapsed
+
+      12,054827000 seconds user
+       0,000000000 seconds sys
+
+
