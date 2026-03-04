@@ -1,0 +1,898 @@
+M,P,Command,Iteration,Time
+2,10000000,./main_executable_from_cpp --generate=config.xml,0,3.44
+2,10000000,./main_executable_from_cpp --generate=config.xml,1,3.42
+2,10000000,./main_executable_from_cpp --generate=config.xml,2,3.43
+2,10000000,./main_executable_from_cpp --generate=config.xml,3,3.49
+2,10000000,./main_executable_from_cpp --generate=config.xml,4,3.44
+2,10000000,./main_executable_from_cpp --generate=config.xml,5,3.42
+2,10000000,./main_executable_from_cpp --generate=config.xml,6,3.42
+2,10000000,./main_executable_from_cpp --generate=config.xml,7,3.42
+2,10000000,./main_executable_from_cpp --generate=config.xml,8,3.42
+2,10000000,./main_executable_from_cpp --generate=config.xml,9,3.45
+2,10000000,./main_executable_from_cpp --generate=config.xml,10,3.42
+2,10000000,./main_executable_from_cpp --generate=config.xml,11,3.45
+2,10000000,./main_executable_from_cpp --generate=config.xml,12,3.42
+2,10000000,./main_executable_from_cpp --generate=config.xml,13,3.42
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,44.84
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,44.64
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,44.18
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,44.19
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,46.24
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,44.02
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,49.91
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,50.55
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,44.51
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,51.87
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,46.25
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,46.55
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,53.12
+2,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,44.44
+3,10000000,./main_executable_from_cpp --generate=config.xml,0,7.79
+3,10000000,./main_executable_from_cpp --generate=config.xml,1,7.04
+3,10000000,./main_executable_from_cpp --generate=config.xml,2,7.01
+3,10000000,./main_executable_from_cpp --generate=config.xml,3,6.99
+3,10000000,./main_executable_from_cpp --generate=config.xml,4,7.01
+3,10000000,./main_executable_from_cpp --generate=config.xml,5,7.02
+3,10000000,./main_executable_from_cpp --generate=config.xml,6,7.10
+3,10000000,./main_executable_from_cpp --generate=config.xml,7,7.00
+3,10000000,./main_executable_from_cpp --generate=config.xml,8,7.13
+3,10000000,./main_executable_from_cpp --generate=config.xml,9,7.07
+3,10000000,./main_executable_from_cpp --generate=config.xml,10,7.01
+3,10000000,./main_executable_from_cpp --generate=config.xml,11,7.09
+3,10000000,./main_executable_from_cpp --generate=config.xml,12,7.06
+3,10000000,./main_executable_from_cpp --generate=config.xml,13,7.27
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,45.07
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,45.67
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,0.08
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,58.06
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,45.28
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,50.41
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,50.73
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,33.74
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,53.66
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,23.73
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,53.02
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,47.75
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,50.07
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,53.55
+4,10000000,./main_executable_from_cpp --generate=config.xml,0,12.09
+4,10000000,./main_executable_from_cpp --generate=config.xml,1,12.25
+4,10000000,./main_executable_from_cpp --generate=config.xml,2,12.19
+4,10000000,./main_executable_from_cpp --generate=config.xml,3,12.15
+4,10000000,./main_executable_from_cpp --generate=config.xml,4,12.21
+4,10000000,./main_executable_from_cpp --generate=config.xml,5,12.24
+4,10000000,./main_executable_from_cpp --generate=config.xml,6,12.20
+4,10000000,./main_executable_from_cpp --generate=config.xml,7,12.18
+4,10000000,./main_executable_from_cpp --generate=config.xml,8,12.22
+4,10000000,./main_executable_from_cpp --generate=config.xml,9,12.20
+4,10000000,./main_executable_from_cpp --generate=config.xml,10,12.28
+4,10000000,./main_executable_from_cpp --generate=config.xml,11,12.21
+4,10000000,./main_executable_from_cpp --generate=config.xml,12,12.15
+4,10000000,./main_executable_from_cpp --generate=config.xml,13,12.16
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,54.73
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,71.26
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,65.75
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,62.36
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,66.22
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,69.24
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,40.15
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,65.04
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,71.92
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,65.99
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,48.32
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,68.41
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,64.91
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,65.16
+5,10000000,./main_executable_from_cpp --generate=config.xml,0,18.34
+5,10000000,./main_executable_from_cpp --generate=config.xml,1,18.21
+5,10000000,./main_executable_from_cpp --generate=config.xml,2,18.16
+5,10000000,./main_executable_from_cpp --generate=config.xml,3,18.40
+5,10000000,./main_executable_from_cpp --generate=config.xml,4,18.22
+5,10000000,./main_executable_from_cpp --generate=config.xml,5,18.33
+5,10000000,./main_executable_from_cpp --generate=config.xml,6,18.20
+5,10000000,./main_executable_from_cpp --generate=config.xml,7,18.97
+5,10000000,./main_executable_from_cpp --generate=config.xml,8,18.23
+5,10000000,./main_executable_from_cpp --generate=config.xml,9,18.18
+5,10000000,./main_executable_from_cpp --generate=config.xml,10,19.24
+5,10000000,./main_executable_from_cpp --generate=config.xml,11,18.36
+5,10000000,./main_executable_from_cpp --generate=config.xml,12,18.24
+5,10000000,./main_executable_from_cpp --generate=config.xml,13,18.32
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,42.78
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,54.53
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,56.54
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,56.80
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,56.70
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,55.77
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,56.74
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,58.35
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,53.68
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,56.78
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,59.44
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,55.95
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,44.22
+5,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,57.27
+6,10000000,./main_executable_from_cpp --generate=config.xml,0,25.90
+6,10000000,./main_executable_from_cpp --generate=config.xml,1,25.74
+6,10000000,./main_executable_from_cpp --generate=config.xml,2,25.76
+6,10000000,./main_executable_from_cpp --generate=config.xml,3,25.66
+6,10000000,./main_executable_from_cpp --generate=config.xml,4,25.58
+6,10000000,./main_executable_from_cpp --generate=config.xml,5,25.64
+6,10000000,./main_executable_from_cpp --generate=config.xml,6,25.55
+6,10000000,./main_executable_from_cpp --generate=config.xml,7,25.62
+6,10000000,./main_executable_from_cpp --generate=config.xml,8,28.47
+6,10000000,./main_executable_from_cpp --generate=config.xml,9,25.78
+6,10000000,./main_executable_from_cpp --generate=config.xml,10,25.65
+6,10000000,./main_executable_from_cpp --generate=config.xml,11,25.61
+6,10000000,./main_executable_from_cpp --generate=config.xml,12,25.75
+6,10000000,./main_executable_from_cpp --generate=config.xml,13,26.15
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,32.39
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,52.76
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,53.74
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,58.80
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,55.68
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,60.98
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,44.93
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,46.84
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,62.76
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,64.46
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,64.45
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,51.74
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,43.22
+6,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,51.86
+7,10000000,./main_executable_from_cpp --generate=config.xml,0,34.50
+7,10000000,./main_executable_from_cpp --generate=config.xml,1,34.48
+7,10000000,./main_executable_from_cpp --generate=config.xml,2,34.54
+7,10000000,./main_executable_from_cpp --generate=config.xml,3,34.48
+7,10000000,./main_executable_from_cpp --generate=config.xml,4,34.81
+7,10000000,./main_executable_from_cpp --generate=config.xml,5,34.93
+7,10000000,./main_executable_from_cpp --generate=config.xml,6,34.46
+7,10000000,./main_executable_from_cpp --generate=config.xml,7,34.36
+7,10000000,./main_executable_from_cpp --generate=config.xml,8,35.01
+7,10000000,./main_executable_from_cpp --generate=config.xml,9,34.37
+7,10000000,./main_executable_from_cpp --generate=config.xml,10,34.68
+7,10000000,./main_executable_from_cpp --generate=config.xml,11,34.70
+7,10000000,./main_executable_from_cpp --generate=config.xml,12,34.70
+7,10000000,./main_executable_from_cpp --generate=config.xml,13,34.68
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,40.23
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,46.72
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,55.21
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,52.28
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,48.05
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,51.66
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,48.34
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,56.46
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,52.14
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,51.13
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,58.67
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,64.38
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,54.73
+7,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,52.69
+8,10000000,./main_executable_from_cpp --generate=config.xml,0,45.17
+8,10000000,./main_executable_from_cpp --generate=config.xml,1,44.41
+8,10000000,./main_executable_from_cpp --generate=config.xml,2,44.32
+8,10000000,./main_executable_from_cpp --generate=config.xml,3,44.47
+8,10000000,./main_executable_from_cpp --generate=config.xml,4,44.45
+8,10000000,./main_executable_from_cpp --generate=config.xml,5,44.47
+8,10000000,./main_executable_from_cpp --generate=config.xml,6,45.21
+8,10000000,./main_executable_from_cpp --generate=config.xml,7,44.52
+8,10000000,./main_executable_from_cpp --generate=config.xml,8,45.30
+8,10000000,./main_executable_from_cpp --generate=config.xml,9,44.45
+8,10000000,./main_executable_from_cpp --generate=config.xml,10,44.54
+8,10000000,./main_executable_from_cpp --generate=config.xml,11,44.80
+8,10000000,./main_executable_from_cpp --generate=config.xml,12,44.45
+8,10000000,./main_executable_from_cpp --generate=config.xml,13,45.41
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,37.02
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,42.13
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,59.77
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,55.76
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,50.28
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,51.55
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,49.78
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,57.20
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,52.67
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,52.23
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,51.28
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,49.68
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,51.48
+8,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,51.23
+9,10000000,./main_executable_from_cpp --generate=config.xml,0,55.59
+9,10000000,./main_executable_from_cpp --generate=config.xml,1,55.64
+9,10000000,./main_executable_from_cpp --generate=config.xml,2,55.79
+9,10000000,./main_executable_from_cpp --generate=config.xml,3,55.89
+9,10000000,./main_executable_from_cpp --generate=config.xml,4,55.92
+9,10000000,./main_executable_from_cpp --generate=config.xml,5,55.93
+9,10000000,./main_executable_from_cpp --generate=config.xml,6,55.61
+9,10000000,./main_executable_from_cpp --generate=config.xml,7,55.60
+9,10000000,./main_executable_from_cpp --generate=config.xml,8,57.14
+9,10000000,./main_executable_from_cpp --generate=config.xml,9,55.71
+9,10000000,./main_executable_from_cpp --generate=config.xml,10,55.75
+9,10000000,./main_executable_from_cpp --generate=config.xml,11,56.22
+9,10000000,./main_executable_from_cpp --generate=config.xml,12,55.80
+9,10000000,./main_executable_from_cpp --generate=config.xml,13,55.94
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,40.47
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,44.55
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,56.02
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,52.48
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,52.82
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,54.07
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,54.50
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,53.52
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,55.55
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,57.25
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,55.54
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,55.95
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,52.93
+9,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,54.66
+2,10000000,./main_executable_from_mlir,0,0.25
+2,10000000,./main_executable_from_mlir,1,0.24
+2,10000000,./main_executable_from_mlir,2,0.24
+2,10000000,./main_executable_from_mlir,3,0.24
+2,10000000,./main_executable_from_mlir,4,0.24
+2,10000000,./main_executable_from_mlir,5,0.24
+2,10000000,./main_executable_from_mlir,6,0.24
+2,10000000,./main_executable_from_mlir,7,0.24
+2,10000000,./main_executable_from_mlir,8,0.24
+2,10000000,./main_executable_from_mlir,9,0.24
+2,10000000,./main_executable_from_mlir,10,0.24
+2,10000000,./main_executable_from_mlir,11,0.24
+2,10000000,./main_executable_from_mlir,12,0.24
+2,10000000,./main_executable_from_mlir,13,0.24
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,3.20
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,3.30
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,3.30
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,3.15
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,3.30
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,3.50
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,3.25
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,3.20
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,3.35
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,3.35
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,3.25
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,3.10
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,3.30
+2,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,3.40
+3,10000000,./main_executable_from_mlir,0,0.73
+3,10000000,./main_executable_from_mlir,1,0.73
+3,10000000,./main_executable_from_mlir,2,0.73
+3,10000000,./main_executable_from_mlir,3,0.73
+3,10000000,./main_executable_from_mlir,4,0.73
+3,10000000,./main_executable_from_mlir,5,0.73
+3,10000000,./main_executable_from_mlir,6,0.73
+3,10000000,./main_executable_from_mlir,7,0.73
+3,10000000,./main_executable_from_mlir,8,0.73
+3,10000000,./main_executable_from_mlir,9,0.73
+3,10000000,./main_executable_from_mlir,10,0.73
+3,10000000,./main_executable_from_mlir,11,0.73
+3,10000000,./main_executable_from_mlir,12,0.73
+3,10000000,./main_executable_from_mlir,13,0.73
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,4.55
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,4.65
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,4.50
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,4.60
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,6.25
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,7.11
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,7.11
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,5.65
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,4.50
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,4.45
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,5.30
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,7.31
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,5.95
+3,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,4.55
+4,10000000,./main_executable_from_mlir,0,1.04
+4,10000000,./main_executable_from_mlir,1,1.04
+4,10000000,./main_executable_from_mlir,2,1.04
+4,10000000,./main_executable_from_mlir,3,1.04
+4,10000000,./main_executable_from_mlir,4,1.04
+4,10000000,./main_executable_from_mlir,5,1.04
+4,10000000,./main_executable_from_mlir,6,1.04
+4,10000000,./main_executable_from_mlir,7,1.04
+4,10000000,./main_executable_from_mlir,8,1.04
+4,10000000,./main_executable_from_mlir,9,1.04
+4,10000000,./main_executable_from_mlir,10,1.04
+4,10000000,./main_executable_from_mlir,11,1.04
+4,10000000,./main_executable_from_mlir,12,1.04
+4,10000000,./main_executable_from_mlir,13,1.04
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,5.50
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,5.55
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,5.35
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,5.70
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,5.45
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,6.50
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,9.01
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,8.86
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,9.11
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,9.06
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,5.95
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,5.35
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,5.55
+4,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,6.91
+5,10000000,./main_executable_from_mlir,0,2.07
+5,10000000,./main_executable_from_mlir,1,2.06
+5,10000000,./main_executable_from_mlir,2,2.06
+5,10000000,./main_executable_from_mlir,3,2.07
+5,10000000,./main_executable_from_mlir,4,2.06
+5,10000000,./main_executable_from_mlir,5,2.06
+5,10000000,./main_executable_from_mlir,6,2.07
+5,10000000,./main_executable_from_mlir,7,2.07
+5,10000000,./main_executable_from_mlir,8,2.05
+5,10000000,./main_executable_from_mlir,9,2.07
+5,10000000,./main_executable_from_mlir,10,2.06
+5,10000000,./main_executable_from_mlir,11,2.05
+5,10000000,./main_executable_from_mlir,12,2.06
+5,10000000,./main_executable_from_mlir,13,2.05
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,6.65
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,6.80
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,6.70
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,6.45
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,6.65
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,6.75
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,8.51
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,11.21
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,11.11
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,7.91
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,6.76
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,10.91
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,10.46
+5,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,6.60
+6,10000000,./main_executable_from_mlir,0,2.63
+6,10000000,./main_executable_from_mlir,1,2.62
+6,10000000,./main_executable_from_mlir,2,2.63
+6,10000000,./main_executable_from_mlir,3,2.62
+6,10000000,./main_executable_from_mlir,4,2.62
+6,10000000,./main_executable_from_mlir,5,2.62
+6,10000000,./main_executable_from_mlir,6,2.62
+6,10000000,./main_executable_from_mlir,7,2.62
+6,10000000,./main_executable_from_mlir,8,2.63
+6,10000000,./main_executable_from_mlir,9,2.62
+6,10000000,./main_executable_from_mlir,10,2.62
+6,10000000,./main_executable_from_mlir,11,2.62
+6,10000000,./main_executable_from_mlir,12,2.63
+6,10000000,./main_executable_from_mlir,13,2.62
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,9.51
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,9.31
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,9.61
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,9.51
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,9.16
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,15.26
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,15.06
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,10.71
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,11.41
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,14.56
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,9.56
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,14.56
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,11.76
+6,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,9.46
+7,10000000,./main_executable_from_mlir,0,3.05
+7,10000000,./main_executable_from_mlir,1,3.05
+7,10000000,./main_executable_from_mlir,2,3.05
+7,10000000,./main_executable_from_mlir,3,3.05
+7,10000000,./main_executable_from_mlir,4,3.05
+7,10000000,./main_executable_from_mlir,5,3.06
+7,10000000,./main_executable_from_mlir,6,3.05
+7,10000000,./main_executable_from_mlir,7,3.05
+7,10000000,./main_executable_from_mlir,8,3.05
+7,10000000,./main_executable_from_mlir,9,3.05
+7,10000000,./main_executable_from_mlir,10,3.05
+7,10000000,./main_executable_from_mlir,11,3.06
+7,10000000,./main_executable_from_mlir,12,3.05
+7,10000000,./main_executable_from_mlir,13,3.05
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,8.96
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,9.01
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,9.26
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,9.31
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,8.96
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,11.76
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,14.46
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,13.96
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,10.76
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,10.31
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,14.41
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,9.01
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,12.71
+7,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,11.86
+8,10000000,./main_executable_from_mlir,0,9.86
+8,10000000,./main_executable_from_mlir,1,9.87
+8,10000000,./main_executable_from_mlir,2,9.92
+8,10000000,./main_executable_from_mlir,3,9.86
+8,10000000,./main_executable_from_mlir,4,9.90
+8,10000000,./main_executable_from_mlir,5,9.87
+8,10000000,./main_executable_from_mlir,6,9.86
+8,10000000,./main_executable_from_mlir,7,9.87
+8,10000000,./main_executable_from_mlir,8,9.87
+8,10000000,./main_executable_from_mlir,9,9.87
+8,10000000,./main_executable_from_mlir,10,9.86
+8,10000000,./main_executable_from_mlir,11,9.89
+8,10000000,./main_executable_from_mlir,12,9.87
+8,10000000,./main_executable_from_mlir,13,9.86
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,12.76
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,12.21
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,10.71
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,11.86
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,10.61
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,12.86
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,17.62
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,15.47
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,11.91
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,14.71
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,13.71
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,14.01
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,13.71
+8,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,16.22
+9,10000000,./main_executable_from_mlir,0,12.00
+9,10000000,./main_executable_from_mlir,1,12.02
+9,10000000,./main_executable_from_mlir,2,12.00
+9,10000000,./main_executable_from_mlir,3,12.03
+9,10000000,./main_executable_from_mlir,4,12.00
+9,10000000,./main_executable_from_mlir,5,12.01
+9,10000000,./main_executable_from_mlir,6,12.03
+9,10000000,./main_executable_from_mlir,7,12.02
+9,10000000,./main_executable_from_mlir,8,12.00
+9,10000000,./main_executable_from_mlir,9,12.01
+9,10000000,./main_executable_from_mlir,10,12.01
+9,10000000,./main_executable_from_mlir,11,12.00
+9,10000000,./main_executable_from_mlir,12,12.02
+9,10000000,./main_executable_from_mlir,13,12.02
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,12.51
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,12.51
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,12.36
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,12.16
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,12.21
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,15.76
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,19.87
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,14.97
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,14.41
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,19.02
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,12.51
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,16.77
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,14.91
+9,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,16.87
+10,10000000,./main_executable_from_mlir,0,14.53
+10,10000000,./main_executable_from_mlir,1,14.55
+10,10000000,./main_executable_from_mlir,2,14.55
+10,10000000,./main_executable_from_mlir,3,14.53
+10,10000000,./main_executable_from_mlir,4,14.52
+10,10000000,./main_executable_from_mlir,5,14.54
+10,10000000,./main_executable_from_mlir,6,14.55
+10,10000000,./main_executable_from_mlir,7,14.55
+10,10000000,./main_executable_from_mlir,8,14.54
+10,10000000,./main_executable_from_mlir,9,14.54
+10,10000000,./main_executable_from_mlir,10,14.54
+10,10000000,./main_executable_from_mlir,11,14.55
+10,10000000,./main_executable_from_mlir,12,14.58
+10,10000000,./main_executable_from_mlir,13,14.55
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,12.16
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,12.76
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,12.11
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,12.06
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,11.71
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,14.31
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,19.37
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,13.16
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,16.22
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,14.86
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,13.16
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,18.22
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,11.81
+10,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,18.77
+12,10000000,./main_executable_from_mlir,0,19.87
+12,10000000,./main_executable_from_mlir,1,19.86
+12,10000000,./main_executable_from_mlir,2,19.91
+12,10000000,./main_executable_from_mlir,3,19.96
+12,10000000,./main_executable_from_mlir,4,19.88
+12,10000000,./main_executable_from_mlir,5,19.86
+12,10000000,./main_executable_from_mlir,6,19.88
+12,10000000,./main_executable_from_mlir,7,19.88
+12,10000000,./main_executable_from_mlir,8,19.87
+12,10000000,./main_executable_from_mlir,9,19.88
+12,10000000,./main_executable_from_mlir,10,19.86
+12,10000000,./main_executable_from_mlir,11,19.87
+12,10000000,./main_executable_from_mlir,12,19.88
+12,10000000,./main_executable_from_mlir,13,19.87
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,13.21
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,13.06
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,13.51
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,13.71
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,12.86
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,22.17
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,15.87
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,16.92
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,15.52
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,18.62
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,13.26
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,19.42
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,14.26
+12,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,19.07
+14,10000000,./main_executable_from_mlir,0,13.37
+14,10000000,./main_executable_from_mlir,1,13.00
+14,10000000,./main_executable_from_mlir,2,12.90
+14,10000000,./main_executable_from_mlir,3,13.10
+14,10000000,./main_executable_from_mlir,4,12.95
+14,10000000,./main_executable_from_mlir,5,13.20
+14,10000000,./main_executable_from_mlir,6,13.25
+14,10000000,./main_executable_from_mlir,7,13.26
+14,10000000,./main_executable_from_mlir,8,13.92
+14,10000000,./main_executable_from_mlir,9,12.88
+14,10000000,./main_executable_from_mlir,10,13.06
+14,10000000,./main_executable_from_mlir,11,12.92
+14,10000000,./main_executable_from_mlir,12,12.89
+14,10000000,./main_executable_from_mlir,13,13.05
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,16.47
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,16.21
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,15.96
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,16.01
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,26.48
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,18.67
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,19.62
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,20.97
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,22.57
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,16.97
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,22.68
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,22.32
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,20.17
+14,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,19.17
+16,10000000,./main_executable_from_mlir,0,41.32
+16,10000000,./main_executable_from_mlir,1,39.36
+16,10000000,./main_executable_from_mlir,2,39.47
+16,10000000,./main_executable_from_mlir,3,40.89
+16,10000000,./main_executable_from_mlir,4,41.30
+16,10000000,./main_executable_from_mlir,5,39.07
+16,10000000,./main_executable_from_mlir,6,39.24
+16,10000000,./main_executable_from_mlir,7,40.40
+16,10000000,./main_executable_from_mlir,8,39.08
+16,10000000,./main_executable_from_mlir,9,40.75
+16,10000000,./main_executable_from_mlir,10,38.89
+16,10000000,./main_executable_from_mlir,11,39.02
+16,10000000,./main_executable_from_mlir,12,37.77
+16,10000000,./main_executable_from_mlir,13,37.83
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,19.27
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,19.02
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,19.22
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,27.68
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,20.77
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,25.23
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,24.37
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,25.28
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,26.13
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,26.13
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,24.27
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,24.63
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,26.08
+16,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,23.52
+18,10000000,./main_executable_from_mlir,0,38.00
+18,10000000,./main_executable_from_mlir,1,35.29
+18,10000000,./main_executable_from_mlir,2,36.02
+18,10000000,./main_executable_from_mlir,3,36.64
+18,10000000,./main_executable_from_mlir,4,38.10
+18,10000000,./main_executable_from_mlir,5,37.82
+18,10000000,./main_executable_from_mlir,6,36.35
+18,10000000,./main_executable_from_mlir,7,35.79
+18,10000000,./main_executable_from_mlir,8,35.26
+18,10000000,./main_executable_from_mlir,9,35.40
+18,10000000,./main_executable_from_mlir,10,37.81
+18,10000000,./main_executable_from_mlir,11,37.47
+18,10000000,./main_executable_from_mlir,12,36.32
+18,10000000,./main_executable_from_mlir,13,33.99
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,21.82
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,22.52
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,22.27
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,30.38
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,27.03
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,30.13
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,26.18
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,28.73
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,28.68
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,28.83
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,27.98
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,28.83
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,27.88
+18,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,27.93
+20,10000000,./main_executable_from_mlir,0,60.21
+20,10000000,./main_executable_from_mlir,1,61.32
+20,10000000,./main_executable_from_mlir,2,60.03
+20,10000000,./main_executable_from_mlir,3,59.75
+20,10000000,./main_executable_from_mlir,4,61.36
+20,10000000,./main_executable_from_mlir,5,58.57
+20,10000000,./main_executable_from_mlir,6,58.65
+20,10000000,./main_executable_from_mlir,7,54.92
+20,10000000,./main_executable_from_mlir,8,58.83
+20,10000000,./main_executable_from_mlir,9,58.00
+20,10000000,./main_executable_from_mlir,10,60.36
+20,10000000,./main_executable_from_mlir,11,59.06
+20,10000000,./main_executable_from_mlir,12,60.05
+20,10000000,./main_executable_from_mlir,13,56.95
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,24.42
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,24.67
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,30.08
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,30.93
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,32.09
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,28.83
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,30.43
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,31.33
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,31.84
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,32.34
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,32.04
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,31.13
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,31.03
+20,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,31.03
+22,10000000,./main_executable_from_mlir,0,68.70
+22,10000000,./main_executable_from_mlir,1,67.77
+22,10000000,./main_executable_from_mlir,2,66.93
+22,10000000,./main_executable_from_mlir,3,69.72
+22,10000000,./main_executable_from_mlir,4,73.99
+22,10000000,./main_executable_from_mlir,5,70.67
+22,10000000,./main_executable_from_mlir,6,69.21
+22,10000000,./main_executable_from_mlir,7,67.51
+22,10000000,./main_executable_from_mlir,8,71.97
+22,10000000,./main_executable_from_mlir,9,68.57
+22,10000000,./main_executable_from_mlir,10,68.33
+22,10000000,./main_executable_from_mlir,11,68.12
+22,10000000,./main_executable_from_mlir,12,65.19
+22,10000000,./main_executable_from_mlir,13,65.76
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,27.93
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,27.43
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,36.29
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,32.28
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,35.99
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,36.54
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,33.64
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,35.74
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,37.54
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,35.14
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,37.54
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,34.84
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,34.89
+22,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,39.19
+24,10000000,./main_executable_from_mlir,0,132.08
+24,10000000,./main_executable_from_mlir,1,137.13
+24,10000000,./main_executable_from_mlir,2,141.76
+24,10000000,./main_executable_from_mlir,3,135.67
+24,10000000,./main_executable_from_mlir,4,141.53
+24,10000000,./main_executable_from_mlir,5,138.98
+24,10000000,./main_executable_from_mlir,6,128.91
+24,10000000,./main_executable_from_mlir,7,134.32
+24,10000000,./main_executable_from_mlir,8,132.28
+24,10000000,./main_executable_from_mlir,9,142.06
+24,10000000,./main_executable_from_mlir,10,133.47
+24,10000000,./main_executable_from_mlir,11,132.20
+24,10000000,./main_executable_from_mlir,12,127.58
+24,10000000,./main_executable_from_mlir,13,143.29
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,37.24
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,45.35
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,43.80
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,48.50
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,49.71
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,45.70
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,46.90
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,48.30
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,51.76
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,45.65
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,48.46
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,49.76
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,49.60
+24,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,49.05
+26,10000000,./main_executable_from_mlir,0,184.97
+26,10000000,./main_executable_from_mlir,1,169.72
+26,10000000,./main_executable_from_mlir,2,171.53
+26,10000000,./main_executable_from_mlir,3,187.27
+26,10000000,./main_executable_from_mlir,4,165.42
+26,10000000,./main_executable_from_mlir,5,183.14
+26,10000000,./main_executable_from_mlir,6,182.07
+26,10000000,./main_executable_from_mlir,7,171.32
+26,10000000,./main_executable_from_mlir,8,193.09
+26,10000000,./main_executable_from_mlir,9,170.39
+26,10000000,./main_executable_from_mlir,10,166.57
+26,10000000,./main_executable_from_mlir,11,179.42
+26,10000000,./main_executable_from_mlir,12,168.42
+26,10000000,./main_executable_from_mlir,13,192.73
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,41.19
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,51.51
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,53.11
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,54.01
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,54.96
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,54.61
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,53.91
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,54.21
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,56.31
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,56.61
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,55.96
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,54.11
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,56.62
+26,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,55.96
+28,10000000,./main_executable_from_mlir,0,256.07
+28,10000000,./main_executable_from_mlir,1,230.94
+28,10000000,./main_executable_from_mlir,2,233.46
+28,10000000,./main_executable_from_mlir,3,244.12
+28,10000000,./main_executable_from_mlir,4,233.30
+28,10000000,./main_executable_from_mlir,5,249.72
+28,10000000,./main_executable_from_mlir,6,226.40
+28,10000000,./main_executable_from_mlir,7,225.77
+28,10000000,./main_executable_from_mlir,8,243.17
+28,10000000,./main_executable_from_mlir,9,233.06
+28,10000000,./main_executable_from_mlir,10,247.94
+28,10000000,./main_executable_from_mlir,11,229.92
+28,10000000,./main_executable_from_mlir,12,242.80
+28,10000000,./main_executable_from_mlir,13,234.39
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,50.30
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,67.42
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,66.02
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,67.78
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,65.58
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,70.68
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,64.72
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,72.23
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,66.43
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,70.03
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,65.82
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,71.18
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,67.02
+28,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,70.93
+30,10000000,./main_executable_from_mlir,0,253.67
+30,10000000,./main_executable_from_mlir,1,289.14
+30,10000000,./main_executable_from_mlir,2,294.01
+30,10000000,./main_executable_from_mlir,3,269.75
+30,10000000,./main_executable_from_mlir,4,268.43
+30,10000000,./main_executable_from_mlir,5,259.49
+30,10000000,./main_executable_from_mlir,6,289.12
+30,10000000,./main_executable_from_mlir,7,261.18
+30,10000000,./main_executable_from_mlir,8,288.03
+30,10000000,./main_executable_from_mlir,9,258.77
+30,10000000,./main_executable_from_mlir,10,296.45
+30,10000000,./main_executable_from_mlir,11,267.90
+30,10000000,./main_executable_from_mlir,12,260.09
+30,10000000,./main_executable_from_mlir,13,289.18
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,56.66
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,72.43
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,75.58
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,71.48
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,Command exited with non-zero status 2
+74.78
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,78.29
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,72.18
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,75.64
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,75.59
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,78.89
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,74.99
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,76.99
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,76.79
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,75.59
+32,10000000,./main_executable_from_mlir,0,422.62
+32,10000000,./main_executable_from_mlir,1,423.29
+32,10000000,./main_executable_from_mlir,2,447.31
+32,10000000,./main_executable_from_mlir,3,446.27
+32,10000000,./main_executable_from_mlir,4,446.25
+32,10000000,./main_executable_from_mlir,5,447.58
+32,10000000,./main_executable_from_mlir,6,444.81
+32,10000000,./main_executable_from_mlir,7,445.20
+32,10000000,./main_executable_from_mlir,8,453.54
+32,10000000,./main_executable_from_mlir,9,474.92
+32,10000000,./main_executable_from_mlir,10,418.49
+32,10000000,./main_executable_from_mlir,11,471.79
+32,10000000,./main_executable_from_mlir,12,447.65
+32,10000000,./main_executable_from_mlir,13,419.07
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,0,63.37
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,85.40
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,82.39
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,92.46
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,84.90
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,84.90
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,85.55
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,85.25
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,8,87.70
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,9,84.60
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,10,86.75
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,11,86.15
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,12,90.86
+32,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,13,85.05
+2,10000000,./main_executable_from_c,0,0.23
+2,10000000,./main_executable_from_c,1,0.24
+2,10000000,./main_executable_from_c,2,0.26
+2,10000000,./main_executable_from_c,3,0.25
+2,10000000,./main_executable_from_c,4,0.23
+2,10000000,./main_executable_from_c,5,0.24
+2,10000000,./main_executable_from_c,6,0.24
+2,10000000,./main_executable_from_c,7,0.24
+2,10000000,./main_executable_from_c,8,0.24
+2,10000000,./main_executable_from_c,9,0.25
+2,10000000,./main_executable_from_c,10,0.23
+2,10000000,./main_executable_from_c,11,0.23
+2,10000000,./main_executable_from_c,12,0.24
+2,10000000,./main_executable_from_c,13,0.24
+3,10000000,./main_executable_from_c,0,0.54
+3,10000000,./main_executable_from_c,1,0.54
+3,10000000,./main_executable_from_c,2,0.53
+3,10000000,./main_executable_from_c,3,0.53
+3,10000000,./main_executable_from_c,4,0.53
+3,10000000,./main_executable_from_c,5,0.53
+3,10000000,./main_executable_from_c,6,0.54
+3,10000000,./main_executable_from_c,7,0.53
+3,10000000,./main_executable_from_c,8,0.53
+3,10000000,./main_executable_from_c,9,0.53
+3,10000000,./main_executable_from_c,10,0.53
+3,10000000,./main_executable_from_c,11,0.53
+3,10000000,./main_executable_from_c,12,0.53
+3,10000000,./main_executable_from_c,13,0.53
+4,10000000,./main_executable_from_c,0,0.67
+4,10000000,./main_executable_from_c,1,0.66
+4,10000000,./main_executable_from_c,2,0.66
+4,10000000,./main_executable_from_c,3,0.66
+4,10000000,./main_executable_from_c,4,0.67
+4,10000000,./main_executable_from_c,5,0.66
+4,10000000,./main_executable_from_c,6,0.66
+4,10000000,./main_executable_from_c,7,0.66
+4,10000000,./main_executable_from_c,8,0.66
+4,10000000,./main_executable_from_c,9,0.66
+4,10000000,./main_executable_from_c,10,0.66
+4,10000000,./main_executable_from_c,11,0.66
+4,10000000,./main_executable_from_c,12,0.66
+4,10000000,./main_executable_from_c,13,0.66
+5,10000000,./main_executable_from_c,0,0.96
+5,10000000,./main_executable_from_c,1,0.95
+5,10000000,./main_executable_from_c,2,0.95
+5,10000000,./main_executable_from_c,3,0.95
+5,10000000,./main_executable_from_c,4,0.95
+5,10000000,./main_executable_from_c,5,0.95
+5,10000000,./main_executable_from_c,6,0.96
+5,10000000,./main_executable_from_c,7,0.95
+5,10000000,./main_executable_from_c,8,0.95
+5,10000000,./main_executable_from_c,9,0.95
+5,10000000,./main_executable_from_c,10,0.95
+5,10000000,./main_executable_from_c,11,0.96
+5,10000000,./main_executable_from_c,12,0.95
+5,10000000,./main_executable_from_c,13,1.02
+6,10000000,./main_executable_from_c,0,1.34
+6,10000000,./main_executable_from_c,1,1.33
+6,10000000,./main_executable_from_c,2,1.33
+6,10000000,./main_executable_from_c,3,1.33
+6,10000000,./main_executable_from_c,4,1.35
+6,10000000,./main_executable_from_c,5,1.34
+6,10000000,./main_executable_from_c,6,1.34
+6,10000000,./main_executable_from_c,7,1.33
+6,10000000,./main_executable_from_c,8,1.36
+6,10000000,./main_executable_from_c,9,1.33
+6,10000000,./main_executable_from_c,10,1.33
+6,10000000,./main_executable_from_c,11,1.36
+6,10000000,./main_executable_from_c,12,1.33
+6,10000000,./main_executable_from_c,13,1.33
+7,10000000,./main_executable_from_c,0,1.84
+7,10000000,./main_executable_from_c,1,1.84
+7,10000000,./main_executable_from_c,2,1.85
+7,10000000,./main_executable_from_c,3,1.85
+7,10000000,./main_executable_from_c,4,1.87
+7,10000000,./main_executable_from_c,5,1.84
+7,10000000,./main_executable_from_c,6,1.84
+7,10000000,./main_executable_from_c,7,1.84
+7,10000000,./main_executable_from_c,8,1.84
+7,10000000,./main_executable_from_c,9,1.85
+7,10000000,./main_executable_from_c,10,1.84
+7,10000000,./main_executable_from_c,11,1.85
+7,10000000,./main_executable_from_c,12,1.84
+7,10000000,./main_executable_from_c,13,1.85
+8,10000000,./main_executable_from_c,0,2.47
+8,10000000,./main_executable_from_c,1,2.47
+8,10000000,./main_executable_from_c,2,2.47
+8,10000000,./main_executable_from_c,3,2.47
+8,10000000,./main_executable_from_c,4,2.47
+8,10000000,./main_executable_from_c,5,2.47
+8,10000000,./main_executable_from_c,6,2.46
+8,10000000,./main_executable_from_c,7,2.47
+8,10000000,./main_executable_from_c,8,2.47
+8,10000000,./main_executable_from_c,9,2.47
+8,10000000,./main_executable_from_c,10,2.48
+8,10000000,./main_executable_from_c,11,2.47
+8,10000000,./main_executable_from_c,12,2.47
+8,10000000,./main_executable_from_c,13,2.47
+9,10000000,./main_executable_from_c,0,3.07
+9,10000000,./main_executable_from_c,1,3.08
+9,10000000,./main_executable_from_c,2,3.11
+9,10000000,./main_executable_from_c,3,3.08
+9,10000000,./main_executable_from_c,4,3.11
+9,10000000,./main_executable_from_c,5,3.08
+9,10000000,./main_executable_from_c,6,3.07
+9,10000000,./main_executable_from_c,7,3.10
+9,10000000,./main_executable_from_c,8,3.08
+9,10000000,./main_executable_from_c,9,3.11
+9,10000000,./main_executable_from_c,10,3.10
+9,10000000,./main_executable_from_c,11,3.09
+9,10000000,./main_executable_from_c,12,3.08
+9,10000000,./main_executable_from_c,13,3.09

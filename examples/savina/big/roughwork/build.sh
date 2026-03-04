@@ -1,7 +1,7 @@
 M=4
 O=3
 P=10000000
-NUM_TESTS=8
+NUM_TESTS=14
 
 M_values=(2 3 4 5 6 7 8 9)
 #M_values=(2 3 4 5 6)
@@ -49,7 +49,6 @@ run_timed_experiment() {
     echo "M=$m_val P=$p_val Command: ${cmd[*]}, Iteration: $i, Time: $t" 
     echo "$m_val,$p_val,${cmd[*]},$i,$t" >> "$RAW_TIMES_FILE"
     times+=("$t")
-    sleep 1
   done
 
   # Force C locale to ensure dot is used as decimal separator
@@ -82,7 +81,6 @@ for M in "${M_values[@]}"; do
   cmake --build . -j24 2> /dev/null
   cd ../..
   cp myproject/bin/BigNetwork main_executable_from_cpp
-  sleep 3
 
   echo "Running CPP binary ($NUM_TESTS times)..."
   run_timed_experiment cpp_avg cpp_sd "$M" "$P" ./main_executable_from_cpp --generate=config.xml
@@ -90,7 +88,6 @@ for M in "${M_values[@]}"; do
   cpp_times+=("$cpp_avg")
   cpp_stddev+=("$cpp_sd")
 
-  sleep 3
   bash roughwork/assign_streamblocks_cpu_affinitites.sh
   echo "Running CPP multicore binary ($NUM_TESTS times)..."
   run_timed_experiment cpp_mc_avg cpp_mc_sd "$M" "$P" taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml
@@ -105,7 +102,6 @@ for M in "${M_values_mlir[@]}"; do
   rm -rf myproject
   bash compile_to_mlir_to_binary.sh -M $M -O $O -P $P
   bash compile_to_mlir_to_binary.sh -M $M -O $O -P $P -m
-  sleep 3
 
   echo "Running MLIR binary ($NUM_TESTS times)..."
   run_timed_experiment mlir_avg mlir_sd "$M" "$P" ./main_executable_from_mlir
@@ -113,7 +109,6 @@ for M in "${M_values_mlir[@]}"; do
   mlir_times+=("$mlir_avg")
   mlir_stddev+=("$mlir_sd")
 
-  sleep 3
   echo "Running MLIR multicore binary ($NUM_TESTS times)..."
   run_timed_experiment mlir_mc_avg mlir_mc_sd "$M" "$P" taskset -c 0-3 ./main_executable_from_mlir_multicore
   echo "MLIR multicore avg: $mlir_mc_avg s, stddev: $mlir_mc_sd s"
@@ -136,7 +131,6 @@ for M in "${M_values[@]}"; do
   tychoc --set experimental-network-elaboration=on --set reduction-algorithm=ordered-condition-checking --source-path config.cal:BigNetwork.cal:Messenger.cal:Sink.cal --target-path myproject big.BigNetwork
 
   clang myproject/*.c -O$O -o main_executable_from_c
-  sleep 3
 
   echo "Running C binary ($NUM_TESTS times)..."
   run_timed_experiment c_avg c_sd "$M" "$P" ./main_executable_from_c
