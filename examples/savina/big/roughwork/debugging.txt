@@ -1,0 +1,35 @@
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e branch-instructions,branch-misses,br_inst_retired.conditional,br_misp_retired.conditional,br_inst_retired.near_call,br_misp_retired.near_call ./main_executable_from_mlir_8
+Finished processing pings from 8 messengers
+
+ Performance counter stats for './main_executable_from_mlir_8':
+
+    11 873 772 253      branch-instructions                                           (66,67%)
+       626 043 471      branch-misses             #    5,27% of all branches          (66,67%)
+    11 345 301 815      br_inst_retired.conditional                                     (66,67%)
+       626 346 367      br_misp_retired.conditional                                     (66,67%)
+           487 469      br_inst_retired.near_call                                     (66,67%)
+            10 211      br_misp_retired.near_call                                     (66,67%)
+
+       9,912605045 seconds time elapsed
+
+       9,912336000 seconds user
+       0,000000000 seconds sys
+
+
+gareth@garethc:~/software-repos/mlir-cal/cal-mlir-dialect/examples/savina/big$ perf stat -e branch-instructions,branch-misses,br_inst_retired.conditional,br_misp_retired.conditional,br_inst_retired.near_call,br_misp_retired.near_call ./main_executable_from_mlir_7
+Finished processing pings from 7 messengers
+
+ Performance counter stats for './main_executable_from_mlir_7':
+
+     7 304 360 064      branch-instructions                                           (66,55%)
+           111 048      branch-misses             #    0,00% of all branches          (66,55%)
+     6 897 380 697      br_inst_retired.conditional                                     (66,68%)
+            91 495      br_misp_retired.conditional                                     (66,72%)
+           295 593      br_inst_retired.near_call                                     (66,77%)
+             4 063      br_misp_retired.near_call                                     (66,72%)
+
+       3,097987829 seconds time elapsed
+
+       3,095919000 seconds user
+       0,000000000 seconds sys
+

@@ -43,14 +43,14 @@ M,P,Command,Iteration,Time
 3,10000000,./main_executable_from_cpp --generate=config.xml,13,7.27
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,45.07
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,45.67
-3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,0.08
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,53.94
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,58.06
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,45.28
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,50.41
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,50.73
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,33.74
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,53.66
-3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,23.73
+3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,44.05
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,53.02
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,47.75
 3,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,50.07
@@ -69,20 +69,20 @@ M,P,Command,Iteration,Time
 4,10000000,./main_executable_from_cpp --generate=config.xml,11,12.21
 4,10000000,./main_executable_from_cpp --generate=config.xml,12,12.15
 4,10000000,./main_executable_from_cpp --generate=config.xml,13,12.16
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,54.73
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,71.26
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,65.75
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,62.36
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,66.22
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,69.24
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,40.15
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,65.04
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,71.92
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,65.99
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,48.32
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,68.41
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,64.91
-4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,65.16
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,0,47.46
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,1,71.00
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,2,16.88
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,3,80.49
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,4,80.18
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,5,79.15
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,6,79.92
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,7,80.23
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,8,80.04
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,9,79.26
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,10,80.22
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,11,80.00
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,12,80.66
+4,10000000,taskset -c 0-3 ./main_executable_from_cpp --cfile=config_partitioned.xml,13,79.71
 5,10000000,./main_executable_from_cpp --generate=config.xml,0,18.34
 5,10000000,./main_executable_from_cpp --generate=config.xml,1,18.21
 5,10000000,./main_executable_from_cpp --generate=config.xml,2,18.16
@@ -745,8 +745,7 @@ M,P,Command,Iteration,Time
 30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,1,72.43
 30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,2,75.58
 30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,3,71.48
-30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,Command exited with non-zero status 2
-74.78
+30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,4,74.78
 30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,5,78.29
 30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,6,72.18
 30,10000000,taskset -c 0-3 ./main_executable_from_mlir_multicore,7,75.64
