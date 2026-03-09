@@ -36,7 +36,7 @@ This repository provides a way to express programs as networks of independent co
    +--------+     message     +--------+     message     +--------+
    | Actor1 |---------------->| Actor2 |---------------->| Actor3 |
    +--------+     (FIFO)      +--------+     (FIFO)      +--------+
-       |                                                      |
+       ^                                                      |
        |              message (FIFO feedback)                 |
        +------------------------------------------------------+
 ```
