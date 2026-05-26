@@ -125,7 +125,7 @@ cal.actor @cycleWithInitActor ()
 }
 
 // -- Top Network: Defines structure of actor application
-cal.network
+cal.network @top()
 {
 
 	// -- Instantiate channels between actors

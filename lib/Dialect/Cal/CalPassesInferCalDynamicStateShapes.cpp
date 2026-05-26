@@ -113,7 +113,7 @@ public:
 
 } // namespace
 
-std::unique_ptr<mlir::Pass> mlir::cal::inferCalDynamicStateShapes() {
+std::unique_ptr<mlir::Pass> inferCalDynamicStateShapes() {
   return std::make_unique<InferCalDynamicStateShapesPass>();
 }
 
