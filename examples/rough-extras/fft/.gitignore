@@ -1,0 +1,6 @@
+FFT_Top_current.mlir
+FFT_Flattened.mlir
+FFT_Flattened_clean.mlir
+lowered.mlir
+lowered.ll
+multithreaded.out

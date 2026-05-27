@@ -1,0 +1,25 @@
+Timing Results - ons 27 maj 2026 19:37:55 CEST
+
+=== FFT Size: 256 ===
+
+  round-robin:
+    NUM_CORES=1: 511ms
+    NUM_CORES=2: 360ms
+    NUM_CORES=3: 315ms
+    NUM_CORES=4: 265ms
+
+  block:
+    NUM_CORES=1: 617ms
+    NUM_CORES=2: 364ms
+    NUM_CORES=3: 264ms
+    NUM_CORES=4: 266ms
+
+=== FFT Size: 512 ===
+
+  round-robin:
+    NUM_CORES=1: 1724ms
+    NUM_CORES=2: 1329ms
+    NUM_CORES=3: 1137ms
+    NUM_CORES=4: 781ms
+
+  block:
