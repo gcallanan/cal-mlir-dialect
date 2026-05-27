@@ -1192,7 +1192,7 @@ module {
     }
     return %3 : i32
   }
-  cal.network @RVC__Top_RVC_Decoder()
+  cal.network @RVC__Top_RVC_Decoder() attributes {cal.top} //
   {
     %false = arith.constant false
     %0 = scf.if %false -> (i32) {

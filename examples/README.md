@@ -20,6 +20,8 @@ The examples in this directory cover both plain MLIR and the use of higher-level
 | `instance_for`           | Contains examples illustrating array construction patterns. See `instance_for/instance_for.mlir` for a 1D init/set pattern and `instance_for/nd_grid.mlir` for an ND (2D) pattern using nested `scf.for` loops. |
 | `gol`                    | Game of Life examples. `gol_nd_fixed.mlir` shows a constant-size 2D grid built with `scf.for` + `cal.instance.array.init/set`, linearized indices, and interface-typed instance arrays; validate with `--verify-instance-array-fills`. `gol_structural.mlir` contains a legacy structural variant retained for reference. |
 
+| `mpeg4sp`                | A pure-MLIR implementation of an MPEG-4 Simple Profile RVC decoder. Demonstrates a realistic, large-scale CAL+FIFO actor network for video decoding, using only MLIR code. Useful for benchmarking and as a reference for complex CAL actor networks. |
+
  
 ## Usage
 
