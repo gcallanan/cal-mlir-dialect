@@ -69,7 +69,7 @@ cal::ActionOp fire(Actor *actor) {
   FsmNode fsmNode = actor->fsm.nodes[actor->currentState];
   actor->currentState = fsmNode.edges.front().nextNodeIndex;
   // We have looped back to the start state
-  if(actor->fsm.initialStateValue == actor->currentState) {
+  if(static_cast<int>(actor->fsm.initialStateValue) == actor->currentState) {
     actor->numFiringsLeft--;
   }
 

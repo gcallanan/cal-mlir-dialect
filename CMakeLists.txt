@@ -5,6 +5,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
+# Suppress MLIR template instantiation warnings
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options(-Wno-unused-but-set-parameter)
+endif()
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   find_package(MLIR REQUIRED CONFIG)
 

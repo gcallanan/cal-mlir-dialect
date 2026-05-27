@@ -22,9 +22,11 @@
 
 // MLIR Dialects
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
+
 // Async dialect
 #include "mlir/Dialect/Async/IR/Async.h"
 #include "mlir/Dialect/Async/Passes.h"
@@ -67,8 +69,8 @@
 // Project-specific conversions and Transformations
 #include "Conversion/Passes.h"
 #include "Dialect/Fifo/BufferizableOpInterfaceImpl.h"
-#include "Transforms/Passes.h"
 #include "Transforms/GPUDeallocInterface/GpuDeallocInterface.h"
+#include "Transforms/Passes.h"
 
 // All the CAL pipelines
 #include "Conversion/CalLoweringPipelines/CalLoweringPipelines.h"
@@ -152,12 +154,12 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   registry.insert<
       mlir::cal::CalDialect, mlir::fifo::FifoDialect, mlir::arith::ArithDialect,
-    mlir::complex::ComplexDialect,
+      mlir::complex::ComplexDialect,
       mlir::func::FuncDialect, mlir::memref::MemRefDialect,
-      mlir::index::IndexDialect, mlir::LLVM::LLVMDialect,
-      mlir::cf::ControlFlowDialect, mlir::scf::SCFDialect,
-      mlir::math::MathDialect, mlir::func::FuncDialect, mlir::gpu::GPUDialect,
-      mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
+      mlir::async::AsyncDialect, mlir::index::IndexDialect,
+      mlir::LLVM::LLVMDialect, mlir::cf::ControlFlowDialect,
+      mlir::scf::SCFDialect, mlir::math::MathDialect, mlir::func::FuncDialect,
+      mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
       mlir::tosa::TosaDialect, mlir::linalg::LinalgDialect,
       mlir::tensor::TensorDialect, mlir::bufferization::BufferizationDialect,
       mlir::affine::AffineDialect, mlir::ub::UBDialect,

@@ -1,5 +1,5 @@
 namespace forkjoin:
-    K = 10;         // Number of worker actors
+    K = 5;         // Number of worker actors
     M = 100000000;  // Total number of messages to be sent
 
 
@@ -21,7 +21,7 @@ namespace forkjoin:
         coordinator = Coordinator();
     structure
         foreach uint i in 0..K-1 do
-            coordinator.Out[i] --> workers[i].In {bufferSize = 10; };
+            coordinator.Out[i] --> workers[i].In {bufferSize = 4096; };
         end
     end
 

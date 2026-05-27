@@ -18,6 +18,8 @@
 #include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/Conversion/ComplexToStandard/ComplexToStandard.h"
 #include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
+#include "mlir/Conversion/ComplexToStandard/ComplexToStandard.h"
+#include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
 
 // MLIR Dialects and Transforms
 #include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
@@ -88,10 +90,11 @@ void registerCalPipelines() {
  *   llvm-project/mlir/lib/Dialect/Bufferization/Pipelines/BufferizationPipelines.cpp
  */
 void registerLowerCalToLLVMPipeline() {
-  mlir::PassPipelineRegistration<CalGenericPipelineOptions>(
+  mlir::PassPipelineRegistration<CalToLLVMWithMultithreadedFlagsOptions>(
       "lower-cal-to-llvm",
       "Pipeline lowering FIFO and CAL dialects to LLVM dialect.",
-      [](mlir::OpPassManager &pm, const CalGenericPipelineOptions &options) {
+      [](mlir::OpPassManager &pm,
+         const CalToLLVMWithMultithreadedFlagsOptions &options) {
         // 1. FIFO/CAL-specific lowering
 
         // First lower any cal.fsm schedules into a unified cal.execution_body.
@@ -116,86 +119,105 @@ void registerLowerCalToLLVMPipeline() {
         pm.addPass(mlir::cal::hoistCalStateOutOfActor());
         pm.addPass(mlir::createCanonicalizerPass());
 
-        // Honor pipeline option to drain actors by default (non-preemptive).
-        pm.addPass(
-            mlir::createConvertCalToFuncPass(options.nonPreemptiveDefault));
-
-        // Convert complex ops to standard forms now that actors are functions.
-        pm.addPass(mlir::createConvertComplexToStandardPass());
+        if (options.multithreadCalActors) {
+          ConvertCalToFuncOptions funcOptions;
+          funcOptions.actor_paritioning_mode = "multi-threaded";
+          pm.addPass(mlir::createConvertCalToFunc(funcOptions));
+        } else {
+          pm.addPass(mlir::createConvertCalToFunc());
+        }
 
         // We add this pass as we often get functions that are the same but with
         // different names.
-        pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
+      //   pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());
 
-        pm.addPass(mlir::createLowerCalStateToMemref());
-        pm.addPass(mlir::createLowerFifoToMemrefPass());
-        pm.addPass(mlir::createDecomposeFifoTuples());
-        pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
+      //   // Convert complex ops to standard forms now that actors are functions.
+      //   pm.addPass(mlir::createConvertComplexToStandardPass());
 
-        mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
-        bufferizeOptions.bufferizeFunctionBoundaries = true;
-        pm.addPass(
-            mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
-        if (!options.disableHoistAllocs)
-          pm.addPass(mlir::createHoistAllocsPass());
-        pm.addPass(mlir::createCanonicalizerPass());
-        // BufferDeallocation is a function-only pass; add it as a nested pass
-        pm.addNestedPass<mlir::func::FuncOp>(
-            mlir::bufferization::createBufferDeallocationPass());
-        pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::createConvertLinalgToLoopsPass());
-        pm.addPass(mlir::createCanonicalizerPass());
+      //   pm.addPass(mlir::createLowerCalStateToMemref());
+      //   // if (options.multithreadCalActors) {
+      //   mlir::LowerFifoToMemrefPassOptions fifoOptions;
+      //   fifoOptions.fifo_index_mode = std::string("spsc-lockfree");
+      //   pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
+      //   // } else {
+      //   //   pm.addPass(mlir::createLowerFifoToMemrefPass());
+      //   // }
+      //   pm.addPass(mlir::createFifoMemrefAtomicizePass());
+      //   pm.addPass(mlir::createDecomposeFifoTuples());
+      //   pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
-        // Lower any remaining Affine operations to SCF before control-flow
-        // conversion. We keep another LowerAffine pass later (after
-        // memref::ExpandStridedMetadata) to clean up Affine ops that may be
-        // introduced by that expansion.
-        pm.addPass(mlir::createLowerAffinePass());
+      //   mlir::bufferization::OneShotBufferizationOptions bufferizeOptions;
+      //   bufferizeOptions.bufferizeFunctionBoundaries = true;
+      //   pm.addPass(
+      //       mlir::bufferization::createOneShotBufferizePass(bufferizeOptions));
+      //   if (!options.disableHoistAllocs)
+      //     pm.addPass(mlir::createHoistAllocsPass());
+      //   pm.addPass(mlir::createCanonicalizerPass());
 
-        // 2. Standard MLIR to LLVM lowering:
-        //    The following passes lower various MLIR dialects to LLVM.
-        //    (The ordering and combination of these passes follow similar
-        //    pipelines as in the LLVM project, for example in
-        //    TestLowertoLLVM.cpp.)
+      //   // Async functions last after their region exists which the buffer
+      //   // deallocation pass does not understand. Thus deallocation happens in
+      //   // the wrong place. Just skipping it for now when using multithreading.
+      //   // It does not create problems as memory is only allocated in the main
+      //   // function.
+      //   if (!options.multithreadCalActors) {
+      //     pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+      //   }
+      //   pm.addPass(mlir::createCanonicalizerPass());
+      //   pm.addPass(mlir::createConvertLinalgToLoopsPass());
+      //   pm.addPass(mlir::createCanonicalizerPass());
 
-        // Lower algebraic types (variant/product) to LLVM structs first,
-        // before any other LLVM lowering.
-        pm.addPass(mlir::createConvertCalVariantToLLVMPass());
+      //   if (options.multithreadCalActors) {
+      //     pm.addPass(mlir::createAsyncToAsyncRuntimePass());
+      //     pm.addPass(mlir::createAsyncRuntimeRefCountingPass());
+      //     pm.addPass(mlir::createConvertAsyncToLLVMPass());
+      //   }
 
-        // Lower memory management operations (arena, RC, token, boxing)
-        // to LLVM after variant types are lowered.
-        pm.addPass(mlir::createConvertCalMemoryToLLVM());
+      //   // 2. Standard MLIR to LLVM lowering:
+      //   //    The following passes lower various MLIR dialects to LLVM.
+      //   //    (The ordering and combination of these passes follow similar
+      //   //    pipelines as in the LLVM project, for example in
+      //   //    TestLowertoLLVM.cpp.)
 
-        // Convert SCF to CF (always needed).
-        pm.addPass(mlir::createConvertSCFToCFPass());
-        // Sprinkle some cleanups.
-        pm.addPass(mlir::createCanonicalizerPass());
-        pm.addPass(mlir::createCSEPass());
+      //   // Lower algebraic types (variant/product) to LLVM structs first,
+      //   // before any other LLVM lowering.
+      //   pm.addPass(mlir::createConvertCalVariantToLLVMPass());
 
-        // (Complex already lowered earlier; do not repeat here.)
-        pm.addPass(mlir::createConvertComplexToLLVMPass());
+      //   // Lower memory management operations (arena, RC, token, boxing)
+      //   // to LLVM after variant types are lowered.
+      //   pm.addPass(mlir::createConvertCalMemoryToLLVM());
 
-        // Convert Math to LLVM (always needed).
-        // Use non-nested pass to handle nested module structures.
-        pm.addPass(mlir::createConvertMathToLLVMPass());
-        // Expand complicated MemRef operations before lowering them.
-        pm.addPass(mlir::memref::createExpandStridedMetadataPass());
-        // The expansion may create affine expressions. Get rid of them.
-        pm.addPass(mlir::createLowerAffinePass());
-        // Convert MemRef to LLVM (always needed) – keep before
-        // func/cf/arithmetic.
-        pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
-        // Convert Func to LLVM (always needed).
-        pm.addPass(mlir::createConvertFuncToLLVMPass());
-        // Convert Arith to LLVM (always needed).
-        pm.addPass(mlir::createArithToLLVMConversionPass());
-        // Convert CF to LLVM (always needed).
-        pm.addPass(mlir::createConvertControlFlowToLLVMPass());
-        // Convert Index to LLVM (always needed).
-        pm.addPass(mlir::createConvertIndexToLLVMPass());
-        // Convert remaining unrealized_casts (always needed).
-        pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-        pm.addPass(mlir::createCanonicalizerPass());
+      //   // Convert SCF to CF (always needed).
+      //   pm.addPass(mlir::createConvertSCFToCFPass());
+      //   // Sprinkle some cleanups.
+      //   pm.addPass(mlir::createCanonicalizerPass());
+      //   pm.addPass(mlir::createCSEPass());
+
+      //   // (Complex already lowered earlier; do not repeat here.)
+      //   pm.addPass(mlir::createConvertComplexToLLVMPass());
+
+      //   // Convert Math to LLVM (always needed).
+      //   // Use non-nested pass to handle nested module structures.
+      //   pm.addPass(mlir::createConvertMathToLLVMPass());
+      //   // Expand complicated MemRef operations before lowering them.
+      //   pm.addPass(mlir::memref::createExpandStridedMetadataPass());
+      //   // The expansion may create affine expressions. Get rid of them.
+      //   pm.addPass(mlir::createLowerAffinePass());
+      //   // Convert MemRef to LLVM (always needed) – keep before
+      //   // func/cf/arithmetic.
+      //   pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
+      //   // Convert Func to LLVM (always needed).
+      //   pm.addPass(mlir::createConvertFuncToLLVMPass());
+      //   // Convert Arith to LLVM (always needed).
+      //   pm.addPass(mlir::createArithToLLVMConversionPass());
+      //   // Convert CF to LLVM (always needed).
+      //   pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+      //   // Convert Index to LLVM (always needed).
+      //   pm.addPass(mlir::createConvertIndexToLLVMPass());
+      //   // We add this again to catch some unconverted async functions
+      //   pm.addPass(mlir::createConvertFuncToLLVMPass());
+      //   // Convert remaining unrealized_casts (always needed).
+      //   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+      //   pm.addPass(mlir::createCanonicalizerPass());
       });
 }
 
@@ -307,7 +329,7 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   // Early complex lowering (GPU path) prior to bufferization & GPU transforms.
   pm.addPass(mlir::createConvertComplexToStandardPass());
   // Honor pipeline option to drain actors by default (non-preemptive).
-  pm.addPass(mlir::createConvertCalToFuncPass(options.nonPreemptiveDefault));
+  pm.addPass(mlir::createConvertCalToFunc());
 
   // We often see duplicate functions differing only by name.
   // pm.addPass(mlir::func::createDuplicateFunctionEliminationPass());

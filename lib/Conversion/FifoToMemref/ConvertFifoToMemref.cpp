@@ -40,11 +40,15 @@ namespace mlir {
 
 using namespace fifo;
 
+// Cache line size in bytes for padding to avoid false sharing.
+static constexpr int64_t CACHE_LINE_SIZE_I64 = CACHE_LINE_SIZE / sizeof(int64_t);
+
 /// Indexing strategy mode
 enum class FifoIndexMode { LegacyModulo, SPSCLockFree };
 
 static FifoIndexMode parseIndexMode(const std::string &m) {
-  if (m == "spsc-lockfree") return FifoIndexMode::SPSCLockFree;
+  if (m == "spsc-lockfree")
+    return FifoIndexMode::SPSCLockFree;
   return FifoIndexMode::LegacyModulo;
 }
 
@@ -142,12 +146,12 @@ private:
 
     mlir::Location loc = op.getLoc();
 
-  // In legacy mode we keep +1 sentinel slot, in SPSC lock-free we use the
-  // exact requested size (no sentinel needed with monotonic counters).
-  auto requestedSize = op.getBufferSize();
-  auto bufferSize =
-    (indexMode == FifoIndexMode::LegacyModulo) ? requestedSize + 1
-                           : requestedSize;
+    // In legacy mode we keep +1 sentinel slot, in SPSC lock-free we use the
+    // exact requested size (no sentinel needed with monotonic counters).
+    auto requestedSize = op.getBufferSize();
+    auto bufferSize = (indexMode == FifoIndexMode::LegacyModulo)
+                          ? requestedSize + 1
+                          : requestedSize;
     auto elementType = op.getElementType();
 
     // 1. Allocate the data memref
@@ -170,33 +174,36 @@ private:
 
     // 2. Allocate the metadata memref and zero its elements
     // Legacy: metadata = [readIdx(i32), writeIdx(i32)]
-    // SPSC lock-free: use 64-bit monotonically increasing counters for
-    // reduced wrap risk: [readCount(i64), writeCount(i64)]
+    // SPSC lock-free: use 64-bit monotonically increasing counters with 
+    // cache line padding to avoid false sharing: [readCount(i64), <padding>, writeCount(i64)]
     Value zeroMetaInit;
     Type metaElemType;
+    MemRefType memRefType_metadata;
     if (indexMode == FifoIndexMode::SPSCLockFree) {
       metaElemType = rewriter.getI64Type();
+      // Use cache line padding: 2 * CACHE_LINE_SIZE_I64 elements
+      memRefType_metadata = MemRefType::get(2 * CACHE_LINE_SIZE_I64, metaElemType);
     } else {
       metaElemType = rewriter.getI32Type();
+      memRefType_metadata = MemRefType::get(2, metaElemType);
     }
-    auto memRefType_metadata = MemRefType::get(2, metaElemType);
     auto alloc_metadata =
         rewriter.create<memref::AllocOp>(loc, memRefType_metadata);
 
     // 3. Store the size of the buffer in a constant
     auto sizeType = (indexMode == FifoIndexMode::SPSCLockFree)
-        ? rewriter.getI64Type()
-        : rewriter.getI32Type();
-    auto bufferSizeConstant = (indexMode == FifoIndexMode::SPSCLockFree)
-              ? rewriter.create<arith::ConstantOp>(
-                loc, rewriter.getI64IntegerAttr(bufferSize))
-              : rewriter.create<arith::ConstantOp>(
-                loc, rewriter.getI32IntegerAttr(bufferSize));
+                        ? rewriter.getI64Type()
+                        : rewriter.getI32Type();
+    auto bufferSizeConstant =
+        (indexMode == FifoIndexMode::SPSCLockFree)
+            ? rewriter.create<arith::ConstantOp>(
+                  loc, rewriter.getI64IntegerAttr(bufferSize))
+            : rewriter.create<arith::ConstantOp>(
+                  loc, rewriter.getI32IntegerAttr(bufferSize));
 
     // 4. Initialize the metadata memref
-  auto tupleType = TupleType::get(getContext(),
-                  {memRefType_data, memRefType_metadata,
-                   sizeType});
+    auto tupleType = TupleType::get(
+        getContext(), {memRefType_data, memRefType_metadata, sizeType});
     auto make_tuple_op = rewriter.create<fifo::MakeTuple>(
         loc, tupleType,
         ValueRange{allocDataValue, alloc_metadata.getResult(),
@@ -204,18 +211,24 @@ private:
 
     // 5. Create a tuple type to hold the data and metadata memrefs as well as
     // the buffer size
-  Value zeroVal;
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    zeroVal = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
-  } else {
-    zeroVal = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
-  }
+    Value zeroVal;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      zeroVal = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+    } else {
+      zeroVal = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
+    }
     Value index0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value index1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-  rewriter.create<memref::StoreOp>(loc, zeroVal, alloc_metadata, index0);
-  rewriter.create<memref::StoreOp>(loc, zeroVal, alloc_metadata, index1);
+    Value index1;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      index1 = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      index1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
+    rewriter.create<memref::StoreOp>(loc, zeroVal, alloc_metadata, index0);
+    rewriter.create<memref::StoreOp>(loc, zeroVal, alloc_metadata, index1);
 
     // 6. Now make sure to replace the operation correctly.
     rewriter.replaceOp(op,
@@ -328,42 +341,42 @@ private:
     mlir::Location loc = op.getLoc();
 
     auto tupleType = mlir::cast<TupleType>(adaptor.getOutputPort().getType());
-  auto dataMemref = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
-  auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
-  auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
+    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
 
     // 1. Get the read index and convert it to type index
-  Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  auto readCountVal =
-    rewriter.create<memref::LoadOp>(loc, metadataMemref, readLocationIndex);
+    Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto readCountVal =
+        rewriter.create<memref::LoadOp>(loc, metadataMemref, readLocationIndex);
 
-  Value readIndex;
-  Value writeCountVal;
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    // In lock-free mode, compute slot = readCount % capacity
-    Value capacityIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), bufferSizeVal);
-    Value readCountIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), readCountVal);
-    auto slot = rewriter.create<arith::RemSIOp>(loc, readCountIndex,
-                          capacityIndex);
-    readIndex = slot.getResult();
-    // Optionally load writeCount if needed for empty checks in future.
-    Value writeLocationIndex =
-      rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
-                            writeLocationIndex);
-  } else {
-    // Legacy path: readI32 is directly the modulo index
-    readIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), readCountVal);
-  }
+    Value readIndex;
+    Value writeCountVal;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // In lock-free mode, compute slot = readCount % capacity
+      Value capacityIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), bufferSizeVal);
+      Value readCountIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), readCountVal);
+      auto slot =
+          rewriter.create<arith::RemSIOp>(loc, readCountIndex, capacityIndex);
+      readIndex = slot.getResult();
+      // Load writeCount from cache line boundary index
+      Value writeLocationIndex =
+          rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+      writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
+                                                      writeLocationIndex);
+    } else {
+      // Legacy path: readI32 is directly the modulo index
+      readIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), readCountVal);
+    }
 
     // 2. Get the data at the front of the fifo using the read index
-  auto tokenType = op.getOutputToken().getType();
+    auto tokenType = op.getOutputToken().getType();
 
     Value outputData;
     if (auto tensorType = mlir::dyn_cast<mlir::TensorType>(tokenType)) {
@@ -380,28 +393,26 @@ private:
     }
 
     // 3. Increment the read index and wrap it to zero if it goes out of bounds
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    auto one = (readCountVal.getType().isInteger(64))
-           ? rewriter.create<arith::ConstantOp>(
-               loc, rewriter.getI64Type(),
-               rewriter.getI64IntegerAttr(1))
-           : rewriter.create<arith::ConstantOp>(
-               loc, rewriter.getI32Type(),
-               rewriter.getI32IntegerAttr(1));
-    auto incremented =
-      rewriter.create<arith::AddIOp>(loc, readCountVal, one);
-    rewriter.create<memref::StoreOp>(loc, incremented, metadataMemref,
-                     readLocationIndex);
-  } else {
-    auto oneI32 = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-    auto incrementedReadI32 =
-      rewriter.create<arith::AddIOp>(loc, readCountVal, oneI32);
-    auto newReadI32 = rewriter.create<arith::RemSIOp>(
-      loc, incrementedReadI32, bufferSizeVal);
-    rewriter.create<memref::StoreOp>(loc, newReadI32, metadataMemref,
-                     readLocationIndex);
-  }
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      auto one =
+          (readCountVal.getType().isInteger(64))
+              ? rewriter.create<arith::ConstantOp>(
+                    loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(1))
+              : rewriter.create<arith::ConstantOp>(
+                    loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      auto incremented = rewriter.create<arith::AddIOp>(loc, readCountVal, one);
+      rewriter.create<memref::StoreOp>(loc, incremented, metadataMemref,
+                                       readLocationIndex);
+    } else {
+      auto oneI32 = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      auto incrementedReadI32 =
+          rewriter.create<arith::AddIOp>(loc, readCountVal, oneI32);
+      auto newReadI32 = rewriter.create<arith::RemSIOp>(loc, incrementedReadI32,
+                                                        bufferSizeVal);
+      rewriter.create<memref::StoreOp>(loc, newReadI32, metadataMemref,
+                                       readLocationIndex);
+    }
 
     rewriter.replaceOp(op, outputData);
 
@@ -480,10 +491,10 @@ static void copyMemrefToFifo(PatternRewriter &rewriter, Location loc, Value src,
   if (copyToGpu) {
     // If copying to GPU, use gpu.copy
     rewriter.create<gpu::MemcpyOp>(loc,
-                                       /*asyncToken=*/Type(),
-                                       /*asyncDependencies=*/ValueRange(),
-                                       /*dst=*/reshapedSubview,
-                                       /*src=*/src);
+                                   /*asyncToken=*/Type(),
+                                   /*asyncDependencies=*/ValueRange(),
+                                   /*dst=*/reshapedSubview,
+                                   /*src=*/src);
   } else {
     rewriter.create<memref::CopyOp>(loc, src, reshapedSubview);
   }
@@ -550,27 +561,33 @@ private:
         loc, tupleType.getType(0), adaptor.getInputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(1), adaptor.getInputPort(), 1);
-  auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(2), adaptor.getInputPort(), 2);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getInputPort(), 2);
 
     // 1. Get the write index and convert it to type index
-  Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-  auto writeCountVal = rewriter.create<memref::LoadOp>(
-    loc, metadataMemref, writeLocationIndex);
-  Value writeIndex;
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    // slot = writeCount % capacity
-    Value capacityIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), bufferSizeVal);
-    Value writeCountIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), writeCountVal);
-    auto slot = rewriter.create<arith::RemSIOp>(loc, writeCountIndex,
-                          capacityIndex);
-    writeIndex = slot.getResult();
-  } else {
-    writeIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), writeCountVal);
-  }
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
+    auto writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
+                                                         writeLocationIndex);
+    Value writeIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // slot = writeCount % capacity
+      Value capacityIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), bufferSizeVal);
+      Value writeCountIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), writeCountVal);
+      auto slot =
+          rewriter.create<arith::RemSIOp>(loc, writeCountIndex, capacityIndex);
+      writeIndex = slot.getResult();
+    } else {
+      writeIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), writeCountVal);
+    }
 
     // 2. Push the data at the back of the fifo
     auto tokenType = adaptor.getInputToken().getType();
@@ -596,28 +613,27 @@ private:
     }
 
     // 3. Increment the write index and wrap it to zero if it goes out of bounds
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    auto one = (writeCountVal.getType().isInteger(64))
-           ? rewriter.create<arith::ConstantOp>(
-               loc, rewriter.getI64Type(),
-               rewriter.getI64IntegerAttr(1))
-           : rewriter.create<arith::ConstantOp>(
-               loc, rewriter.getI32Type(),
-               rewriter.getI32IntegerAttr(1));
-    auto incremented =
-      rewriter.create<arith::AddIOp>(loc, writeCountVal, one);
-    rewriter.create<memref::StoreOp>(loc, incremented, metadataMemref,
-                     writeLocationIndex);
-  } else {
-    auto oneI32 = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-    auto incrementedWriteI32 =
-      rewriter.create<arith::AddIOp>(loc, writeCountVal, oneI32);
-    auto newWriteI32 = rewriter.create<arith::RemSIOp>(
-      loc, incrementedWriteI32, bufferSizeVal);
-    rewriter.create<memref::StoreOp>(loc, newWriteI32, metadataMemref,
-                     writeLocationIndex);
-  }
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      auto one =
+          (writeCountVal.getType().isInteger(64))
+              ? rewriter.create<arith::ConstantOp>(
+                    loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(1))
+              : rewriter.create<arith::ConstantOp>(
+                    loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      auto incremented =
+          rewriter.create<arith::AddIOp>(loc, writeCountVal, one);
+      rewriter.create<memref::StoreOp>(loc, incremented, metadataMemref,
+                                       writeLocationIndex);
+    } else {
+      auto oneI32 = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      auto incrementedWriteI32 =
+          rewriter.create<arith::AddIOp>(loc, writeCountVal, oneI32);
+      auto newWriteI32 = rewriter.create<arith::RemSIOp>(
+          loc, incrementedWriteI32, bufferSizeVal);
+      rewriter.create<memref::StoreOp>(loc, newWriteI32, metadataMemref,
+                                       writeLocationIndex);
+    }
 
     rewriter.eraseOp(op);
 
@@ -676,13 +692,19 @@ private:
     mlir::Location loc = op.getLoc();
 
     auto tupleType = mlir::cast<TupleType>(adaptor.getOutputPort().getType());
-  auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
-  auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
 
     // 1. Get the write and read index and convert it to type index
-    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
     auto writeI32 = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                     writeLocationIndex);
 
@@ -692,20 +714,19 @@ private:
 
     // 2. Calculate the size of the FIFO - equal to
     // (write-read+bufferSize)%bufferSize
-  Value sizeIndex;
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    // size = writeCount - readCount
-    auto diff = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
-    sizeIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), diff);
-  } else {
-    auto step1 = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
-    auto step2 = rewriter.create<arith::AddIOp>(loc, step1, bufferSizeVal);
-    auto size =
-      rewriter.create<arith::RemSIOp>(loc, step2, bufferSizeVal);
-    sizeIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), size);
-  }
+    Value sizeIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // size = writeCount - readCount
+      auto diff = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
+      sizeIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), diff);
+    } else {
+      auto step1 = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
+      auto step2 = rewriter.create<arith::AddIOp>(loc, step1, bufferSizeVal);
+      auto size = rewriter.create<arith::RemSIOp>(loc, step2, bufferSizeVal);
+      sizeIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), size);
+    }
 
     // 3. Replace eraseOp with the new calculated size
     rewriter.replaceOp(op, sizeIndex);
@@ -770,13 +791,19 @@ private:
     mlir::Location loc = op.getLoc();
 
     auto tupleType = mlir::cast<TupleType>(adaptor.getInputPort().getType());
-  auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(1), adaptor.getInputPort(), 1);
-  auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(2), adaptor.getInputPort(), 2);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getInputPort(), 1);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getInputPort(), 2);
 
     // 1. Get the write and read index and convert it to type index
-    Value writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // Write counter at cache line boundary to avoid false sharing
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
     auto writeI32 = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                     writeLocationIndex);
 
@@ -786,26 +813,22 @@ private:
 
     // 2. Calculate the space avaialble in theFIFO - equal to
     // bufferSize - (write-read+bufferSize)%bufferSize - 1
-  Value spaceIndex;
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    // space = capacity - (writeCount - readCount)
-    auto diff = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
-    auto capMinus =
-      rewriter.create<arith::SubIOp>(loc, bufferSizeVal, diff);
-    spaceIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), capMinus);
-  } else {
-    auto oneI32 = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-    auto step1 = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
-    auto step2 = rewriter.create<arith::AddIOp>(loc, step1, bufferSizeVal);
-    auto step3 = rewriter.create<arith::RemSIOp>(loc, step2, bufferSizeVal);
-    auto step4 = rewriter.create<arith::SubIOp>(loc, bufferSizeVal, step3);
-    auto space =
-      rewriter.create<arith::SubIOp>(loc, step4, oneI32);
-    spaceIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), space);
-  }
+    Value spaceIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      // space = capacity - (writeCount - readCount)
+      auto diff = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
+      auto capMinus = rewriter.create<arith::SubIOp>(loc, bufferSizeVal, diff);
+      spaceIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), capMinus);
+    } else {
+      auto oneI32 = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      auto step1 = rewriter.create<arith::SubIOp>(loc, writeI32, readI32);
+      auto step2 = rewriter.create<arith::AddIOp>(loc, step1, bufferSizeVal);
+      auto step3 = rewriter.create<arith::RemSIOp>(loc, step2, bufferSizeVal);
+      auto space = rewriter.create<arith::SubIOp>(loc, bufferSizeVal, step3);
+      spaceIndex = rewriter.create<arith::SubIOp>(loc, space, oneI32);
+    }
 
     // 3. Replace eraseOp with the new calculated size
     rewriter.replaceOp(op, spaceIndex);
@@ -875,54 +898,53 @@ private:
         loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
-  auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
-    loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
-  Value bufferSizeIndex = rewriter.create<arith::IndexCastOp>(
-    loc, rewriter.getIndexType(), bufferSizeVal);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
+    Value bufferSizeIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), bufferSizeVal);
 
     // 1. Get the read index and convert it to type index
     Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  auto readCountVal =
-    rewriter.create<memref::LoadOp>(loc, metadataMemref, readLocationIndex);
-  Value readIndex;
-  if (indexMode == FifoIndexMode::SPSCLockFree) {
-    Value readCountIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), readCountVal);
-    readIndex = readCountIndex; // Will add peek offset then modulo below
-  } else {
-    readIndex = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), readCountVal);
-  }
+    auto readCountVal =
+        rewriter.create<memref::LoadOp>(loc, metadataMemref, readLocationIndex);
+    Value readIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      Value readCountIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), readCountVal);
+      readIndex = readCountIndex; // Will add peek offset then modulo below
+    } else {
+      readIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), readCountVal);
+    }
 
     // 2. Increment the read index by the peek amount and wrap it to zero if
     // it goes out of bounds
     auto peekIndex = op.getPeekIndex();
-  auto peekIndexFromReadIndex = rewriter.create<arith::AddIOp>(
-    loc, readIndex, peekIndex);
-  auto effectiveIndex = (indexMode == FifoIndexMode::SPSCLockFree)
-                ? rewriter.create<arith::RemSIOp>(
-                  loc, peekIndexFromReadIndex,
-                  bufferSizeIndex)
-                : rewriter.create<arith::RemSIOp>(
-                  loc, peekIndexFromReadIndex,
-                  bufferSizeIndex);
+    auto peekIndexFromReadIndex =
+        rewriter.create<arith::AddIOp>(loc, readIndex, peekIndex);
+    auto effectiveIndex =
+        (indexMode == FifoIndexMode::SPSCLockFree)
+            ? rewriter.create<arith::RemSIOp>(loc, peekIndexFromReadIndex,
+                                              bufferSizeIndex)
+            : rewriter.create<arith::RemSIOp>(loc, peekIndexFromReadIndex,
+                                              bufferSizeIndex);
 
     // 3. Get the data to be peeked using the peekIndexWrapped
     Value outputData;
     auto tokenType = op.getResult().getType();
     if (auto tensorType = mlir::dyn_cast<mlir::TensorType>(tokenType)) {
-    outputData = copyFifoToMemref(rewriter, loc, dataMemref,
-                  effectiveIndex.getResult());
+      outputData = copyFifoToMemref(rewriter, loc, dataMemref,
+                                    effectiveIndex.getResult());
       auto toTensorOp = rewriter.create<mlir::bufferization::ToTensorOp>(
           loc, tokenType, outputData);
       toTensorOp->setAttr("restrict", rewriter.getUnitAttr());
       outputData = toTensorOp.getResult();
     } else if (auto memrefType = mlir::dyn_cast<mlir::MemRefType>(tokenType)) {
-    outputData = copyFifoToMemref(rewriter, loc, dataMemref,
-                  effectiveIndex.getResult());
+      outputData = copyFifoToMemref(rewriter, loc, dataMemref,
+                                    effectiveIndex.getResult());
     } else {
-    outputData = rewriter.create<memref::LoadOp>(
-      loc, dataMemref, effectiveIndex.getResult());
+      outputData = rewriter.create<memref::LoadOp>(loc, dataMemref,
+                                                   effectiveIndex.getResult());
     }
     rewriter.replaceOp(op, outputData);
 
@@ -932,32 +954,43 @@ private:
 
 /// Helper function to create a tuple type for FIFO port conversion
 static mlir::Type createFifoPortTupleType(mlir::Type elementType,
-                                          MLIRContext *context) {
+                                          MLIRContext *context,
+                                          FifoIndexMode indexMode) {
   auto memRefType_data =
       createFifoDataMemRefType(elementType, mlir::ShapedType::kDynamic);
-  auto i32Type = mlir::IntegerType::get(context, 32);
-  auto memRefType_metadata = MemRefType::get(2, i32Type);
+  
+  // Use i64 for SPSC lock-free mode, i32 for legacy mode
+  Type metaElemType = (indexMode == FifoIndexMode::SPSCLockFree)
+                          ? mlir::IntegerType::get(context, 64)
+                          : mlir::IntegerType::get(context, 32);
+  
+  // Use cache line padding for SPSC lock-free mode to avoid false sharing
+  int64_t metadataSize = (indexMode == FifoIndexMode::SPSCLockFree)
+                             ? 2 * CACHE_LINE_SIZE_I64
+                             : 2;
+  auto memRefType_metadata = MemRefType::get(metadataSize, metaElemType);
   auto tupleType =
-      TupleType::get(context, {memRefType_data, memRefType_metadata, i32Type});
+      TupleType::get(context, {memRefType_data, memRefType_metadata, metaElemType});
   return tupleType;
 }
 
 /// Build a converter that changes !fifo.output_port<T> and !fifo.input_port<T>
 /// types into tuple<memref<?xT>, memref<2x i32>, i32>
 static void populateFifoTypeConverterDynamic(mlir::TypeConverter &converter,
-                                             MLIRContext *context) {
+                                             MLIRContext *context,
+                                             FifoIndexMode indexMode) {
 
   // 1) The identity conversion for all other types
   converter.addConversion([&](Type type) { return type; });
   // 2) Custom conversion for fifo::OutputPortType
   converter.addConversion(
-      [context](fifo::OutputPortType portType) -> mlir::Type {
-        return createFifoPortTupleType(portType.getElementType(), context);
+      [context, indexMode](fifo::OutputPortType portType) -> mlir::Type {
+        return createFifoPortTupleType(portType.getElementType(), context, indexMode);
       });
   // 3) Custom conversion for fifo::InputPortType
   converter.addConversion(
-      [context](fifo::InputPortType portType) -> mlir::Type {
-        return createFifoPortTupleType(portType.getElementType(), context);
+      [context, indexMode](fifo::InputPortType portType) -> mlir::Type {
+        return createFifoPortTupleType(portType.getElementType(), context, indexMode);
       });
   // 4) Target Materialization - converts statically sized memrefs to dynamic
   // ones
@@ -1139,7 +1172,7 @@ public:
     FifoIndexMode indexMode = parseIndexMode(fifo_index_mode);
 
     TypeConverter typeConverter;
-    populateFifoTypeConverterDynamic(typeConverter, &getContext());
+    populateFifoTypeConverterDynamic(typeConverter, &getContext(), indexMode);
 
     RewritePatternSet patterns(&getContext());
     patterns.add<ConvertFifoSizeOpToMemref>(&getContext(), indexMode);

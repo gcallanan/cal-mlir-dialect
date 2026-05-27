@@ -10,14 +10,22 @@
 #include "Conversion/DecomposeFifoTuples/DecomposeFifoTuples.h"
 #include "Conversion/CalMemoryToLLVM/CalMemoryToLLVM.h"
 #include "Conversion/CalVariantToLLVM/CalVariantToLLVM.h"
+#include "mlir/Dialect/Async/IR/Async.h"
 
 namespace mlir {
 
 //===- Generated passes ---------------------------------------------------===//
 
+constexpr int64_t CACHE_LINE_SIZE = 64;
+
 enum class AllocLocation {
   HOST,
   GPU
+};
+
+enum class ActorPartitioningMode {
+  Singlethreaded,
+  Multithreaded
 };
 
 #define GEN_PASS_REGISTRATION

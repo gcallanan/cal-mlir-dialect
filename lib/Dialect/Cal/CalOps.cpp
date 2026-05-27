@@ -1835,7 +1835,15 @@ void CreateInstanceOp::print(OpAsmPrinter &printer) {
     printer << " ";
   }
 
-  // 3. Sort the operands according to if they are ports or not
+  // 3. Print the optional device affinity if it exists
+  if (getDeviceAffinityAttr()) {
+    printer << " ";
+    printer << "device_affinity=";
+    printer.printString(getDeviceAffinityAttr().getValue());
+    printer << " ";
+  }
+
+  // 4. Sort the operands according to if they are ports or not
   SmallVector<Value> portsOut, portsIn, others;
   for (Value operand : getOperands()) {
     Type type = operand.getType();
@@ -1936,10 +1944,23 @@ ParseResult CreateInstanceOp::parse(OpAsmParser &parser,
                         parser.getBuilder().getStringAttr(instance_name));
   }
 
+  // 3. Parse the optional cpu_affinity if it exists
+  if (succeeded(parser.parseOptionalKeyword("device_affinity"))) {
+    if (failed(parser.parseEqual()))
+      return failure();
+
+    std::string cpu_affinity;
+    if (failed(parser.parseString(&cpu_affinity)))
+      return failure();
+
+    result.addAttribute("deviceAffinity",
+                        parser.getBuilder().getStringAttr(cpu_affinity));
+  }
+
   if (failed(parser.parseLParen()))
     return failure();
 
-  // 3. Parse standard operands
+  // 4. Parse standard operands
   SmallVector<OpAsmParser::UnresolvedOperand> standardOperands;
   SmallVector<Type> standardTypes;
   if (failed(parser.parseOperandList(standardOperands,
@@ -2169,8 +2190,8 @@ bool ActorOp::isSimpleActor() {
   // (no predicate count needed here)
   for (Operation &op : savedActionOp.getBody().getOps()) {
     if (llvm::isa<cal::Predicate>(op)) {
-      return false; // If any predicate is present in the action body, it is not a
-                    // simple actor
+      return false; // If any predicate is present in the action body, it is not
+                    // a simple actor
     }
   }
 

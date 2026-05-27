@@ -3,3 +3,5 @@ llvm-project/
 .vscode/
 .png
 .cache
+main_executable_from_mlir_multicore
+

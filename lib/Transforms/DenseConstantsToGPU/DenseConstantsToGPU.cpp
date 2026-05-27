@@ -50,12 +50,12 @@ struct ConstantToGPUAllocPattern : public OpRewritePattern<arith::ConstantOp> {
   LogicalResult matchAndRewrite(arith::ConstantOp op,
                                 PatternRewriter &rewriter) const override {
     // Only process ranked tensor constants
-    auto tensorType = op.getResult().getType().dyn_cast<RankedTensorType>();
+    auto tensorType = mlir::dyn_cast<RankedTensorType>(op.getResult().getType());
     if (!tensorType)
       return failure();
 
     // Only process dense element attributes
-    auto attr = op.getValue().dyn_cast<DenseElementsAttr>();
+    auto attr = mlir::dyn_cast<DenseElementsAttr>(op.getValue());
     if (!attr)
       return failure();
 
@@ -89,7 +89,7 @@ struct ConstantToGPUAllocPattern : public OpRewritePattern<arith::ConstantOp> {
       
       auto valueAttr = *it;
       auto value = rewriter.create<arith::ConstantOp>(
-          loc, valueAttr.cast<TypedAttr>());
+          loc, mlir::cast<TypedAttr>(valueAttr));
       rewriter.create<memref::StoreOp>(
           loc, value, hostAlloc.getResult(), indices);
     }

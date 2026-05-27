@@ -6,11 +6,6 @@
 
 namespace mlir {
 
-std::unique_ptr<mlir::Pass> createConvertCalToFuncPass();
-
-// Convenience factory to set options programmatically.
-std::unique_ptr<mlir::Pass> createConvertCalToFuncPass(bool nonPreemptiveDefault);
-
 #define GEN_PASS_DECL_CONVERTCALTOFUNC
 #include "Conversion/Passes.h.inc"
 

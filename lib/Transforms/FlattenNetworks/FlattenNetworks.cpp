@@ -1589,7 +1589,7 @@ static LogicalResult runNetworkProcessing(
   builder.setInsertionPointToEnd(&body);
   StringRef sym = plan.actor ? plan.actor.getSymName() : plan.network.getSymName();
   FlatSymbolRefAttr targetSym = FlatSymbolRefAttr::get(builder.getContext(), sym);
-  auto inst = builder.create<CreateInstanceOp>(plan.defOp->getLoc(), targetSym, plan.name, all);
+  auto inst = builder.create<CreateInstanceOp>(plan.defOp->getLoc(), targetSym, plan.name, StringAttr{}, all);
         // Also mirror the chosen instance name into a generic attribute for convenience.
         if (plan.name)
           inst->setAttr("cal.name", plan.name);
