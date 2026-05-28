@@ -1,25 +1,53 @@
-Timing Results - ons 27 maj 2026 19:37:55 CEST
+Timing Results - ons 27 maj 2026 19:43:31 CEST
 
 === FFT Size: 256 ===
 
   round-robin:
-    NUM_CORES=1: 511ms
-    NUM_CORES=2: 360ms
-    NUM_CORES=3: 315ms
-    NUM_CORES=4: 265ms
+    NUM_CORES=1: 267ms
+    NUM_CORES=2: 220ms
+    NUM_CORES=3: 170ms
+    NUM_CORES=4: 176ms
 
   block:
-    NUM_CORES=1: 617ms
-    NUM_CORES=2: 364ms
-    NUM_CORES=3: 264ms
-    NUM_CORES=4: 266ms
+    NUM_CORES=1: 267ms
+    NUM_CORES=2: 168ms
+    NUM_CORES=3: 173ms
+    NUM_CORES=4: 177ms
 
 === FFT Size: 512 ===
 
   round-robin:
-    NUM_CORES=1: 1724ms
-    NUM_CORES=2: 1329ms
-    NUM_CORES=3: 1137ms
-    NUM_CORES=4: 781ms
+    NUM_CORES=1: 627ms
+    NUM_CORES=2: 429ms
+    NUM_CORES=3: 382ms
+    NUM_CORES=4: 334ms
+
+  block:
+    NUM_CORES=1: 628ms
+    NUM_CORES=2: 380ms
+    NUM_CORES=3: 335ms
+    NUM_CORES=4: 290ms
+
+=== FFT Size: 1024 ===
+
+  round-robin:
+    NUM_CORES=1: 2213ms
+    NUM_CORES=2: 1393ms
+    NUM_CORES=3: 1110ms
+    NUM_CORES=4: 901ms
+
+  block:
+    NUM_CORES=1: 2278ms
+    NUM_CORES=2: 1203ms
+    NUM_CORES=3: 902ms
+    NUM_CORES=4: 704ms
+
+=== FFT Size: 2048 ===
+
+  round-robin:
+    NUM_CORES=1: 9673ms
+    NUM_CORES=2: 5990ms
+    NUM_CORES=3: 4285ms
+    NUM_CORES=4: 3774ms
 
   block:
