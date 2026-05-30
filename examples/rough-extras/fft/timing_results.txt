@@ -1,53 +1,154 @@
-Timing Results - ons 27 maj 2026 19:43:31 CEST
+Timing Results - lör 30 maj 2026 16:21:37 CEST
 
-=== FFT Size: 256 ===
-
-  round-robin:
-    NUM_CORES=1: 267ms
-    NUM_CORES=2: 220ms
-    NUM_CORES=3: 170ms
-    NUM_CORES=4: 176ms
-
-  block:
-    NUM_CORES=1: 267ms
-    NUM_CORES=2: 168ms
-    NUM_CORES=3: 173ms
-    NUM_CORES=4: 177ms
-
-=== FFT Size: 512 ===
+=== FFT Size: 256 (Actors: ) ===
+  Actors: 1284
 
   round-robin:
-    NUM_CORES=1: 627ms
-    NUM_CORES=2: 429ms
-    NUM_CORES=3: 382ms
-    NUM_CORES=4: 334ms
+    NUM_CORES=1: avg=266ms min=265ms max=267ms
+    NUM_CORES=2: avg=219ms min=219ms max=220ms
+    NUM_CORES=3: avg=170ms min=167ms max=171ms
+    NUM_CORES=4: avg=175ms min=175ms max=176ms
 
   block:
-    NUM_CORES=1: 628ms
-    NUM_CORES=2: 380ms
-    NUM_CORES=3: 335ms
-    NUM_CORES=4: 290ms
+    NUM_CORES=1: avg=266ms min=266ms max=267ms
+    NUM_CORES=2: avg=170ms min=169ms max=175ms
+    NUM_CORES=3: avg=173ms min=172ms max=180ms
+    NUM_CORES=4: avg=178ms min=176ms max=184ms
 
-=== FFT Size: 1024 ===
+=== FFT Size: 512 (Actors: ) ===
+  Actors: 2564
 
   round-robin:
-    NUM_CORES=1: 2213ms
-    NUM_CORES=2: 1393ms
-    NUM_CORES=3: 1110ms
-    NUM_CORES=4: 901ms
+    NUM_CORES=1: avg=637ms min=626ms max=679ms
+    NUM_CORES=2: avg=428ms min=428ms max=429ms
+    NUM_CORES=3: avg=383ms min=382ms max=396ms
+    NUM_CORES=4: avg=335ms min=333ms max=345ms
 
   block:
-    NUM_CORES=1: 2278ms
-    NUM_CORES=2: 1203ms
-    NUM_CORES=3: 902ms
-    NUM_CORES=4: 704ms
+    NUM_CORES=1: avg=646ms min=626ms max=678ms
+    NUM_CORES=2: avg=378ms min=376ms max=380ms
+    NUM_CORES=3: avg=328ms min=281ms max=339ms
+    NUM_CORES=4: avg=287ms min=286ms max=289ms
 
-=== FFT Size: 2048 ===
+=== FFT Size: 1024 (Actors: ) ===
+  Actors: 5124
 
   round-robin:
-    NUM_CORES=1: 9673ms
-    NUM_CORES=2: 5990ms
-    NUM_CORES=3: 4285ms
-    NUM_CORES=4: 3774ms
+    NUM_CORES=1: avg=2260ms min=2248ms max=2303ms
+    NUM_CORES=2: avg=1353ms min=1351ms max=1360ms
+    NUM_CORES=3: avg=1102ms min=1052ms max=1122ms
+    NUM_CORES=4: avg=940ms min=904ms max=959ms
 
   block:
+    NUM_CORES=1: avg=2258ms min=2249ms max=2303ms
+    NUM_CORES=2: avg=1201ms min=1200ms max=1203ms
+    NUM_CORES=3: avg=895ms min=848ms max=902ms
+    NUM_CORES=4: avg=693ms min=651ms max=705ms
+
+FFT Size: 256 (Actors: 1284)
+  round-robin:
+    NUM_CORES=1: avg=266ms min=265ms max=267ms
+    NUM_CORES=2: avg=219ms min=219ms max=220ms
+    NUM_CORES=3: avg=170ms min=167ms max=171ms
+    NUM_CORES=4: avg=175ms min=175ms max=176ms
+  block:
+    NUM_CORES=1: avg=266ms min=266ms max=267ms
+    NUM_CORES=2: avg=170ms min=169ms max=175ms
+    NUM_CORES=3: avg=173ms min=172ms max=180ms
+    NUM_CORES=4: avg=178ms min=176ms max=184ms
+
+FFT Size: 512 (Actors: 2564)
+  round-robin:
+    NUM_CORES=1: avg=637ms min=626ms max=679ms
+    NUM_CORES=2: avg=428ms min=428ms max=429ms
+    NUM_CORES=3: avg=383ms min=382ms max=396ms
+    NUM_CORES=4: avg=335ms min=333ms max=345ms
+  block:
+    NUM_CORES=1: avg=646ms min=626ms max=678ms
+    NUM_CORES=2: avg=378ms min=376ms max=380ms
+    NUM_CORES=3: avg=328ms min=281ms max=339ms
+    NUM_CORES=4: avg=287ms min=286ms max=289ms
+
+FFT Size: 1024 (Actors: 5124)
+  round-robin:
+    NUM_CORES=1: avg=2260ms min=2248ms max=2303ms
+    NUM_CORES=2: avg=1353ms min=1351ms max=1360ms
+    NUM_CORES=3: avg=1102ms min=1052ms max=1122ms
+    NUM_CORES=4: avg=940ms min=904ms max=959ms
+  block:
+    NUM_CORES=1: avg=2258ms min=2249ms max=2303ms
+    NUM_CORES=2: avg=1201ms min=1200ms max=1203ms
+    NUM_CORES=3: avg=895ms min=848ms max=902ms
+    NUM_CORES=4: avg=693ms min=651ms max=705ms
+
+FFT Size: 2048 (Actors: )
+  round-robin:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+  block:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+
+FFT Size: 4096 (Actors: )
+  round-robin:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+  block:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+
+FFT Size: 8192 (Actors: )
+  round-robin:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+  block:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+
+FFT Size: 16384 (Actors: )
+  round-robin:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+  block:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+
+FFT Size: 32768 (Actors: )
+  round-robin:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+  block:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+
+FFT Size: 65536 (Actors: )
+  round-robin:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=
+  block:
+    NUM_CORES=1: avg= min= max=
+    NUM_CORES=2: avg= min= max=
+    NUM_CORES=3: avg= min= max=
+    NUM_CORES=4: avg= min= max=

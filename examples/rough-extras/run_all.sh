@@ -1,7 +1,7 @@
 cd idct
 bash script.sh
 cd ..
-cd qrd
+cd qrd16x16
 bash script.sh
 cd ..
 cd fft

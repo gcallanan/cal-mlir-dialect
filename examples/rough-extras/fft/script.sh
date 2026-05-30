@@ -94,6 +94,7 @@ FNR == NR {
                 START=$(date +%s%N)
                 taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out || true
                 END=$(date +%s%N)
+		sleep 10
                 RUN_TIME=$(( (END - START) / 1000000 ))
                 TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
                 if [ $MIN_TIME -eq -1 ] || [ $RUN_TIME -lt $MIN_TIME ]; then MIN_TIME=$RUN_TIME; fi

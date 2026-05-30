@@ -20,13 +20,14 @@ cp myproject/bin/Top streamblocks.out
 rm -fr myproject
 mkdir myproject
 tychoc --set experimental-network-elaboration=on --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
-cc -O0 myproject/*.c -o tycho.out
+cc -O3 myproject/*.c -o tycho.out
 
 # Build qrd_clean.mlir for multithreaded runs
 rm -fr myproject
 streamblocks mlir --set generate-single-declaration-per-actor=off --set experimental-network-elaboration=on --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
 cp myproject/code-gen/main.mlir qrd_clean.mlir
 sed -i 's/cal\.network$/cal.network @Top()/' qrd_clean.mlir
+rm -r myproject
 
 declare -A TIMES
 declare -A MIN_TIMES
@@ -63,7 +64,7 @@ FNR == NR {
 
         cal-opt qrd_current.mlir --lower-cal-to-llvm="multithread-cal-actors" > lowered.mlir
         cal-translate --mlir-to-llvmir lowered.mlir -o lowered.ll
-        clang -O0 lowered.ll -o multithreaded.out -L"$LLVM_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm
+        clang -O3 lowered.ll -o multithreaded.out -L"$LLVM_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm
 
         sleep $SLEEP_SECS
 

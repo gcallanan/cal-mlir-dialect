@@ -1,28 +1,28 @@
-Timing Results - lör 30 maj 2026 14:31:40 CEST
-Actors: 55
+Timing Results - lör 30 maj 2026 15:42:53 CEST
+Actors: 505
 
   round-robin:
-    NUM_CORES=1: avg=404ms min=404ms max=404ms
-    NUM_CORES=2: avg=308ms min=308ms max=308ms
-    NUM_CORES=3: avg=254ms min=254ms max=254ms
-    NUM_CORES=4: avg=261ms min=261ms max=261ms
+    NUM_CORES=1: avg=5823ms min=5810ms max=5865ms
+    NUM_CORES=2: avg=3777ms min=3712ms max=3813ms
+    NUM_CORES=3: avg=2811ms min=2761ms max=2863ms
+    NUM_CORES=4: avg=2381ms min=2309ms max=2562ms
 
   block:
-    NUM_CORES=1: avg=408ms min=408ms max=408ms
-    NUM_CORES=2: avg=360ms min=360ms max=360ms
-    NUM_CORES=3: avg=309ms min=309ms max=309ms
-    NUM_CORES=4: avg=258ms min=258ms max=258ms
+    NUM_CORES=1: avg=5809ms min=5765ms max=5816ms
+    NUM_CORES=2: avg=3512ms min=3511ms max=3513ms
+    NUM_CORES=3: avg=2550ms min=2507ms max=2563ms
+    NUM_CORES=4: avg=1971ms min=1960ms max=2011ms
 
-=== Timing Results (Actors: 55) ===
-  tycho.out: avg=236ms min=236ms max=236ms
-  streamblocks.out: avg=905ms min=905ms max=905ms
+=== Timing Results (Actors: 505) ===
+  tycho.out: avg=6167ms min=6159ms max=6174ms
+  streamblocks.out: avg=54013ms min=53868ms max=54335ms
   round-robin:
-    NUM_CORES=1: avg=404ms min=404ms max=404ms
-    NUM_CORES=2: avg=308ms min=308ms max=308ms
-    NUM_CORES=3: avg=254ms min=254ms max=254ms
-    NUM_CORES=4: avg=261ms min=261ms max=261ms
+    NUM_CORES=1: avg=5823ms min=5810ms max=5865ms
+    NUM_CORES=2: avg=3777ms min=3712ms max=3813ms
+    NUM_CORES=3: avg=2811ms min=2761ms max=2863ms
+    NUM_CORES=4: avg=2381ms min=2309ms max=2562ms
   block:
-    NUM_CORES=1: avg=408ms min=408ms max=408ms
-    NUM_CORES=2: avg=360ms min=360ms max=360ms
-    NUM_CORES=3: avg=309ms min=309ms max=309ms
-    NUM_CORES=4: avg=258ms min=258ms max=258ms
+    NUM_CORES=1: avg=5809ms min=5765ms max=5816ms
+    NUM_CORES=2: avg=3512ms min=3511ms max=3513ms
+    NUM_CORES=3: avg=2550ms min=2507ms max=2563ms
+    NUM_CORES=4: avg=1971ms min=1960ms max=2011ms

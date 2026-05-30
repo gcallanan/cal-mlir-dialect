@@ -138,8 +138,8 @@ namespace qrd:
     uint num_matrices=10000;
 
     // The size of the input matrix (MxN matrix)
-    uint M = 4;
-    uint N = 4;
+    uint M = 16;
+    uint N = 16;
 
     // The maximum number of tokens that can be stored in the FIFOS between actors.
     uint buffer_size= 100;
