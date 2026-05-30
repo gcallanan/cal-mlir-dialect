@@ -16,6 +16,8 @@ TOP_DIR="../../.."
 # mv ../Top.mlir FFT_Top.mlir
 
 declare -A TIMES
+declare -A MIN_TIMES
+declare -A MAX_TIMES
 RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
 
@@ -79,12 +81,23 @@ FNR == NR {
 
             sleep 10
 
-            START=$(date +%s%N)
-            taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out || true
-            END=$(date +%s%N)
-            TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=$(( (END - START) / 1000000 ))ms
+            TOTAL_TIME=0
+            MIN_TIME=-1
+            MAX_TIME=0
+            for RUN in $(seq 1 10); do
+                START=$(date +%s%N)
+                taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out || true
+                END=$(date +%s%N)
+                RUN_TIME=$(( (END - START) / 1000000 ))
+                TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
+                if [ $MIN_TIME -eq -1 ] || [ $RUN_TIME -lt $MIN_TIME ]; then MIN_TIME=$RUN_TIME; fi
+                if [ $RUN_TIME -gt $MAX_TIME ]; then MAX_TIME=$RUN_TIME; fi
+            done
+            TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / 10 ))ms
+            MIN_TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
+            MAX_TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
 
-            LINE="    NUM_CORES=$NUM_CORES: ${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
+            LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
             echo "$LINE"
             echo "$LINE" >> "$RESULTS_FILE"
         done
@@ -102,7 +115,7 @@ for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
         echo "  $ASSIGNMENT_MODE:"
         echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
         for NUM_CORES in 1 2 3 4; do
-            LINE="    NUM_CORES=$NUM_CORES: ${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
+            LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
             echo "$LINE"
             echo "$LINE" >> "$RESULTS_FILE"
         done
