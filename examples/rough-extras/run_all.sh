@@ -1,0 +1,9 @@
+cd idct
+bash script.sh
+cd ..
+cd qrd
+bash script.sh
+cd ..
+cd fft
+bash script.sh
+cd ..

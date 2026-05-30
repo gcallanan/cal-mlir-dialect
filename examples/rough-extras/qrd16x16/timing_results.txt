@@ -1,0 +1,28 @@
+Timing Results - lör 30 maj 2026 14:31:40 CEST
+Actors: 55
+
+  round-robin:
+    NUM_CORES=1: avg=404ms min=404ms max=404ms
+    NUM_CORES=2: avg=308ms min=308ms max=308ms
+    NUM_CORES=3: avg=254ms min=254ms max=254ms
+    NUM_CORES=4: avg=261ms min=261ms max=261ms
+
+  block:
+    NUM_CORES=1: avg=408ms min=408ms max=408ms
+    NUM_CORES=2: avg=360ms min=360ms max=360ms
+    NUM_CORES=3: avg=309ms min=309ms max=309ms
+    NUM_CORES=4: avg=258ms min=258ms max=258ms
+
+=== Timing Results (Actors: 55) ===
+  tycho.out: avg=236ms min=236ms max=236ms
+  streamblocks.out: avg=905ms min=905ms max=905ms
+  round-robin:
+    NUM_CORES=1: avg=404ms min=404ms max=404ms
+    NUM_CORES=2: avg=308ms min=308ms max=308ms
+    NUM_CORES=3: avg=254ms min=254ms max=254ms
+    NUM_CORES=4: avg=261ms min=261ms max=261ms
+  block:
+    NUM_CORES=1: avg=408ms min=408ms max=408ms
+    NUM_CORES=2: avg=360ms min=360ms max=360ms
+    NUM_CORES=3: avg=309ms min=309ms max=309ms
+    NUM_CORES=4: avg=258ms min=258ms max=258ms
