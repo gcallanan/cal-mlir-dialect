@@ -1,4 +1,5 @@
 Timing Results - lör 30 maj 2026 09:54:03 CEST
+Actors: 9
 
   round-robin:
     NUM_CORES=1: avg=39992ms min=39943ms max=40042ms

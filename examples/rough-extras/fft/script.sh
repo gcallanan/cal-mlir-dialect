@@ -18,10 +18,12 @@ TOP_DIR="../../.."
 declare -A TIMES
 declare -A MIN_TIMES
 declare -A MAX_TIMES
+declare -A ACTOR_COUNTS
 RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
 
-for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
+#for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
+for FFT_SIZE in 256 512 1024; do
     case $FFT_SIZE in
         256)   LOG2N=8;  SQRTN="16.0"       ;;
         512)   LOG2N=9;  SQRTN="22.627417"  ;;
@@ -39,7 +41,7 @@ for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
     echo "=== FFT Size: $FFT_SIZE ==="
     echo "=================================="
     echo "" >> "$RESULTS_FILE"
-    echo "=== FFT Size: $FFT_SIZE ===" >> "$RESULTS_FILE"
+    echo "=== FFT Size: $FFT_SIZE (Actors: ${ACTOR_COUNTS[$FFT_SIZE]}) ===" >> "$RESULTS_FILE"
 
     cp FFT_Top_256.mlir FFT_Top_current.mlir
     sed -i "s/%t3 = arith.constant [0-9]* : i32 loc(#loc3)/%t3 = arith.constant $FFT_SIZE : i32 loc(#loc3)/" FFT_Top_current.mlir
@@ -49,6 +51,10 @@ for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
     cal-opt --cal-network-elab="top=fft__Top" FFT_Top_current.mlir > FFT_Flattened.mlir
 
     sed -i '/^[[:space:]]*in_names \[.*\][[:space:]]*$/d; /^[[:space:]]*out_names \[.*\][[:space:]]*$/d' FFT_Flattened.mlir
+
+    ACTOR_COUNTS[$FFT_SIZE]=$(grep -c 'cal\.create_instance' FFT_Flattened.mlir)
+    echo "  Actors: ${ACTOR_COUNTS[$FFT_SIZE]}"
+    echo "  Actors: ${ACTOR_COUNTS[$FFT_SIZE]}" >> "$RESULTS_FILE"
 
     cp FFT_Flattened.mlir FFT_Flattened_clean.mlir
 
@@ -108,9 +114,9 @@ echo ""
 echo "=== Timing Results ==="
 for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
     echo ""
-    echo "FFT Size: $FFT_SIZE"
+    echo "FFT Size: $FFT_SIZE (Actors: ${ACTOR_COUNTS[$FFT_SIZE]})"
     echo "" >> "$RESULTS_FILE"
-    echo "FFT Size: $FFT_SIZE" >> "$RESULTS_FILE"
+    echo "FFT Size: $FFT_SIZE (Actors: ${ACTOR_COUNTS[$FFT_SIZE]})" >> "$RESULTS_FILE"
     for ASSIGNMENT_MODE in "round-robin" "block"; do
         echo "  $ASSIGNMENT_MODE:"
         echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"

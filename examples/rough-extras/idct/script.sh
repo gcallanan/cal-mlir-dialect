@@ -34,6 +34,10 @@ declare -A MAX_TIMES
 RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
 
+NUM_ACTORS=$(grep -c 'cal\.create_instance' IDCT_Flattened.mlir)
+echo "Actors: $NUM_ACTORS"
+echo "Actors: $NUM_ACTORS" >> "$RESULTS_FILE"
+
 cp IDCT_Flattened.mlir IDCT_Flattened_clean.mlir
 
 for ASSIGNMENT_MODE in "round-robin" "block"; do
@@ -121,9 +125,9 @@ TYCHO_TIME="avg=$(( TOTAL_TIME / 10 ))ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
 echo "Tycho execution time: $TYCHO_TIME"
 
 echo ""
-echo "=== Timing Results ==="
+echo "=== Timing Results (Actors: $NUM_ACTORS) ==="
 echo "" >> "$RESULTS_FILE"
-echo "=== Timing Results ===" >> "$RESULTS_FILE"
+echo "=== Timing Results (Actors: $NUM_ACTORS) ===" >> "$RESULTS_FILE"
 LINE="  tycho.out: ${TYCHO_TIME}"
 echo "$LINE"
 echo "$LINE" >> "$RESULTS_FILE"
