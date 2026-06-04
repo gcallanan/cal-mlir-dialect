@@ -97,18 +97,18 @@ void registerLowerCalToLLVMPipeline() {
          const CalToLLVMWithMultithreadedFlagsOptions &options) {
         // 1. FIFO/CAL-specific lowering
 
+        pm.addPass(mlir::cal::insertCalPortPredicates());
         // First lower any cal.fsm schedules into a unified cal.execution_body.
         // Keep the standalone pass available separately; this just integrates
         // it into the default pipeline so users don't need to spell it out.
         pm.addPass(mlir::cal::lowerCalFsmToExecutionBody());
-
+        
         // Early shape inference on dynamic memref state vars: specialize
         // create_state_var memref types when an initializing value provides
         // a fully-static shape. This reduces dynamic allocs and surfaces
         // missing size operand issues earlier.
         pm.addPass(mlir::createInferCalDynamicStateShapesPass());
 
-        pm.addPass(mlir::cal::insertCalPortPredicates());
         // Convert any remaining cal.action-based actors (non-FSM actors)
         // into execution bodies.
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
