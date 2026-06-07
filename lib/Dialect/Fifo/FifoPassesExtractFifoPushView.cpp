@@ -73,33 +73,32 @@ static bool hasNoUsesAfter(Value value, Operation *afterOp) {
 struct ExtractFifoPushViewPass
     : public impl::ExtractFifoPushViewPassBase<ExtractFifoPushViewPass> {
 
-  // Returns the scf.for that drains alloca via a single fifo.push loop and
-  // the push op itself. Returns nullptrs if the pattern does not match.
-  static std::pair<scf::ForOp, Push>
-  findPushDrainLoop(memref::AllocaOp alloca, Block *actionBlock) {
-    auto allocaType = mlir::cast<MemRefType>(alloca.getType());
-    if (allocaType.getRank() != 1 || allocaType.isDynamicDim(0))
-      return {};
-    int64_t N = allocaType.getDimSize(0);
-    Type elemType = allocaType.getElementType();
-
+  // Finds a top-level loop of the canonical drain shape -- lb=0, step=1,
+  // body exactly {load X[iv]; push(port, loadedVal); yield} -- and returns
+  // it together with the matched push and the source buffer X (nulls if no
+  // such loop exists).
+  //
+  // X is discovered from the load itself rather than assumed up front, so it
+  // may be *any* rank-1, statically-shaped memref of matching size and
+  // element type: a local memref.alloca (the common case, eligible for the
+  // zero-copy redirect-and-erase rewrite below), a heap memref.alloc, the
+  // result of a fifo.pop_bulk_view on a *different* port -- the "relay" shape
+  // where an actor pops a bulk region and immediately drains it into another
+  // FIFO -- a function argument, etc. The two rewrite strategies in
+  // runOnOperation adapt to whichever it turns out to be.
+  static std::tuple<scf::ForOp, Push, Value>
+  findPushDrainLoop(Block *actionBlock) {
     for (auto &op : *actionBlock) {
       auto forOp = dyn_cast<scf::ForOp>(&op);
       if (!forOp)
         continue;
 
-      // The drain loop must come after the alloca: it is the alloca's
-      // contents that get pushed, not the other way round.
-      if (!alloca->isBeforeInBlock(forOp))
-        continue;
-
       if (!isConstantIndexEqualTo(forOp.getLowerBound(), 0) ||
-          !isConstantIndexEqualTo(forOp.getStep(), 1) ||
-          !matchesConstantBound(forOp.getUpperBound(), N))
+          !isConstantIndexEqualTo(forOp.getStep(), 1))
         continue;
 
-      // The loop body must be exactly: load alloca[iv]; push(port, val);
-      // yield -- nothing else, so we know precisely what flows into the FIFO.
+      // The loop body must be exactly: load X[iv]; push(port, val); yield --
+      // nothing else, so we know precisely what flows into the FIFO.
       Block *loopBody = &forOp.getRegion().front();
       Value iv = forOp.getInductionVar();
 
@@ -111,14 +110,13 @@ struct ExtractFifoPushViewPass
         if (isa<scf::YieldOp>(&bodyOp))
           continue;
         if (auto load = dyn_cast<memref::LoadOp>(&bodyOp)) {
-          if (load.getMemref() == alloca.getResult() &&
-              load.getIndices().size() == 1 && load.getIndices()[0] == iv) {
+          if (!foundLoad && load.getIndices().size() == 1 &&
+              load.getIndices()[0] == iv) {
             foundLoad = load;
             continue;
           }
         } else if (auto push = dyn_cast<Push>(&bodyOp)) {
-          if (foundLoad && push.getInputToken() == foundLoad.getResult() &&
-              push.getInputToken().getType() == elemType) {
+          if (foundLoad && push.getInputToken() == foundLoad.getResult()) {
             foundPush = push;
             continue;
           }
@@ -130,11 +128,24 @@ struct ExtractFifoPushViewPass
       if (unexpectedOp || !foundLoad || !foundPush)
         continue;
 
-      // The drain loop must be the alloca's last use: every byte that ever
-      // gets written into it must be in place before we hand the buffer to
-      // the FIFO and advance the write counter.
-      if (!hasNoUsesAfter(alloca.getResult(), forOp))
+      Value buffer = foundLoad.getMemref();
+      auto bufferType = mlir::dyn_cast<MemRefType>(buffer.getType());
+      if (!bufferType || bufferType.getRank() != 1 ||
+          bufferType.isDynamicDim(0))
         continue;
+      int64_t N = bufferType.getDimSize(0);
+      if (!matchesConstantBound(forOp.getUpperBound(), N))
+        continue;
+
+      // The buffer must already be available by the time the loop runs: if
+      // it has a defining op, that op must live in this same block, before
+      // the loop -- this is what "the contents that get pushed, not the
+      // other way round" comes down to once the buffer isn't necessarily an
+      // alloca local to this block (e.g. a block argument trivially
+      // qualifies; an op nested in some other region does not).
+      if (Operation *def = buffer.getDefiningOp())
+        if (def->getBlock() != actionBlock || !def->isBeforeInBlock(forOp))
+          continue;
 
       // No other fifo.push targeting the same port may appear anywhere in
       // the action: it would consume slots and bump the write counter out
@@ -148,7 +159,7 @@ struct ExtractFifoPushViewPass
       if (otherPushOnPort)
         continue;
 
-      return {forOp, foundPush};
+      return {forOp, foundPush, buffer};
     }
     return {};
   }
@@ -159,22 +170,21 @@ struct ExtractFifoPushViewPass
     module.walk([&](cal::ActionOp action) {
       Block *body = &action.getBody().front();
 
-      // Collect allocas upfront since we modify the block during the loop.
-      SmallVector<memref::AllocaOp> allocas;
-      for (auto &op : *body)
-        if (auto alloca = dyn_cast<memref::AllocaOp>(&op))
-          allocas.push_back(alloca);
-
-      for (auto alloca : allocas) {
-        auto [drainLoop, pushOp] = findPushDrainLoop(alloca, body);
+      // Search to a fixed point: every successful match below either erases
+      // the drain loop outright (redirect-and-erase) or erases the
+      // fifo.push inside it (generic rewrite), so a loop can never match
+      // twice -- the search is guaranteed to terminate, and re-running it
+      // from scratch sidesteps any iterator invalidation from the rewrite.
+      while (true) {
+        auto [drainLoop, pushOp, buffer] = findPushDrainLoop(body);
         if (!drainLoop)
-          continue;
+          break;
 
-        auto allocaType = mlir::cast<MemRefType>(alloca.getType());
-        int64_t N = allocaType.getDimSize(0);
-        Type elemType = allocaType.getElementType();
-
+        auto bufferType = mlir::cast<MemRefType>(buffer.getType());
+        int64_t N = bufferType.getDimSize(0);
+        Type elemType = bufferType.getElementType();
         Value port = pushOp.getInputPort();
+        Value iv = drainLoop.getInductionVar();
 
         // Result type: memref<N x T, strided<[1], offset: ?>>, the natural
         // type of a 1-D subview with a dynamic offset (the runtime
@@ -183,29 +193,61 @@ struct ExtractFifoPushViewPass
             &getContext(), ShapedType::kDynamic, {1});
         auto viewType = MemRefType::get({N}, elemType, stridedLayout);
 
-        // Reserve the view where the alloca used to be: this is the
-        // earliest point any of the alloca's uses occur, and the view must
-        // exist (backed by real FIFO storage) before any of them run.
-        OpBuilder reserveBuilder(alloca);
-        Value reserveCount = reserveBuilder.create<arith::ConstantIndexOp>(
-            alloca.getLoc(), N);
-        auto viewOp = reserveBuilder.create<PushBulkView>(
-            alloca.getLoc(), viewType, port, reserveCount);
-        alloca.getResult().replaceAllUsesWith(viewOp.getView());
+        auto alloca = buffer.getDefiningOp<memref::AllocaOp>();
+        if (alloca && hasNoUsesAfter(buffer, drainLoop)) {
+          // Zero-copy: the buffer is a local scratch alloca about to be
+          // drained for the last time. Reserve the view where the alloca
+          // used to be -- the earliest point any of its uses occur -- and
+          // redirect every one of those uses (loads, stores from other
+          // loops feeding it) onto the reserved FIFO region directly, so
+          // whatever filled the buffer now writes straight into the FIFO.
+          // That makes the drain loop redundant (its loads now read back
+          // the FIFO's own data, and its pushes would double-publish it),
+          // and the alloca dead; erase both.
+          OpBuilder reserveBuilder(alloca);
+          Value reserveCount = reserveBuilder.create<arith::ConstantIndexOp>(
+              alloca.getLoc(), N);
+          auto viewOp = reserveBuilder.create<PushBulkView>(
+              alloca.getLoc(), viewType, port, reserveCount);
+          buffer.replaceAllUsesWith(viewOp.getView());
 
-        // Publish where the drain loop used to be: only once every slot has
-        // actually been written do we advance the write counter, so a
-        // concurrently running consumer can never observe a half-filled
-        // region.
-        OpBuilder commitBuilder(drainLoop);
-        Value commitCount = commitBuilder.create<arith::ConstantIndexOp>(
-            drainLoop.getLoc(), N);
-        commitBuilder.create<PushBulkCommit>(drainLoop.getLoc(), port,
-                                             commitCount);
+          OpBuilder commitBuilder(drainLoop);
+          Value commitCount = commitBuilder.create<arith::ConstantIndexOp>(
+              drainLoop.getLoc(), N);
+          commitBuilder.create<PushBulkCommit>(drainLoop.getLoc(), port,
+                                               commitCount);
 
-        // The drain loop is now dead; erase it before the alloca.
-        drainLoop.erase();
-        alloca.erase();
+          drainLoop.erase();
+          alloca.erase();
+        } else {
+          // Generic: the buffer is not ours to redirect or discard -- a
+          // heap allocation with its own lifetime (and, typically, a paired
+          // memref.dealloc that erasing the alloc would orphan), a bulk view
+          // into another port's FIFO (the relay shape), a function
+          // argument, an alloca that's still live afterwards, ... Leave it
+          // exactly as it is: reserve the view where the loop sits, rewrite
+          // the loop in place to copy element-by-element from the buffer
+          // into the view instead of pushing scalar-by-scalar, and commit
+          // immediately afterwards -- the view has no uses beyond this loop,
+          // so (unlike the redirected case) there is nothing to defer for.
+          OpBuilder reserveBuilder(drainLoop);
+          Value reserveCount = reserveBuilder.create<arith::ConstantIndexOp>(
+              drainLoop.getLoc(), N);
+          auto viewOp = reserveBuilder.create<PushBulkView>(
+              drainLoop.getLoc(), viewType, port, reserveCount);
+
+          OpBuilder bodyBuilder(pushOp);
+          bodyBuilder.create<memref::StoreOp>(
+              pushOp.getLoc(), pushOp.getInputToken(), viewOp.getView(), iv);
+          pushOp.erase();
+
+          OpBuilder commitBuilder(drainLoop);
+          commitBuilder.setInsertionPointAfter(drainLoop);
+          Value commitCount = commitBuilder.create<arith::ConstantIndexOp>(
+              drainLoop.getLoc(), N);
+          commitBuilder.create<PushBulkCommit>(drainLoop.getLoc(), port,
+                                               commitCount);
+        }
       }
     });
   }

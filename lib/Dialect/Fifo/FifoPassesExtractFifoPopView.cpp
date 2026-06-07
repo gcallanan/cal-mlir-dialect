@@ -24,66 +24,105 @@ namespace mlir::fifo {
 
 namespace {
 
+// Returns true if `v` is an arith.constant of index type equal to `expected`.
+static bool isConstantIndexEqualTo(Value v, int64_t expected) {
+  auto cst = v.getDefiningOp<arith::ConstantIndexOp>();
+  return cst && cst.value() == expected;
+}
+
+// Returns true if `v` is a constant equal to `expected`, either directly as
+// an arith.constant of index type, or as an integer constant fed through a
+// single arith.index_cast -- the shape produced by frontends that compute
+// sizes in a fixed-width integer type and cast them to index for loop bounds.
+static bool matchesConstantBound(Value v, int64_t expected) {
+  if (auto cst = v.getDefiningOp<arith::ConstantIndexOp>())
+    return cst.value() == expected;
+
+  if (auto cast = v.getDefiningOp<arith::IndexCastOp>()) {
+    if (auto cst = cast.getIn().getDefiningOp<arith::ConstantOp>()) {
+      if (auto intAttr = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+        return intAttr.getValue().getSExtValue() == expected;
+    }
+  }
+  return false;
+}
+
 struct ExtractFifoPopViewPass
     : public impl::ExtractFifoPopViewPassBase<ExtractFifoPopViewPass> {
 
-  // Returns the scf.for that fills alloca from a single fifo.pop loop and the
-  // pop op itself. Returns nullptrs if the pattern does not match.
-  static std::pair<scf::ForOp, Pop>
-  findPopFillLoop(memref::AllocaOp alloca, Block *actionBlock) {
-    auto allocaType = mlir::cast<MemRefType>(alloca.getType());
-    if (allocaType.getRank() != 1 || allocaType.isDynamicDim(0))
-      return {};
-    int64_t N = allocaType.getDimSize(0);
-    Type elemType = allocaType.getElementType();
-
+  // Finds a top-level loop of the canonical fill shape -- lb=0, step=1, body
+  // exactly {poppedVal = pop(port); store poppedVal, X[iv]; yield} -- and
+  // returns it together with the matched pop and the destination buffer X
+  // (nulls if no such loop exists).
+  //
+  // X is discovered from the store itself rather than assumed up front, so it
+  // may be *any* rank-1, statically-shaped memref of matching size and
+  // element type: a local memref.alloca (the common case, eligible for the
+  // zero-copy redirect-and-erase rewrite below), a heap memref.alloc, the
+  // result of a fifo.push_bulk_view on a *different* port -- the "relay"
+  // shape where an actor immediately forwards a popped bulk region into
+  // another FIFO -- a function argument, etc. The two rewrite strategies in
+  // runOnOperation adapt to whichever it turns out to be.
+  static std::tuple<scf::ForOp, Pop, Value>
+  findPopFillLoop(Block *actionBlock) {
     for (auto &op : *actionBlock) {
       auto forOp = dyn_cast<scf::ForOp>(&op);
       if (!forOp)
         continue;
 
-      // All three bounds must be arith.constant index ops.
-      auto lbConst =
-          forOp.getLowerBound().getDefiningOp<arith::ConstantIndexOp>();
-      auto ubConst =
-          forOp.getUpperBound().getDefiningOp<arith::ConstantIndexOp>();
-      auto stepConst =
-          forOp.getStep().getDefiningOp<arith::ConstantIndexOp>();
-      if (!lbConst || !ubConst || !stepConst)
-        continue;
-      if (lbConst.value() != 0 || stepConst.value() != 1)
-        continue;
-      if (ubConst.value() != N)
+      if (!isConstantIndexEqualTo(forOp.getLowerBound(), 0) ||
+          !isConstantIndexEqualTo(forOp.getStep(), 1))
         continue;
 
-      // The loop body must contain exactly one fifo.pop whose result is stored
-      // into %alloca[%iv] and whose element type matches the alloca's element
-      // type.
+      // The loop body must be exactly: poppedVal = pop(port);
+      // store poppedVal, X[iv]; yield -- nothing else, so we know precisely
+      // what flows out of the FIFO and where it lands.
       Block *loopBody = &forOp.getRegion().front();
       Value iv = forOp.getInductionVar();
 
       Pop foundPop;
-      bool storeFound = false;
+      memref::StoreOp foundStore;
+      bool unexpectedOp = false;
 
       for (auto &bodyOp : *loopBody) {
         if (isa<scf::YieldOp>(&bodyOp))
           continue;
         if (auto pop = dyn_cast<Pop>(&bodyOp)) {
-          if (pop.getOutputToken().getType() != elemType)
+          if (!foundPop) {
+            foundPop = pop;
             continue;
-          foundPop = pop;
+          }
         } else if (auto store = dyn_cast<memref::StoreOp>(&bodyOp)) {
-          if (store.getMemref() == alloca.getResult() &&
-              store.getIndices().size() == 1 &&
-              store.getIndices()[0] == iv && foundPop &&
+          if (foundPop && !foundStore && store.getIndices().size() == 1 &&
+              store.getIndices()[0] == iv &&
               store.getValue() == foundPop.getOutputToken()) {
-            storeFound = true;
+            foundStore = store;
+            continue;
           }
         }
+        unexpectedOp = true;
+        break;
       }
 
-      if (!foundPop || !storeFound)
+      if (unexpectedOp || !foundPop || !foundStore)
         continue;
+
+      Value buffer = foundStore.getMemref();
+      auto bufferType = mlir::dyn_cast<MemRefType>(buffer.getType());
+      if (!bufferType || bufferType.getRank() != 1 ||
+          bufferType.isDynamicDim(0))
+        continue;
+      int64_t N = bufferType.getDimSize(0);
+      if (!matchesConstantBound(forOp.getUpperBound(), N))
+        continue;
+
+      // The buffer must already be available by the time the loop runs: if
+      // it has a defining op, that op must live in this same block, before
+      // the loop (a block argument trivially qualifies; an op nested in some
+      // other region does not).
+      if (Operation *def = buffer.getDefiningOp())
+        if (def->getBlock() != actionBlock || !def->isBeforeInBlock(forOp))
+          continue;
 
       // No other fifo.pop targeting the same port may appear anywhere in the
       // action: with the counter advance deferred to the end of the action,
@@ -100,7 +139,7 @@ struct ExtractFifoPopViewPass
       if (otherPopOnPort)
         continue;
 
-      return {forOp, foundPop};
+      return {forOp, foundPop, buffer};
     }
     return {};
   }
@@ -111,22 +150,21 @@ struct ExtractFifoPopViewPass
     module.walk([&](cal::ActionOp action) {
       Block *body = &action.getBody().front();
 
-      // Collect allocas upfront since we modify the block during the loop.
-      SmallVector<memref::AllocaOp> allocas;
-      for (auto &op : *body)
-        if (auto alloca = dyn_cast<memref::AllocaOp>(&op))
-          allocas.push_back(alloca);
-
-      for (auto alloca : allocas) {
-        auto [fillLoop, popOp] = findPopFillLoop(alloca, body);
+      // Search to a fixed point: every successful match below either erases
+      // the fill loop outright (redirect-and-erase) or erases the fifo.pop
+      // inside it (generic rewrite), so a loop can never match twice -- the
+      // search is guaranteed to terminate, and re-running it from scratch
+      // sidesteps any iterator invalidation from the rewrite.
+      while (true) {
+        auto [fillLoop, popOp, buffer] = findPopFillLoop(body);
         if (!fillLoop)
-          continue;
+          break;
 
-        auto allocaType = mlir::cast<MemRefType>(alloca.getType());
-        int64_t N = allocaType.getDimSize(0);
-        Type elemType = allocaType.getElementType();
-
+        auto bufferType = mlir::cast<MemRefType>(buffer.getType());
+        int64_t N = bufferType.getDimSize(0);
+        Type elemType = bufferType.getElementType();
         Value port = popOp.getOutputPort();
+        Value iv = fillLoop.getInductionVar();
 
         // Result type: memref<N x T, strided<[1], offset: ?>>
         // This is the natural result type of a 1-D subview with a dynamic
@@ -135,35 +173,65 @@ struct ExtractFifoPopViewPass
             &getContext(), ShapedType::kDynamic, {1});
         auto viewType = MemRefType::get({N}, elemType, stridedLayout);
 
-        // Acquire the view where the fill loop used to be: this is the
-        // earliest point any of the alloca's uses occur, and the view must
-        // exist (backed by real FIFO storage) before any of them run. This op
-        // deliberately does not touch the read counter.
-        OpBuilder acquireBuilder(fillLoop);
-        Value acquireCount = acquireBuilder.create<arith::ConstantIndexOp>(
-            fillLoop.getLoc(), N);
-        auto viewOp = acquireBuilder.create<PopBulkView>(
-            fillLoop.getLoc(), viewType, port, acquireCount);
+        if (auto alloca = buffer.getDefiningOp<memref::AllocaOp>()) {
+          // Zero-copy: acquire the view where the fill loop used to be --
+          // the earliest point any of the alloca's uses occur -- and
+          // redirect every one of those uses (loads, stores from later
+          // loops that read or write back through it) onto the acquired
+          // FIFO region directly (memref.load/memref.store accept any
+          // MemRefType layout, so this is always legal). Deferring the
+          // release to the end of the action body covers every redirected
+          // use, however far downstream, so -- unlike the push side --
+          // there is no "last use" precondition to check here: an alloca is
+          // always eligible. That makes the fill loop redundant (its pops
+          // would now double-consume data the view already exposes, and
+          // its stores would corrupt that same view), and the alloca dead;
+          // erase both.
+          OpBuilder acquireBuilder(fillLoop);
+          Value acquireCount = acquireBuilder.create<arith::ConstantIndexOp>(
+              fillLoop.getLoc(), N);
+          auto viewOp = acquireBuilder.create<PopBulkView>(
+              fillLoop.getLoc(), viewType, port, acquireCount);
+          buffer.replaceAllUsesWith(viewOp.getView());
 
-        // Replace all uses of the alloca (loads, stores from other loops) with
-        // the view. memref.load and memref.store accept any MemRefType layout.
-        alloca.getResult().replaceAllUsesWith(viewOp.getView());
+          OpBuilder releaseBuilder(body, body->end());
+          Value releaseCount = releaseBuilder.create<arith::ConstantIndexOp>(
+              fillLoop.getLoc(), N);
+          releaseBuilder.create<PopBulkRelease>(fillLoop.getLoc(), port,
+                                                releaseCount);
 
-        // Release at the end of the action body: cal.action has no
-        // terminator, so the last position in the block is guaranteed to run
-        // after every other op in the block -- including any later loops that
-        // read (or write back through) the view. Only once every element has
-        // been read is it safe to advance the read counter and let a
-        // concurrently running producer reuse these slots.
-        OpBuilder releaseBuilder(body, body->end());
-        Value releaseCount = releaseBuilder.create<arith::ConstantIndexOp>(
-            fillLoop.getLoc(), N);
-        releaseBuilder.create<PopBulkRelease>(fillLoop.getLoc(), port,
-                                              releaseCount);
+          fillLoop.erase();
+          alloca.erase();
+        } else {
+          // Generic: the buffer is not ours to redirect or discard -- a
+          // heap allocation with its own lifetime (and, typically, a paired
+          // memref.dealloc that erasing the alloc would orphan), a bulk view
+          // reserved on another port's FIFO (the relay shape), a function
+          // argument, ... Leave it exactly as it is: acquire the view where
+          // the loop sits, rewrite the loop in place to copy
+          // element-by-element from the view into the buffer instead of
+          // popping scalar-by-scalar, and release immediately afterwards --
+          // the view has no uses beyond this loop, so (unlike the
+          // redirected case) there is nothing to defer for.
+          OpBuilder acquireBuilder(fillLoop);
+          Value acquireCount = acquireBuilder.create<arith::ConstantIndexOp>(
+              fillLoop.getLoc(), N);
+          auto viewOp = acquireBuilder.create<PopBulkView>(
+              fillLoop.getLoc(), viewType, port, acquireCount);
 
-        // The fill loop is now dead; erase it before the alloca.
-        fillLoop.erase();
-        alloca.erase();
+          OpBuilder bodyBuilder(popOp);
+          Value loaded = bodyBuilder.create<memref::LoadOp>(
+              popOp.getLoc(), viewOp.getView(), iv);
+          popOp.getOutputToken().replaceAllUsesWith(loaded);
+          popOp.erase();
+
+          OpBuilder releaseBuilder(fillLoop);
+          releaseBuilder.setInsertionPointAfter(fillLoop);
+          Value releaseCount = releaseBuilder.create<arith::ConstantIndexOp>(
+              fillLoop.getLoc(), N);
+          releaseBuilder.create<PopBulkRelease>(fillLoop.getLoc(), port,
+                                                releaseCount);
+        }
       }
     });
   }
