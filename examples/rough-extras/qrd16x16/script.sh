@@ -11,7 +11,7 @@ rm -fr myproject
 mkdir myproject
 streamblocks multicore --set experimental-network-elaboration=on --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
 cd myproject/build/
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make
 cd ../..
 cp myproject/bin/Top streamblocks.out
