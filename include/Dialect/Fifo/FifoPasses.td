@@ -75,4 +75,37 @@ def ExtractFifoPopViewPass: Pass<"extract-fifo-pop-view", "ModuleOp"> {
   ];
 }
 
+def ExtractFifoPushViewPass: Pass<"extract-fifo-push-view", "ModuleOp"> {
+  let summary = "Replace alloca-then-loop-of-pushes into fifo.push_bulk_view/fifo.push_bulk_commit for zero-copy bulk writes";
+  let description = [{
+    Identifies the pattern of a memref.alloca inside a cal.action that is
+    later drained by an scf.for (with constant lb=0, step=1, and a constant
+    upper bound N) whose body loads from the alloca at the loop IV and pushes
+    the result via a single fifo.push, and replaces it with a
+    fifo.push_bulk_view (a direct, writable view into the FIFO backing buffer,
+    placed where the alloca was) and a fifo.push_bulk_commit (which publishes
+    the data and advances the write counter, placed where the drain loop was).
+    The alloca and drain loop are erased; any computation that previously
+    filled the alloca now writes directly into the FIFO buffer.
+
+    Constraints:
+    - The scf.for must have lb=0, step=1, and a constant upper bound N
+      (matching the alloca's static size), expressed either directly as an
+      index constant or as an i32 constant fed through arith.index_cast.
+    - The loop body must be exactly: load from alloca[iv], fifo.push of that
+      value to a single port, and yield.
+    - The drain loop must be the alloca's last use.
+    - No other fifo.push to the same port may appear anywhere else in the
+      action (it would race with the reserved-but-not-yet-committed region).
+    - The pattern must appear directly in a cal.action body block.
+
+    Must run before lower-fifo-to-memref. Only safe for single-threaded /
+    static-schedule execution.
+  }];
+  let dependentDialects = [
+    "fifo::FifoDialect",
+    "arith::ArithDialect"
+  ];
+}
+
 #endif // FIFO_PASS

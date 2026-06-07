@@ -1236,6 +1236,150 @@ private:
   }
 };
 
+//===----------------------------------------------------------------------===//
+//
+// Lowers fifo.push_bulk_view to a memref.subview into the FIFO backing
+// buffer at the current write slot. Unlike fifo.pop_bulk_view, this does NOT
+// touch the write counter -- the counter is advanced separately by a paired
+// fifo.push_bulk_commit once the caller has finished writing into the view
+// (see ConvertFifoPushBulkCommitToMemref below). The subview covers the next
+// `count` elements starting at the current write slot, so the caller can
+// write (zero-copy) directly into the FIFO buffer.
+//
+// Input:
+//   %view = fifo.push_bulk_view(%port : <tuple>, %count : index)
+//                                : memref<N x T, strided<[1], offset: ?>>
+//
+// Output (legacy mode):
+//   %data    = fifo.get_tuple_element %port[0] -> memref<?xT>
+//   %meta    = fifo.get_tuple_element %port[1] -> memref<2xi32>
+//   %cap     = fifo.get_tuple_element %port[2] -> i32
+//   %c1      = arith.constant 1 : index
+//   %wri32   = memref.load %meta[%c1]
+//   %wridx   = arith.index_cast %wri32 : i32 to index
+//   %view    = memref.subview %data[%wridx][N][1] : ... -> memref<N x T, strided<...>>
+class ConvertFifoPushBulkViewToMemref
+    : public OpConversionPattern<PushBulkView> {
+public:
+  ConvertFifoPushBulkViewToMemref(MLIRContext *c, FifoIndexMode mode)
+      : OpConversionPattern<PushBulkView>(c), indexMode(mode) {}
+
+private:
+  FifoIndexMode indexMode;
+
+  LogicalResult
+  matchAndRewrite(PushBulkView op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+
+    auto tupleType = mlir::cast<TupleType>(adaptor.getInputPort().getType());
+    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(0), adaptor.getInputPort(), 0);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getInputPort(), 1);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getInputPort(), 2);
+
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      writeLocationIndex =
+          rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
+    auto writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
+                                                         writeLocationIndex);
+
+    Value writeSlotIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      Value capacityIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), bufferSizeVal);
+      Value writeCountIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), writeCountVal);
+      writeSlotIndex =
+          rewriter.create<arith::RemSIOp>(loc, writeCountIndex, capacityIndex)
+              .getResult();
+    } else {
+      writeSlotIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), writeCountVal);
+    }
+
+    // Extract static element count N from the declared result type so we can
+    // pass it as a static size to SubViewOp.
+    auto viewType = mlir::cast<MemRefType>(op.getView().getType());
+    int64_t N = viewType.getDimSize(0);
+
+    SmallVector<OpFoldResult> offsets = {writeSlotIndex};
+    SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(N)};
+    SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+
+    auto subview = rewriter.create<memref::SubViewOp>(
+        loc, viewType, dataMemref, offsets, sizes, strides);
+
+    rewriter.replaceOp(op, subview.getResult());
+    return success();
+  }
+};
+
+// Lowers fifo.push_bulk_commit to a bulk advance of the write counter by
+// `count`, publishing the region most recently reserved by a paired
+// fifo.push_bulk_view on the same port. Mirrors the counter-advance tail of
+// ConvertFifoPushToMemref (legacy: increment then wrap with remsi; SPSC
+// lock-free: monotonic increment only, no wrapping).
+class ConvertFifoPushBulkCommitToMemref
+    : public OpConversionPattern<PushBulkCommit> {
+public:
+  ConvertFifoPushBulkCommitToMemref(MLIRContext *c, FifoIndexMode mode)
+      : OpConversionPattern<PushBulkCommit>(c), indexMode(mode) {}
+
+private:
+  FifoIndexMode indexMode;
+
+  LogicalResult
+  matchAndRewrite(PushBulkCommit op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+
+    auto tupleType = mlir::cast<TupleType>(adaptor.getInputPort().getType());
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getInputPort(), 1);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getInputPort(), 2);
+
+    Value writeLocationIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      writeLocationIndex =
+          rewriter.create<arith::ConstantIndexOp>(loc, CACHE_LINE_SIZE_I64);
+    } else {
+      writeLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    }
+    auto writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
+                                                         writeLocationIndex);
+
+    Value count = adaptor.getCount();
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      Value countCast = rewriter.create<arith::IndexCastOp>(
+          loc, writeCountVal.getType(), count);
+      Value incremented =
+          rewriter.create<arith::AddIOp>(loc, writeCountVal, countCast);
+      rewriter.create<memref::StoreOp>(loc, incremented, metadataMemref,
+                                       writeLocationIndex);
+    } else {
+      Value countI32 = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getI32Type(), count);
+      auto incremented =
+          rewriter.create<arith::AddIOp>(loc, writeCountVal, countI32);
+      auto wrapped =
+          rewriter.create<arith::RemSIOp>(loc, incremented, bufferSizeVal);
+      rewriter.create<memref::StoreOp>(loc, wrapped, metadataMemref,
+                                       writeLocationIndex);
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 // After the conversion, the pass ensures that only legal operations remain in
 // the operation (e.g., `memref.alloc`, `memref.load`, `memref.store`, etc.) and
 // makes the `fifo` dialect illegal. The fifo make_tuple and get_tuple_element
@@ -1277,6 +1421,8 @@ public:
     patterns.add<ConvertFifoSpaceOpToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPopToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPopBulkViewToMemref>(&getContext(), indexMode);
+    patterns.add<ConvertFifoPushBulkViewToMemref>(&getContext(), indexMode);
+    patterns.add<ConvertFifoPushBulkCommitToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPushToMemref>(&getContext(), allocLocation,
                                           indexMode);
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext(), allocLocation,

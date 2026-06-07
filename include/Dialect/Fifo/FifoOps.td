@@ -227,6 +227,57 @@ def Fifo_Push : Fifo_Op<"push", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRe
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
+def Fifo_PushBulkView : Fifo_Op<"push_bulk_view", [MemoryEffects<[MemRead]>, MemoryEffects<[MemWrite]>]> {
+  let summary = "Zero-copy bulk push (reserve): return a writable memref view over N reserved slots in the FIFO backing buffer";
+  let description = [{
+    Reserves `count` contiguous slots at the FIFO's current write position and
+    returns a direct, writable view into the backing buffer covering those
+    slots, so the caller can fill them in place instead of writing into a
+    staging buffer that later gets copied in by a loop of `fifo.push`.
+
+    Does NOT advance the write counter -- pair it with a `fifo.push_bulk_commit`
+    on the same port and count once all `count` slots have been written, to
+    publish the data and advance the counter. The advance is deliberately
+    deferred to that separate op: bumping the counter here, before the slots
+    are actually written, would let a concurrently running consumer (e.g. in
+    spsc-lockfree mode) observe the new write position -- and start reading --
+    before the data exists.
+
+    The view is valid for the duration of the enclosing cal.action, which
+    guarantees atomicity with respect to the consumer. Only valid inside a
+    cal.action, and only when this is the sole producer for the port within
+    that action (interleaved fifo.push on the same port would race with the
+    reserved region). Created by the extract-fifo-push-view pass.
+  }];
+  let arguments = (ins
+    AnyType:$inputPort,
+    Index:$count
+  );
+  let results = (outs
+    AnyMemRef:$view
+  );
+  let assemblyFormat = "`(` $inputPort `:` type($inputPort) `,` $count `)` attr-dict `:` type($view)";
+}
+
+def Fifo_PushBulkCommit : Fifo_Op<"push_bulk_commit", [MemoryEffects<[MemWrite]>]> {
+  let summary = "Zero-copy bulk push (commit): publish a previously reserved region by advancing the write counter";
+  let description = [{
+    Advances the FIFO's write counter by `count`, publishing the `count`
+    slots most recently reserved by a matching `fifo.push_bulk_view` on the
+    same port so the consumer may begin reading them.
+
+    Must be the last operation to touch the reserved region -- once the
+    counter advances, a concurrently running consumer may read it. Created by
+    the extract-fifo-push-view pass, placed where the original drain loop used
+    to be (i.e. once the reserved slots are fully written).
+  }];
+  let arguments = (ins
+    AnyType:$inputPort,
+    Index:$count
+  );
+  let assemblyFormat = "`(` $inputPort `:` type($inputPort) `,` $count `)` attr-dict";
+}
+
 def Fifo_SpaceOp : Fifo_Op<"space", [MemoryEffects<[MemRead]>]> {
   let summary = "Returns the amount of free space available in a FIFO buffer.";
 

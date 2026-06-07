@@ -11,9 +11,12 @@
 // CHECK: arith.addi
 // CHECK: arith.remsi
 
-// SPSC: in lock-free mode the slot is computed as readCount % capacity
+// Note: in lock-free mode the slot is computed as readCount % capacity
 // (remsi), then the subview is taken at that slot, then the monotonic
 // counter is advanced by N with addi only (no wrapping remsi afterwards).
+// (This note deliberately never writes the four-letter check prefix used
+// below immediately followed by a colon -- FileCheck scans every line of
+// this file for "<prefix>:" and would parse such text as a check directive.)
 // SPSC-LABEL: cal.actor @simple_fill
 // SPSC-NOT: memref.alloca
 // SPSC-NOT: fifo.pop
@@ -47,6 +50,15 @@ cal.actor @simple_fill ()
 // CHECK: arith.addi
 // CHECK: arith.remsi
 // CHECK: scf.for
+
+// SPSC-LABEL: cal.actor @fill_and_process
+// SPSC-NOT: memref.alloca
+// SPSC-NOT: fifo.pop
+// SPSC: arith.remsi
+// SPSC: memref.subview
+// SPSC: arith.addi
+// SPSC-NOT: arith.remsi
+// SPSC: scf.for
 cal.actor @fill_and_process ()
     ports_in(%in0: !fifo.output_port<i32>)
     ports_out ()
