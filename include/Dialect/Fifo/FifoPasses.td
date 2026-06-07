@@ -53,21 +53,33 @@ def LowerFifoPrintToLLVM: Pass<"lower-fifo-print-to-llvm"> {
 }
 
 def ExtractFifoPopViewPass: Pass<"extract-fifo-pop-view", "ModuleOp"> {
-  let summary = "Replace loop-of-pops into an alloca with fifo.pop_bulk_view for zero-copy bulk reads";
+  let summary = "Replace loop-of-pops into an alloca with fifo.pop_bulk_view/release for zero-copy bulk reads";
   let description = [{
     Identifies the pattern of a fifo.pop inside an scf.for (with constant lb=0,
     step=1, and a constant upper bound N) whose result is stored into a
-    memref.alloca inside a cal.action, and replaces it with a single
-    fifo.pop_bulk_view op whose result is a direct view into the FIFO backing
-    buffer. The alloca and fill loop are erased.
+    memref.alloca inside a cal.action, and replaces it with a paired
+    fifo.pop_bulk_view (acquire) / fifo.pop_bulk_release (release):
+    - fifo.pop_bulk_view is placed where the fill loop was -- the earliest point
+      any of the alloca's uses occur -- and returns a direct view into the FIFO
+      backing buffer without touching the read counter.
+    - fifo.pop_bulk_release is placed at the end of the action body, so it is
+      guaranteed to run after every use of the view, and advances the read
+      counter to free the consumed slots.
+    The alloca and fill loop are erased. Splitting the counter advance out and
+    deferring it to the end of the action (rather than performing it eagerly,
+    as a single combined op would) prevents a concurrently running producer
+    from observing freed slots and overwriting them while this action is still
+    reading through the view.
 
     Constraints:
     - The scf.for must have lb=0, step=1, and a constant upper bound.
     - The fifo.pop must store its result into the alloca at the loop IV.
     - The pattern must appear directly in a cal.action body block.
+    - No other fifo.pop targeting the same port may appear anywhere else in the
+      action: it would advance the read counter out from under the base offset
+      this pass captures, racing for the same slots.
 
-    Must run before lower-fifo-to-memref. Only safe for single-threaded /
-    static-schedule execution.
+    Must run before lower-fifo-to-memref.
   }];
   let dependentDialects = [
     "fifo::FifoDialect",

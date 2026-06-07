@@ -91,19 +91,22 @@ def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead
 }
 
 def Fifo_PopBulkView : Fifo_Op<"pop_bulk_view", [MemoryEffects<[MemRead]>, MemoryEffects<[MemWrite]>]> {
-  let summary = "Zero-copy bulk pop: return a memref view over N elements in the FIFO backing buffer";
+  let summary = "Zero-copy bulk pop (acquire): return a memref view over N elements in the FIFO backing buffer";
   let description = [{
     Semantically equivalent to popping `count` scalar elements from the FIFO and
     storing them into a freshly allocated buffer, but avoids the copy by returning
     a subview directly into the FIFO backing memref.
 
     The view is valid for the duration of the enclosing cal.action, which
-    guarantees atomicity with respect to the producer. The FIFO read counter is
-    advanced by `count` when this op is lowered by lower-fifo-to-memref.
+    guarantees atomicity with respect to the producer.
 
-    Only valid inside a cal.action. Only safe for single-threaded / static-schedule
-    execution where the producer has already finished writing before the action fires.
-    Created by the extract-fifo-pop-view pass.
+    This op deliberately does NOT advance the FIFO read counter -- doing so here
+    would let a concurrently running producer believe these slots are free and
+    start overwriting them while this action is still reading through the view.
+    The counter is advanced separately, once every element has been read, by a
+    paired `fifo.pop_bulk_release`.
+
+    Only valid inside a cal.action. Created by the extract-fifo-pop-view pass.
   }];
   let arguments = (ins
     AnyType:$outputPort,
@@ -113,6 +116,28 @@ def Fifo_PopBulkView : Fifo_Op<"pop_bulk_view", [MemoryEffects<[MemRead]>, Memor
     AnyMemRef:$view
   );
   let assemblyFormat = "`(` $outputPort `:` type($outputPort) `,` $count `)` attr-dict `:` type($view)";
+}
+
+def Fifo_PopBulkRelease : Fifo_Op<"pop_bulk_release", [MemoryEffects<[MemWrite]>]> {
+  let summary = "Zero-copy bulk pop (release): free a previously acquired region by advancing the read counter";
+  let description = [{
+    Publishes the consumption of `count` elements previously acquired via a
+    paired `fifo.pop_bulk_view` by advancing the FIFO read counter. This signals
+    to the producer that these slots are now free to be overwritten.
+
+    Must only be emitted once every element of the paired view has been read --
+    advancing the counter any earlier would let a concurrently running producer
+    observe a region as free while this action is still reading from it.
+
+    Only valid inside a cal.action. Created by the extract-fifo-pop-view pass,
+    which places it at the end of the action body so it always runs after every
+    use of the paired view.
+  }];
+  let arguments = (ins
+    AnyType:$outputPort,
+    Index:$count
+  );
+  let assemblyFormat = "`(` $outputPort `:` type($outputPort) `,` $count `)` attr-dict";
 }
 
 def Fifo_SizeOp : Fifo_Op<"size", [MemoryEffects<[MemRead]>]> {

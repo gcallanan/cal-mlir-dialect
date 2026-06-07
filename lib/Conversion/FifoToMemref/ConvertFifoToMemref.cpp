@@ -1139,9 +1139,12 @@ public:
 //   allocation and tuple creation operations.
 //
 // Lowers fifo.pop_bulk_view to a memref.subview into the FIFO backing buffer
-// followed by a bulk advancement of the read counter. The subview covers the
-// next `count` elements starting at the current read slot, so the caller can
-// read (and write back) those elements without any copy.
+// at the current read slot. Unlike a plain fifo.pop, this does NOT touch the
+// read counter -- the counter is advanced separately by a paired
+// fifo.pop_bulk_release once the caller has finished reading from the view
+// (see ConvertFifoPopBulkReleaseToMemref below). The subview covers the next
+// `count` elements starting at the current read slot, so the caller can read
+// (and write back) those elements without any copy.
 //
 // Input:
 //   %view = fifo.pop_bulk_view(%port : <tuple>, %count : index)
@@ -1155,10 +1158,6 @@ public:
 //   %rdi32   = memref.load %meta[%c0]
 //   %rdidx   = arith.index_cast %rdi32 : i32 to index
 //   %view    = memref.subview %data[%rdidx][N][1] : ... -> memref<N x T, strided<...>>
-//   %cnt_i32 = arith.index_cast %count : index to i32
-//   %newrd   = arith.addi %rdi32, %cnt_i32 : i32
-//   %wrapped = arith.remsi %newrd, %cap : i32
-//   memref.store %wrapped, %meta[%c0]
 class ConvertFifoPopBulkViewToMemref : public OpConversionPattern<PopBulkView> {
 public:
   ConvertFifoPopBulkViewToMemref(MLIRContext *c, FifoIndexMode mode)
@@ -1211,7 +1210,59 @@ private:
     auto subview = rewriter.create<memref::SubViewOp>(
         loc, viewType, dataMemref, offsets, sizes, strides);
 
-    // Advance the read counter by count.
+    rewriter.replaceOp(op, subview.getResult());
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+//
+// Lowers fifo.pop_bulk_release to a bulk advancement of the read counter,
+// publishing the consumption of `count` elements previously acquired via a
+// paired fifo.pop_bulk_view. This signals to the producer that those slots
+// are now free to be overwritten. Independently re-loading the read counter
+// here (rather than threading the value captured at the view site) is correct
+// because nothing else can modify it between acquisition and release: the
+// extract-fifo-pop-view pass guarantees this is the sole fifo.pop targeting
+// this port anywhere in the action.
+//
+// Input:
+//   fifo.pop_bulk_release(%port : <tuple>, %count : index)
+//
+// Output (legacy mode):
+//   %meta    = fifo.get_tuple_element %port[1] -> memref<2xi32>
+//   %cap     = fifo.get_tuple_element %port[2] -> i32
+//   %c0      = arith.constant 0 : index
+//   %rdi32   = memref.load %meta[%c0]
+//   %cnt_i32 = arith.index_cast %count : index to i32
+//   %newrd   = arith.addi %rdi32, %cnt_i32 : i32
+//   %wrapped = arith.remsi %newrd, %cap : i32
+//   memref.store %wrapped, %meta[%c0]
+class ConvertFifoPopBulkReleaseToMemref
+    : public OpConversionPattern<PopBulkRelease> {
+public:
+  ConvertFifoPopBulkReleaseToMemref(MLIRContext *c, FifoIndexMode mode)
+      : OpConversionPattern<PopBulkRelease>(c), indexMode(mode) {}
+
+private:
+  FifoIndexMode indexMode;
+
+  LogicalResult
+  matchAndRewrite(PopBulkRelease op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+
+    auto tupleType =
+        mlir::cast<TupleType>(adaptor.getOutputPort().getType());
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
+
+    Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto readCountVal = rewriter.create<memref::LoadOp>(
+        loc, metadataMemref, readLocationIndex);
+
     Value count = adaptor.getCount();
     if (indexMode == FifoIndexMode::SPSCLockFree) {
       Value countCast = rewriter.create<arith::IndexCastOp>(
@@ -1231,7 +1282,7 @@ private:
                                        readLocationIndex);
     }
 
-    rewriter.replaceOp(op, subview.getResult());
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -1421,6 +1472,7 @@ public:
     patterns.add<ConvertFifoSpaceOpToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPopToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPopBulkViewToMemref>(&getContext(), indexMode);
+    patterns.add<ConvertFifoPopBulkReleaseToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPushBulkViewToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPushBulkCommitToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPushToMemref>(&getContext(), allocLocation,
