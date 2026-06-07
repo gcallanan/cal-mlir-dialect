@@ -109,6 +109,11 @@ void registerLowerCalToLLVMPipeline() {
         // missing size operand issues earlier.
         pm.addPass(mlir::createInferCalDynamicStateShapesPass());
 
+        // Zero-copy bulk pop: replace alloca+loop-of-pops patterns with
+        // fifo.pop_bulk_view before actions are lowered away.
+        if (options.fifoExtractViewAndGroup)
+          pm.addPass(mlir::fifo::createExtractFifoPopViewPass());
+
         // Convert any remaining cal.action-based actors (non-FSM actors)
         // into execution bodies.
         pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
@@ -138,6 +143,7 @@ void registerLowerCalToLLVMPipeline() {
         // if (options.multithreadCalActors) {
         mlir::LowerFifoToMemrefPassOptions fifoOptions;
         fifoOptions.fifo_index_mode = std::string("spsc-lockfree");
+        fifoOptions.extract_view_and_group = options.fifoExtractViewAndGroup;
         pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
         // } else {
         //   pm.addPass(mlir::createLowerFifoToMemrefPass());
@@ -246,7 +252,11 @@ void registerLowerCalToLLVMWithStaticSchedulePipeline() {
         pm.addPass(mlir::createConvertComplexToStandardPass());
 
         pm.addPass(mlir::createLowerCalStateToMemref());
-        pm.addPass(mlir::createLowerFifoToMemrefPass());
+        {
+          mlir::LowerFifoToMemrefPassOptions fifoOptions;
+          fifoOptions.extract_view_and_group = options.fifoExtractViewAndGroup;
+          pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
+        }
         pm.addPass(mlir::createDecomposeFifoTuples());
         pm.addPass(mlir::fifo::createLowerFifoPrintToLLVM());
 
@@ -321,6 +331,12 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
   pm.addPass(mlir::cal::lowerCalFsmToExecutionBody());
 
   pm.addPass(mlir::cal::insertCalPortPredicates());
+
+  // Zero-copy bulk pop: replace alloca+loop-of-pops patterns with
+  // fifo.pop_bulk_view before actions are lowered away.
+  if (options.fifoExtractViewAndGroup)
+    pm.addPass(mlir::fifo::createExtractFifoPopViewPass());
+
   // Convert any remaining cal.action-based actors (non-FSM actors).
   pm.addPass(mlir::cal::convertCalActionsToExecutionBodies());
 
@@ -340,6 +356,7 @@ void buildLowerCalToLLVMWithGPUTensorsPipeline(
 
   mlir::LowerFifoToMemrefPassOptions fifoOptions;
   fifoOptions.which_alloc = std::string("GPU");
+  fifoOptions.extract_view_and_group = options.fifoExtractViewAndGroup;
   pm.addPass(mlir::createLowerFifoToMemrefPass(fifoOptions));
   pm.addPass(mlir::createDecomposeFifoTuples());
 

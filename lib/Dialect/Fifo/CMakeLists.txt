@@ -3,6 +3,7 @@ add_mlir_dialect_library(MLIRFifo
         FifoDialect.cpp
         FifoOps.cpp
         FifoPassesLowerFifoPrintToLLVM.cpp
+        FifoPassesExtractFifoPopView.cpp
         BufferizableOpInterfaceImpl.cpp
 
         ADDITIONAL_HEADER_DIRS
@@ -16,4 +17,8 @@ add_mlir_dialect_library(MLIRFifo
         MLIRIR
         MLIRInferTypeOpInterface
         MLIRFuncDialect
+        MLIRArithDialect
+        MLIRMemRefDialect
+        MLIRSCFDialect
+        MLIRCal
         )

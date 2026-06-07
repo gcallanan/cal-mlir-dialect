@@ -52,4 +52,27 @@ def LowerFifoPrintToLLVM: Pass<"lower-fifo-print-to-llvm"> {
   ];
 }
 
+def ExtractFifoPopViewPass: Pass<"extract-fifo-pop-view", "ModuleOp"> {
+  let summary = "Replace loop-of-pops into an alloca with fifo.pop_bulk_view for zero-copy bulk reads";
+  let description = [{
+    Identifies the pattern of a fifo.pop inside an scf.for (with constant lb=0,
+    step=1, and a constant upper bound N) whose result is stored into a
+    memref.alloca inside a cal.action, and replaces it with a single
+    fifo.pop_bulk_view op whose result is a direct view into the FIFO backing
+    buffer. The alloca and fill loop are erased.
+
+    Constraints:
+    - The scf.for must have lb=0, step=1, and a constant upper bound.
+    - The fifo.pop must store its result into the alloca at the loop IV.
+    - The pattern must appear directly in a cal.action body block.
+
+    Must run before lower-fifo-to-memref. Only safe for single-threaded /
+    static-schedule execution.
+  }];
+  let dependentDialects = [
+    "fifo::FifoDialect",
+    "arith::ArithDialect"
+  ];
+}
+
 #endif // FIFO_PASS

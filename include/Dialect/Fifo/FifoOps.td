@@ -90,6 +90,31 @@ def Fifo_Pop : Fifo_Op<"pop", [MemoryEffects<[MemWrite]>, MemoryEffects<[MemRead
   let hasVerifier = 1; // Enables verification logic in C++.
 }
 
+def Fifo_PopBulkView : Fifo_Op<"pop_bulk_view", [MemoryEffects<[MemRead]>, MemoryEffects<[MemWrite]>]> {
+  let summary = "Zero-copy bulk pop: return a memref view over N elements in the FIFO backing buffer";
+  let description = [{
+    Semantically equivalent to popping `count` scalar elements from the FIFO and
+    storing them into a freshly allocated buffer, but avoids the copy by returning
+    a subview directly into the FIFO backing memref.
+
+    The view is valid for the duration of the enclosing cal.action, which
+    guarantees atomicity with respect to the producer. The FIFO read counter is
+    advanced by `count` when this op is lowered by lower-fifo-to-memref.
+
+    Only valid inside a cal.action. Only safe for single-threaded / static-schedule
+    execution where the producer has already finished writing before the action fires.
+    Created by the extract-fifo-pop-view pass.
+  }];
+  let arguments = (ins
+    AnyType:$outputPort,
+    Index:$count
+  );
+  let results = (outs
+    AnyMemRef:$view
+  );
+  let assemblyFormat = "`(` $outputPort `:` type($outputPort) `,` $count `)` attr-dict `:` type($view)";
+}
+
 def Fifo_SizeOp : Fifo_Op<"size", [MemoryEffects<[MemRead]>]> {
   let summary = "Returns the number of elements currently stored in a FIFO buffer.";
 

@@ -185,6 +185,8 @@ def LowerFifoToMemrefPass: Pass<"lower-fifo-to-memref"> {
            "Choose allocation target for tensor types: HOST | GPU">,
     Option<"fifo_index_mode", "fifo-index-mode", "std::string", /*default=*/"\"legacy\"",
       "FIFO index management mode: legacy | spsc-lockfree">,
+    Option<"extract_view_and_group", "extract-view-and-group", "bool", /*default=*/"false",
+      "Extract memref views and group FIFO allocations (experimental).">,
   ];
   let dependentDialects = [
     "memref::MemRefDialect",

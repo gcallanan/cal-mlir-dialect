@@ -25,6 +25,11 @@ struct CalGenericPipelineOptions
       llvm::cl::desc(
           "Bypass all the passes lowering tensor and linalg ops."),
       llvm::cl::init(false)};
+
+  PassOptions::Option<bool> fifoExtractViewAndGroup{
+      *this, "fifo-extract-view-and-group",
+      llvm::cl::desc("Extract memref views and group FIFO allocations (experimental)."),
+      llvm::cl::init(false)};
 };
     
     

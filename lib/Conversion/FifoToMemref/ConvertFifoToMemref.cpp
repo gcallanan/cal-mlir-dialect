@@ -1138,6 +1138,104 @@ public:
 //   3. `ConvertFifoCreateOpToMemref`: Converts `fifo.create` into memory
 //   allocation and tuple creation operations.
 //
+// Lowers fifo.pop_bulk_view to a memref.subview into the FIFO backing buffer
+// followed by a bulk advancement of the read counter. The subview covers the
+// next `count` elements starting at the current read slot, so the caller can
+// read (and write back) those elements without any copy.
+//
+// Input:
+//   %view = fifo.pop_bulk_view(%port : <tuple>, %count : index)
+//                               : memref<N x T, strided<[1], offset: ?>>
+//
+// Output (legacy mode):
+//   %data    = fifo.get_tuple_element %port[0] -> memref<?xT>
+//   %meta    = fifo.get_tuple_element %port[1] -> memref<2xi32>
+//   %cap     = fifo.get_tuple_element %port[2] -> i32
+//   %c0      = arith.constant 0 : index
+//   %rdi32   = memref.load %meta[%c0]
+//   %rdidx   = arith.index_cast %rdi32 : i32 to index
+//   %view    = memref.subview %data[%rdidx][N][1] : ... -> memref<N x T, strided<...>>
+//   %cnt_i32 = arith.index_cast %count : index to i32
+//   %newrd   = arith.addi %rdi32, %cnt_i32 : i32
+//   %wrapped = arith.remsi %newrd, %cap : i32
+//   memref.store %wrapped, %meta[%c0]
+class ConvertFifoPopBulkViewToMemref : public OpConversionPattern<PopBulkView> {
+public:
+  ConvertFifoPopBulkViewToMemref(MLIRContext *c, FifoIndexMode mode)
+      : OpConversionPattern<PopBulkView>(c), indexMode(mode) {}
+
+private:
+  FifoIndexMode indexMode;
+
+  LogicalResult
+  matchAndRewrite(PopBulkView op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+
+    auto tupleType =
+        mlir::cast<TupleType>(adaptor.getOutputPort().getType());
+    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(0), adaptor.getOutputPort(), 0);
+    auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(1), adaptor.getOutputPort(), 1);
+    auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(2), adaptor.getOutputPort(), 2);
+
+    Value readLocationIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto readCountVal = rewriter.create<memref::LoadOp>(
+        loc, metadataMemref, readLocationIndex);
+
+    Value readSlotIndex;
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      Value capacityIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), bufferSizeVal);
+      Value readCountIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), readCountVal);
+      readSlotIndex =
+          rewriter.create<arith::RemSIOp>(loc, readCountIndex, capacityIndex)
+              .getResult();
+    } else {
+      readSlotIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), readCountVal);
+    }
+
+    // Extract static element count N from the declared result type so we can
+    // pass it as a static size to SubViewOp.
+    auto viewType = mlir::cast<MemRefType>(op.getView().getType());
+    int64_t N = viewType.getDimSize(0);
+
+    SmallVector<OpFoldResult> offsets = {readSlotIndex};
+    SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(N)};
+    SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+
+    auto subview = rewriter.create<memref::SubViewOp>(
+        loc, viewType, dataMemref, offsets, sizes, strides);
+
+    // Advance the read counter by count.
+    Value count = adaptor.getCount();
+    if (indexMode == FifoIndexMode::SPSCLockFree) {
+      Value countCast = rewriter.create<arith::IndexCastOp>(
+          loc, readCountVal.getType(), count);
+      Value incremented =
+          rewriter.create<arith::AddIOp>(loc, readCountVal, countCast);
+      rewriter.create<memref::StoreOp>(loc, incremented, metadataMemref,
+                                       readLocationIndex);
+    } else {
+      Value countI32 = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getI32Type(), count);
+      auto incremented =
+          rewriter.create<arith::AddIOp>(loc, readCountVal, countI32);
+      auto wrapped =
+          rewriter.create<arith::RemSIOp>(loc, incremented, bufferSizeVal);
+      rewriter.create<memref::StoreOp>(loc, wrapped, metadataMemref,
+                                       readLocationIndex);
+    }
+
+    rewriter.replaceOp(op, subview.getResult());
+    return success();
+  }
+};
+
 // After the conversion, the pass ensures that only legal operations remain in
 // the operation (e.g., `memref.alloc`, `memref.load`, `memref.store`, etc.) and
 // makes the `fifo` dialect illegal. The fifo make_tuple and get_tuple_element
@@ -1178,6 +1276,7 @@ public:
     patterns.add<ConvertFifoSizeOpToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoSpaceOpToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPopToMemref>(&getContext(), indexMode);
+    patterns.add<ConvertFifoPopBulkViewToMemref>(&getContext(), indexMode);
     patterns.add<ConvertFifoPushToMemref>(&getContext(), allocLocation,
                                           indexMode);
     patterns.add<ConvertFifoCreateOpToMemref>(&getContext(), allocLocation,
