@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
@@ -1184,33 +1185,116 @@ private:
     auto readCountVal = rewriter.create<memref::LoadOp>(
         loc, metadataMemref, readLocationIndex);
 
+    // Always need capacity as index for the wrap-around check.
+    Value capacityIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), bufferSizeVal);
+
     Value readSlotIndex;
     if (indexMode == FifoIndexMode::SPSCLockFree) {
-      Value capacityIndex = rewriter.create<arith::IndexCastOp>(
-          loc, rewriter.getIndexType(), bufferSizeVal);
       Value readCountIndex = rewriter.create<arith::IndexCastOp>(
           loc, rewriter.getIndexType(), readCountVal);
       readSlotIndex =
-          rewriter.create<arith::RemSIOp>(loc, readCountIndex, capacityIndex)
+          rewriter.create<arith::RemSIOp>(loc, readCountIndex, capacityIdx)
               .getResult();
     } else {
       readSlotIndex = rewriter.create<arith::IndexCastOp>(
           loc, rewriter.getIndexType(), readCountVal);
     }
 
-    // Extract static element count N from the declared result type so we can
-    // pass it as a static size to SubViewOp.
     auto viewType = mlir::cast<MemRefType>(op.getView().getType());
     int64_t N = viewType.getDimSize(0);
+    Type elemType = viewType.getElementType();
 
-    SmallVector<OpFoldResult> offsets = {readSlotIndex};
-    SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(N)};
-    SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+    Value nIdx = rewriter.create<arith::ConstantIndexOp>(loc, N);
+    // endSlot = readSlot + N
+    Value endSlot = rewriter.create<arith::AddIOp>(loc, readSlotIndex, nIdx);
+    // isContiguous = endSlot <= capacity (no wrap-around at the buffer boundary)
+    Value isContiguous = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sle, endSlot, capacityIdx);
 
-    auto subview = rewriter.create<memref::SubViewOp>(
-        loc, viewType, dataMemref, offsets, sizes, strides);
+    auto ifOp = rewriter.create<scf::IfOp>(
+        loc, TypeRange{viewType}, isContiguous, /*withElseRegion=*/true);
 
-    rewriter.replaceOp(op, subview.getResult());
+    // Then: contiguous range — zero-copy subview directly into the FIFO buffer.
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
+
+      SmallVector<OpFoldResult> offsets = {OpFoldResult(readSlotIndex)};
+      SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(N)};
+      SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+      auto subview = rewriter.create<memref::SubViewOp>(
+          loc, viewType, dataMemref, offsets, sizes, strides);
+      rewriter.create<scf::YieldOp>(loc, subview.getResult());
+    }
+
+    // Else: wrap-around — copy tail fragment then head fragment into a fresh
+    // stack allocation so the caller sees a contiguous flat buffer.
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(&ifOp.getElseRegion().front());
+
+      auto flatAllocaType = MemRefType::get({N}, elemType);
+      auto alloca = rewriter.create<memref::AllocaOp>(loc, flatAllocaType);
+      auto dataMemrefType = mlir::cast<MemRefType>(dataMemref.getType());
+
+      // firstLen  = capacity - readSlot  (elements in the tail of the buffer)
+      // secondLen = endSlot  - capacity  (elements at the head of the buffer)
+      Value firstLen =
+          rewriter.create<arith::SubIOp>(loc, capacityIdx, readSlotIndex);
+      Value secondLen =
+          rewriter.create<arith::SubIOp>(loc, endSlot, capacityIdx);
+
+      // Tail fragment: data[readSlot .. readSlot+firstLen] -> alloca[0 .. firstLen]
+      {
+        SmallVector<OpFoldResult> srcOffsets = {OpFoldResult(readSlotIndex)};
+        SmallVector<OpFoldResult> srcSizes = {OpFoldResult(firstLen)};
+        SmallVector<OpFoldResult> srcStrides = {rewriter.getIndexAttr(1)};
+        auto srcType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            dataMemrefType, srcOffsets, srcSizes, srcStrides));
+        auto src = rewriter.create<memref::SubViewOp>(
+            loc, srcType, dataMemref, srcOffsets, srcSizes, srcStrides);
+
+        SmallVector<OpFoldResult> dstOffsets = {rewriter.getIndexAttr(0)};
+        SmallVector<OpFoldResult> dstSizes = {OpFoldResult(firstLen)};
+        SmallVector<OpFoldResult> dstStrides = {rewriter.getIndexAttr(1)};
+        auto dstType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            flatAllocaType, dstOffsets, dstSizes, dstStrides));
+        auto dst = rewriter.create<memref::SubViewOp>(
+            loc, dstType, alloca, dstOffsets, dstSizes, dstStrides);
+
+        rewriter.create<memref::CopyOp>(loc, src, dst);
+      }
+
+      // Head fragment: data[0 .. secondLen] -> alloca[firstLen .. N]
+      {
+        Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+        SmallVector<OpFoldResult> srcOffsets = {OpFoldResult(zero)};
+        SmallVector<OpFoldResult> srcSizes = {OpFoldResult(secondLen)};
+        SmallVector<OpFoldResult> srcStrides = {rewriter.getIndexAttr(1)};
+        auto srcType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            dataMemrefType, srcOffsets, srcSizes, srcStrides));
+        auto src = rewriter.create<memref::SubViewOp>(
+            loc, srcType, dataMemref, srcOffsets, srcSizes, srcStrides);
+
+        SmallVector<OpFoldResult> dstOffsets = {OpFoldResult(firstLen)};
+        SmallVector<OpFoldResult> dstSizes = {OpFoldResult(secondLen)};
+        SmallVector<OpFoldResult> dstStrides = {rewriter.getIndexAttr(1)};
+        auto dstType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            flatAllocaType, dstOffsets, dstSizes, dstStrides));
+        auto dst = rewriter.create<memref::SubViewOp>(
+            loc, dstType, alloca, dstOffsets, dstSizes, dstStrides);
+
+        rewriter.create<memref::CopyOp>(loc, src, dst);
+      }
+
+      // Cast alloca to viewType so both branches yield the same type.
+      auto castedAlloca =
+          rewriter.create<memref::CastOp>(loc, viewType, alloca);
+      rewriter.create<scf::YieldOp>(loc, castedAlloca.getResult());
+    }
+
+    rewriter.replaceOp(op, ifOp.getResult(0));
     return success();
   }
 };
@@ -1497,7 +1581,7 @@ public:
     target.addLegalDialect<memref::MemRefDialect, index::IndexDialect,
                            arith::ArithDialect, tensor::TensorDialect,
                            bufferization::BufferizationDialect,
-                           gpu::GPUDialect>();
+                           gpu::GPUDialect, scf::SCFDialect>();
 
     // Ensure that func.func and func.call operations can handle the new
     // types after the typeConverter has been applied.

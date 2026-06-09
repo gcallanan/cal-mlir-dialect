@@ -9,7 +9,6 @@
 // appear adjacently, in the same relative order as the old single-op lowering.
 
 // CHECK-LABEL: cal.actor @simple_fill
-// CHECK-NOT: memref.alloca
 // CHECK-NOT: fifo.pop
 // CHECK: memref.subview
 // CHECK: arith.addi
@@ -27,7 +26,6 @@
 // below immediately followed by a colon -- FileCheck scans every line of
 // this file for "<prefix>:" and would parse such text as a check directive.)
 // SPSC-LABEL: cal.actor @simple_fill
-// SPSC-NOT: memref.alloca
 // SPSC-NOT: fifo.pop
 // SPSC: arith.remsi
 // SPSC: memref.subview
@@ -57,7 +55,6 @@ cal.actor @simple_fill ()
 // been both read and written back.
 
 // CHECK-LABEL: cal.actor @fill_and_process
-// CHECK-NOT: memref.alloca
 // CHECK-NOT: fifo.pop
 // CHECK: memref.subview
 // CHECK: scf.for
@@ -65,7 +62,6 @@ cal.actor @simple_fill ()
 // CHECK: arith.remsi
 
 // SPSC-LABEL: cal.actor @fill_and_process
-// SPSC-NOT: memref.alloca
 // SPSC-NOT: fifo.pop
 // SPSC: arith.remsi
 // SPSC: memref.subview
@@ -193,5 +189,55 @@ cal.actor @heap_fill ()
       memref.store %val, %alloc[%i] : memref<4xi32>
     }
     memref.dealloc %alloc : memref<4xi32>
+  }
+}
+
+// Wrap-around structure: a bulk-pop view that may straddle the end of the
+// circular buffer requires a runtime branch. The contiguous path (then) takes
+// a zero-copy subview of the backing buffer. The wrap-around path (else) copies
+// the tail fragment then the head fragment into a fresh stack allocation so the
+// caller always sees a flat, contiguous buffer.
+
+// CHECK-LABEL: cal.actor @wrap_boundary
+// CHECK-NOT: fifo.pop
+// CHECK: arith.cmpi
+// CHECK: scf.if
+// CHECK: memref.subview
+// CHECK: memref.alloca
+// CHECK: memref.subview
+// CHECK: memref.copy
+// CHECK: memref.subview
+// CHECK: memref.copy
+// CHECK: memref.cast
+// CHECK: arith.addi
+// CHECK: arith.remsi
+
+// SPSC-LABEL: cal.actor @wrap_boundary
+// SPSC-NOT: fifo.pop
+// SPSC: arith.remsi
+// SPSC: arith.cmpi
+// SPSC: scf.if
+// SPSC: memref.subview
+// SPSC: memref.alloca
+// SPSC: memref.subview
+// SPSC: memref.copy
+// SPSC: memref.subview
+// SPSC: memref.copy
+// SPSC: memref.cast
+// SPSC: arith.addi
+// SPSC-NOT: arith.remsi
+cal.actor @wrap_boundary ()
+    ports_in(%in0: !fifo.output_port<i32>)
+    ports_out ()
+{
+  cal.action "fill" priority=0 {
+    %alloca = memref.alloca() : memref<4xi32>
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      %val = fifo.pop(%in0 : !fifo.output_port<i32>) : i32
+      memref.store %val, %alloca[%i] : memref<4xi32>
+    }
   }
 }
