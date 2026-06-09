@@ -12,7 +12,6 @@
 // monotonic addi only (no wrapping).
 
 // CHECK-LABEL: cal.actor @simple_drain
-// CHECK-NOT: memref.alloca
 // CHECK-NOT: fifo.push
 // CHECK-NOT: scf.for
 // CHECK: memref.subview
@@ -20,7 +19,6 @@
 // CHECK: arith.remsi
 
 // SPSC-LABEL: cal.actor @simple_drain
-// SPSC-NOT: memref.alloca
 // SPSC-NOT: fifo.push
 // SPSC-NOT: scf.for
 // SPSC: arith.remsi
@@ -55,7 +53,6 @@ cal.actor @simple_drain ()
 // loop, now writing straight through the view); the drain loop is gone.
 
 // CHECK-LABEL: cal.actor @compute_and_send
-// CHECK-NOT: memref.alloca
 // CHECK-NOT: fifo.push
 // CHECK: memref.subview
 // CHECK: scf.for
@@ -64,7 +61,6 @@ cal.actor @simple_drain ()
 // CHECK: arith.remsi
 
 // SPSC-LABEL: cal.actor @compute_and_send
-// SPSC-NOT: memref.alloca
 // SPSC-NOT: fifo.push
 // SPSC: arith.remsi
 // SPSC: memref.subview
@@ -199,5 +195,75 @@ cal.actor @heap_drain ()
       scf.yield
     }
     memref.dealloc %alloc : memref<4xi32>
+  }
+}
+
+// Wrap-around structure: a bulk-push view that may straddle the end of the
+// circular buffer requires a runtime branch at both view acquisition and
+// commit. At view time: the contiguous path (then) returns a zero-copy subview
+// into the FIFO buffer; the wrap-around path (else) returns a fresh stack
+// allocation so the caller always sees a flat buffer to write into. At commit
+// time: the contiguous path just advances the write counter; the wrap-around
+// path copies the two fragments (tail then head) from the scratch buffer back
+// into the FIFO backing buffer and then advances the counter.
+
+// CHECK-LABEL: cal.actor @wrap_boundary
+// CHECK-NOT: fifo.push
+// CHECK: arith.cmpi
+// CHECK: scf.if
+// CHECK: memref.subview
+// CHECK: memref.alloca
+// CHECK: arith.cmpi
+// CHECK: scf.if
+// CHECK: arith.addi
+// CHECK: arith.remsi
+// CHECK: memref.subview
+// CHECK: memref.copy
+// CHECK: memref.subview
+// CHECK: memref.copy
+// CHECK: arith.addi
+// CHECK: arith.remsi
+
+// SPSC-LABEL: cal.actor @wrap_boundary
+// SPSC-NOT: fifo.push
+// SPSC: arith.remsi
+// SPSC: arith.cmpi
+// SPSC: scf.if
+// SPSC: memref.subview
+// SPSC: memref.alloca
+// SPSC: arith.remsi
+// SPSC: arith.cmpi
+// SPSC: scf.if
+// SPSC: arith.addi
+// SPSC: memref.subview
+// SPSC: memref.copy
+// SPSC: memref.subview
+// SPSC: memref.copy
+// SPSC: arith.addi
+// SPSC-NOT: arith.remsi
+cal.actor @wrap_boundary ()
+    ports_in ()
+    ports_out (%out0: !fifo.input_port<i32>)
+{
+  cal.action "fill_and_send" priority=0 {
+    %alloca = memref.alloca() : memref<4xi32>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %v0 = arith.constant 11 : i32
+    %v1 = arith.constant 22 : i32
+    %v2 = arith.constant 33 : i32
+    %v3 = arith.constant 44 : i32
+    memref.store %v0, %alloca[%c0] : memref<4xi32>
+    memref.store %v1, %alloca[%c1] : memref<4xi32>
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    memref.store %v2, %alloca[%c2] : memref<4xi32>
+    memref.store %v3, %alloca[%c3] : memref<4xi32>
+    scf.for %i = %c0 to %c4 step %c1 {
+      %v = memref.load %alloca[%i] : memref<4xi32>
+      fifo.push(%out0 : !fifo.input_port<i32>, %v : i32)
+      scf.yield
+    }
   }
 }

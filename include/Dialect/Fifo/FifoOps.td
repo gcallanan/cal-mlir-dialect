@@ -298,9 +298,10 @@ def Fifo_PushBulkCommit : Fifo_Op<"push_bulk_commit", [MemoryEffects<[MemWrite]>
   }];
   let arguments = (ins
     AnyType:$inputPort,
+    AnyMemRef:$view,
     Index:$count
   );
-  let assemblyFormat = "`(` $inputPort `:` type($inputPort) `,` $count `)` attr-dict";
+  let assemblyFormat = "`(` $inputPort `:` type($inputPort) `,` $view `:` type($view) `,` $count `)` attr-dict";
 }
 
 def Fifo_SpaceOp : Fifo_Op<"space", [MemoryEffects<[MemRead]>]> {

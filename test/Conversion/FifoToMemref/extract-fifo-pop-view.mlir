@@ -143,7 +143,7 @@ cal.actor @relay ()
       %v = fifo.pop(%in0 : !fifo.output_port<i8>) : i8
       memref.store %v, %view[%i] : memref<64xi8, strided<[1], offset: ?>>
     }
-    fifo.push_bulk_commit(%out0 : !fifo.input_port<i8>, %c64)
+    fifo.push_bulk_commit(%out0 : !fifo.input_port<i8>, %view : memref<64xi8, strided<[1], offset: ?>>, %c64)
   }
 }
 

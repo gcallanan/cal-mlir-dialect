@@ -1425,42 +1425,76 @@ private:
     auto writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                          writeLocationIndex);
 
+    // Always need capacity as index for the wrap-around check.
+    Value capacityIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), bufferSizeVal);
+
     Value writeSlotIndex;
     if (indexMode == FifoIndexMode::SPSCLockFree) {
-      Value capacityIndex = rewriter.create<arith::IndexCastOp>(
-          loc, rewriter.getIndexType(), bufferSizeVal);
       Value writeCountIndex = rewriter.create<arith::IndexCastOp>(
           loc, rewriter.getIndexType(), writeCountVal);
       writeSlotIndex =
-          rewriter.create<arith::RemSIOp>(loc, writeCountIndex, capacityIndex)
+          rewriter.create<arith::RemSIOp>(loc, writeCountIndex, capacityIdx)
               .getResult();
     } else {
       writeSlotIndex = rewriter.create<arith::IndexCastOp>(
           loc, rewriter.getIndexType(), writeCountVal);
     }
 
-    // Extract static element count N from the declared result type so we can
-    // pass it as a static size to SubViewOp.
     auto viewType = mlir::cast<MemRefType>(op.getView().getType());
     int64_t N = viewType.getDimSize(0);
+    Type elemType = viewType.getElementType();
 
-    SmallVector<OpFoldResult> offsets = {writeSlotIndex};
-    SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(N)};
-    SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+    Value nIdx = rewriter.create<arith::ConstantIndexOp>(loc, N);
+    // endSlot = writeSlot + N
+    Value endSlot = rewriter.create<arith::AddIOp>(loc, writeSlotIndex, nIdx);
+    // isContiguous = endSlot <= capacity (no wrap-around at the buffer boundary)
+    Value isContiguous = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sle, endSlot, capacityIdx);
 
-    auto subview = rewriter.create<memref::SubViewOp>(
-        loc, viewType, dataMemref, offsets, sizes, strides);
+    auto ifOp = rewriter.create<scf::IfOp>(
+        loc, TypeRange{viewType}, isContiguous, /*withElseRegion=*/true);
 
-    rewriter.replaceOp(op, subview.getResult());
+    // Then: contiguous range — zero-copy subview directly into the FIFO buffer.
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
+
+      SmallVector<OpFoldResult> offsets = {OpFoldResult(writeSlotIndex)};
+      SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(N)};
+      SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+      auto subview = rewriter.create<memref::SubViewOp>(
+          loc, viewType, dataMemref, offsets, sizes, strides);
+      rewriter.create<scf::YieldOp>(loc, subview.getResult());
+    }
+
+    // Else: wrap-around — return a fresh stack allocation; the caller writes
+    // into it, then push_bulk_commit copies both fragments back to the FIFO.
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(&ifOp.getElseRegion().front());
+
+      auto flatAllocaType = MemRefType::get({N}, elemType);
+      auto alloca = rewriter.create<memref::AllocaOp>(loc, flatAllocaType);
+      auto castedAlloca =
+          rewriter.create<memref::CastOp>(loc, viewType, alloca);
+      rewriter.create<scf::YieldOp>(loc, castedAlloca.getResult());
+    }
+
+    rewriter.replaceOp(op, ifOp.getResult(0));
     return success();
   }
 };
 
-// Lowers fifo.push_bulk_commit to a bulk advance of the write counter by
-// `count`, publishing the region most recently reserved by a paired
-// fifo.push_bulk_view on the same port. Mirrors the counter-advance tail of
-// ConvertFifoPushToMemref (legacy: increment then wrap with remsi; SPSC
-// lock-free: monotonic increment only, no wrapping).
+// Lowers fifo.push_bulk_commit to a conditional copy-back followed by a bulk
+// advance of the write counter. When the reserved region is contiguous in the
+// backing buffer (the common case), no copy is needed -- the caller wrote
+// directly through the subview already. When the region wraps around the end
+// of the circular buffer, the caller wrote into a scratch alloca (produced by
+// the paired ConvertFifoPushBulkViewToMemref), so the two fragments must be
+// copied back: tail (alloca[0..firstLen] -> data[writeSlot..capacity]) then
+// head (alloca[firstLen..N] -> data[0..secondLen]). In both paths the write
+// counter is then advanced (legacy: remsi wrap; SPSC: monotonic increment).
 class ConvertFifoPushBulkCommitToMemref
     : public OpConversionPattern<PushBulkCommit> {
 public:
@@ -1475,7 +1509,10 @@ private:
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
 
+    // Extract FIFO tuple components.
     auto tupleType = mlir::cast<TupleType>(adaptor.getInputPort().getType());
+    auto dataMemref = rewriter.create<fifo::GetTupleElement>(
+        loc, tupleType.getType(0), adaptor.getInputPort(), 0);
     auto metadataMemref = rewriter.create<fifo::GetTupleElement>(
         loc, tupleType.getType(1), adaptor.getInputPort(), 1);
     auto bufferSizeVal = rewriter.create<fifo::GetTupleElement>(
@@ -1491,23 +1528,123 @@ private:
     auto writeCountVal = rewriter.create<memref::LoadOp>(loc, metadataMemref,
                                                          writeLocationIndex);
 
-    Value count = adaptor.getCount();
+    // Recompute the write slot and capacity (mirrors ConvertFifoPushBulkViewToMemref).
+    Value capacityIdx = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), bufferSizeVal);
+    Value writeSlotIndex;
     if (indexMode == FifoIndexMode::SPSCLockFree) {
-      Value countCast = rewriter.create<arith::IndexCastOp>(
-          loc, writeCountVal.getType(), count);
-      Value incremented =
-          rewriter.create<arith::AddIOp>(loc, writeCountVal, countCast);
-      rewriter.create<memref::StoreOp>(loc, incremented, metadataMemref,
-                                       writeLocationIndex);
+      Value writeCountIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), writeCountVal);
+      writeSlotIndex =
+          rewriter.create<arith::RemSIOp>(loc, writeCountIndex, capacityIdx)
+              .getResult();
     } else {
-      Value countI32 = rewriter.create<arith::IndexCastOp>(
-          loc, rewriter.getI32Type(), count);
-      auto incremented =
-          rewriter.create<arith::AddIOp>(loc, writeCountVal, countI32);
-      auto wrapped =
-          rewriter.create<arith::RemSIOp>(loc, incremented, bufferSizeVal);
-      rewriter.create<memref::StoreOp>(loc, wrapped, metadataMemref,
-                                       writeLocationIndex);
+      writeSlotIndex = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getIndexType(), writeCountVal);
+    }
+
+    // Get N from the view type (static, always known at compile time).
+    auto viewType = mlir::cast<MemRefType>(adaptor.getView().getType());
+    int64_t N = viewType.getDimSize(0);
+    auto dataMemrefType = mlir::cast<MemRefType>(dataMemref.getType());
+
+    Value nIdx = rewriter.create<arith::ConstantIndexOp>(loc, N);
+    Value endSlot = rewriter.create<arith::AddIOp>(loc, writeSlotIndex, nIdx);
+    Value isContiguous = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sle, endSlot, capacityIdx);
+
+    // Helper lambda to emit the write-counter advance.
+    auto advanceCounter = [&](ConversionPatternRewriter &b) {
+      if (indexMode == FifoIndexMode::SPSCLockFree) {
+        Value countCast = b.create<arith::IndexCastOp>(
+            loc, writeCountVal.getType(), adaptor.getCount());
+        Value incremented =
+            b.create<arith::AddIOp>(loc, writeCountVal, countCast);
+        b.create<memref::StoreOp>(loc, incremented, metadataMemref,
+                                  writeLocationIndex);
+      } else {
+        Value countI32 = b.create<arith::IndexCastOp>(
+            loc, rewriter.getI32Type(), adaptor.getCount());
+        auto incremented =
+            b.create<arith::AddIOp>(loc, writeCountVal, countI32);
+        auto wrapped =
+            b.create<arith::RemSIOp>(loc, incremented, bufferSizeVal);
+        b.create<memref::StoreOp>(loc, wrapped, metadataMemref,
+                                  writeLocationIndex);
+      }
+    };
+
+    auto ifOp = rewriter.create<scf::IfOp>(
+        loc, TypeRange{}, isContiguous, /*withElseRegion=*/true);
+    // scf::IfOp::build pre-populates both regions with a scf::YieldOp when
+    // result types are empty (via ensureTerminator). Insert BEFORE that
+    // terminator; do not create a second one.
+
+    // Then: contiguous — caller wrote directly into the FIFO buffer, no copy needed.
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      auto &thenBlock = ifOp.getThenRegion().front();
+      rewriter.setInsertionPoint(thenBlock.getTerminator());
+      advanceCounter(rewriter);
+    }
+
+    // Else: wrap-around — copy tail then head fragments from the scratch alloca
+    // back into the FIFO backing buffer, then advance the write counter.
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      auto &elseBlock = ifOp.getElseRegion().front();
+      rewriter.setInsertionPoint(elseBlock.getTerminator());
+
+      Value firstLen =
+          rewriter.create<arith::SubIOp>(loc, capacityIdx, writeSlotIndex);
+      Value secondLen =
+          rewriter.create<arith::SubIOp>(loc, endSlot, capacityIdx);
+      Value view = adaptor.getView();
+
+      // Tail fragment: view[0..firstLen] -> data[writeSlot..writeSlot+firstLen]
+      {
+        SmallVector<OpFoldResult> srcOffsets = {rewriter.getIndexAttr(0)};
+        SmallVector<OpFoldResult> srcSizes = {OpFoldResult(firstLen)};
+        SmallVector<OpFoldResult> srcStrides = {rewriter.getIndexAttr(1)};
+        auto srcType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            viewType, srcOffsets, srcSizes, srcStrides));
+        auto src = rewriter.create<memref::SubViewOp>(
+            loc, srcType, view, srcOffsets, srcSizes, srcStrides);
+
+        SmallVector<OpFoldResult> dstOffsets = {OpFoldResult(writeSlotIndex)};
+        SmallVector<OpFoldResult> dstSizes = {OpFoldResult(firstLen)};
+        SmallVector<OpFoldResult> dstStrides = {rewriter.getIndexAttr(1)};
+        auto dstType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            dataMemrefType, dstOffsets, dstSizes, dstStrides));
+        auto dst = rewriter.create<memref::SubViewOp>(
+            loc, dstType, dataMemref, dstOffsets, dstSizes, dstStrides);
+
+        rewriter.create<memref::CopyOp>(loc, src, dst);
+      }
+
+      // Head fragment: view[firstLen..N] -> data[0..secondLen]
+      {
+        SmallVector<OpFoldResult> srcOffsets = {OpFoldResult(firstLen)};
+        SmallVector<OpFoldResult> srcSizes = {OpFoldResult(secondLen)};
+        SmallVector<OpFoldResult> srcStrides = {rewriter.getIndexAttr(1)};
+        auto srcType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            viewType, srcOffsets, srcSizes, srcStrides));
+        auto src = rewriter.create<memref::SubViewOp>(
+            loc, srcType, view, srcOffsets, srcSizes, srcStrides);
+
+        Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+        SmallVector<OpFoldResult> dstOffsets = {OpFoldResult(zero)};
+        SmallVector<OpFoldResult> dstSizes = {OpFoldResult(secondLen)};
+        SmallVector<OpFoldResult> dstStrides = {rewriter.getIndexAttr(1)};
+        auto dstType = mlir::cast<MemRefType>(memref::SubViewOp::inferResultType(
+            dataMemrefType, dstOffsets, dstSizes, dstStrides));
+        auto dst = rewriter.create<memref::SubViewOp>(
+            loc, dstType, dataMemref, dstOffsets, dstSizes, dstStrides);
+
+        rewriter.create<memref::CopyOp>(loc, src, dst);
+      }
+
+      advanceCounter(rewriter);
     }
 
     rewriter.eraseOp(op);

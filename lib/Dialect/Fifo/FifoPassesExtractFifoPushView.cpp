@@ -215,7 +215,7 @@ struct ExtractFifoPushViewPass
           Value commitCount = commitBuilder.create<arith::ConstantIndexOp>(
               drainLoop.getLoc(), N);
           commitBuilder.create<PushBulkCommit>(drainLoop.getLoc(), port,
-                                               commitCount);
+                                               viewOp.getView(), commitCount);
 
           drainLoop.erase();
           alloca.erase();
@@ -246,7 +246,7 @@ struct ExtractFifoPushViewPass
           Value commitCount = commitBuilder.create<arith::ConstantIndexOp>(
               drainLoop.getLoc(), N);
           commitBuilder.create<PushBulkCommit>(drainLoop.getLoc(), port,
-                                               commitCount);
+                                               viewOp.getView(), commitCount);
         }
       }
     });
