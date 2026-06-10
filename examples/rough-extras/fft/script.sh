@@ -64,7 +64,7 @@ for FFT_SIZE in 256 512 1024; do
         echo "" >> "$RESULTS_FILE"
         echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
 
-        for NUM_CORES in 1 2 3 4; do
+        for NUM_CORES in 1 2 4; do
             echo "    NUM_CORES=$NUM_CORES"
 
             cp FFT_Flattened_clean.mlir FFT_Flattened.mlir
@@ -121,7 +121,7 @@ for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
     for ASSIGNMENT_MODE in "round-robin" "block"; do
         echo "  $ASSIGNMENT_MODE:"
         echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
-        for NUM_CORES in 1 2 3 4; do
+        for NUM_CORES in 1 2 4; do
             LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
             echo "$LINE"
             echo "$LINE" >> "$RESULTS_FILE"

@@ -7,3 +7,6 @@ cd ..
 cd fft
 bash script.sh
 cd ..
+cd jpeg
+bash script.sh
+cd ..

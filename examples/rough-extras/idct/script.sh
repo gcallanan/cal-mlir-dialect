@@ -46,7 +46,7 @@ for ASSIGNMENT_MODE in "round-robin" "block"; do
     echo "" >> "$RESULTS_FILE"
     echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
 
-    for NUM_CORES in 1 2 3 4; do
+    for NUM_CORES in 1 2 4; do
         echo "    NUM_CORES=$NUM_CORES"
 
         cp IDCT_Flattened_clean.mlir IDCT_Flattened.mlir
@@ -137,7 +137,7 @@ echo "$LINE" >> "$RESULTS_FILE"
 for ASSIGNMENT_MODE in "round-robin" "block"; do
     echo "  $ASSIGNMENT_MODE:"
     echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
-    for NUM_CORES in 1 2 3 4; do
+    for NUM_CORES in 1 2 4; do
         LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}"
         echo "$LINE"
         echo "$LINE" >> "$RESULTS_FILE"

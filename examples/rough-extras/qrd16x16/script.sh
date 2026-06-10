@@ -4,23 +4,23 @@ set -e
 
 LLVM_DIR="/mnt/kingston/gareth/software-repos/mlir-cal/cal-mlir-dialect"
 NUM_TESTS=10
-SLEEP_SECS=10
+SLEEP_SECS=5
 
 # Build streamblocks.out
-rm -fr myproject
-mkdir myproject
-streamblocks multicore --set experimental-network-elaboration=on --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
-cd myproject/build/
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make
-cd ../..
-cp myproject/bin/Top streamblocks.out
+# rm -fr myproject
+# mkdir myproject
+# streamblocks multicore --set experimental-network-elaboration=on --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
+# cd myproject/build/
+# cmake .. -DCMAKE_BUILD_TYPE=Release
+# make
+# cd ../..
+# cp myproject/bin/Top streamblocks.out
 
 # Build tycho.out
-rm -fr myproject
-mkdir myproject
-tychoc --set experimental-network-elaboration=on --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
-cc -O3 myproject/*.c -o tycho.out
+# rm -fr myproject
+# mkdir myproject
+# tychoc --set experimental-network-elaboration=on --source-path qrd_systolic_cordic_fixedpoint.cal --target-path myproject qrd.Top
+# cc -O3 myproject/*.c -o tycho.out
 
 # Build qrd_clean.mlir for multithreaded runs
 rm -fr myproject
@@ -29,9 +29,12 @@ cp myproject/code-gen/main.mlir qrd_clean.mlir
 sed -i 's/cal\.network$/cal.network @Top()/' qrd_clean.mlir
 rm -r myproject
 
+sleep $SLEEP_SECS
+
 declare -A TIMES
 declare -A MIN_TIMES
 declare -A MAX_TIMES
+declare -A LAST_OUTPUTS
 RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
 
@@ -45,7 +48,7 @@ for ASSIGNMENT_MODE in "round-robin" "block"; do
     echo "" >> "$RESULTS_FILE"
     echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
 
-    for NUM_CORES in 1 2 3 4; do
+    for NUM_CORES in 1 2 4; do
         echo "    NUM_CORES=$NUM_CORES"
 
         cp qrd_clean.mlir qrd_current.mlir
@@ -73,8 +76,9 @@ FNR == NR {
         MAX_TIME=0
         for RUN in $(seq 1 $NUM_TESTS); do
             START=$(date +%s%N)
-            taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out 2>&1 | tail -1 || true
+            OUTPUT=$(taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out 2>&1 | tail -1 || true)
             END=$(date +%s%N)
+            echo "      run $RUN: $OUTPUT"
             sleep $SLEEP_SECS
             RUN_TIME=$(( (END - START) / 1000000 ))
             TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
@@ -84,8 +88,9 @@ FNR == NR {
         TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / NUM_TESTS ))ms
         MIN_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
         MAX_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
+        LAST_OUTPUTS["$ASSIGNMENT_MODE-$NUM_CORES"]=$OUTPUT
 
-        LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}"
+        LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: $OUTPUT"
         echo "$LINE"
         echo "$LINE" >> "$RESULTS_FILE"
     done
@@ -96,8 +101,9 @@ SB_MIN=-1
 SB_MAX=0
 for RUN in $(seq 1 $NUM_TESTS); do
     START=$(date +%s%N)
-    taskset -c 0 ./streamblocks.out 2>&1 | tail -1
+    SB_OUTPUT=$(taskset -c 0 ./streamblocks.out 2>&1 | tail -1 || true)
     END=$(date +%s%N)
+    echo "    run $RUN: $SB_OUTPUT"
     sleep $SLEEP_SECS
     RUN_TIME=$(( (END - START) / 1000000 ))
     TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
@@ -112,8 +118,9 @@ TYCHO_MIN=-1
 TYCHO_MAX=0
 for RUN in $(seq 1 $NUM_TESTS); do
     START=$(date +%s%N)
-    taskset -c 0 ./tycho.out 2>&1 | tail -1
+    TYCHO_OUTPUT=$(taskset -c 0 ./tycho.out 2>&1 | tail -1 || true)
     END=$(date +%s%N)
+    echo "    run $RUN: $TYCHO_OUTPUT"
     sleep $SLEEP_SECS
     RUN_TIME=$(( (END - START) / 1000000 ))
     TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
@@ -136,7 +143,7 @@ echo "$LINE" >> "$RESULTS_FILE"
 for ASSIGNMENT_MODE in "round-robin" "block"; do
     echo "  $ASSIGNMENT_MODE:"
     echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
-    for NUM_CORES in 1 2 3 4; do
+    for NUM_CORES in 1 2 4; do
         LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}"
         echo "$LINE"
         echo "$LINE" >> "$RESULTS_FILE"
@@ -145,4 +152,4 @@ done
 echo ""
 echo "Results written to $RESULTS_FILE"
 
-rm -f qrd_current.mlir qrd_current.tmp lowered.mlir lowered.ll multithreaded.out
+rm -f qrd_current.mlir qrd_current.tmp lowered.mlir lowered.ll
