@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<partitioning>
+		<partition id="0" scheduling="ROUND_ROBIN">
+			<instance id="source"/>
+			<instance id="sink"/>
+			<instance id="scale"/>
+			<instance id="row"/>
+			<instance id="column"/>
+			<instance id="transpose"/>
+			<instance id="retranspose"/>
+			<instance id="shift"/>
+			<instance id="clip"/>
+		</partition>
+	</partitioning>
+	<connections>
+		<fifo-connection source="source" source-port="OUT" target="scale" target-port="IN" size="4096" token-size="2"/>
+		<fifo-connection source="source" source-port="SIGNED" target="clip" target-port="SIGNED" size="4096" token-size="1"/>
+		<fifo-connection source="scale" source-port="OUT" target="row" target-port="IN" size="4096" token-size="4"/>
+		<fifo-connection source="row" source-port="OUT" target="transpose" target-port="IN" size="4096" token-size="4"/>
+		<fifo-connection source="column" source-port="OUT" target="retranspose" target-port="IN" size="4096" token-size="4"/>
+		<fifo-connection source="transpose" source-port="OUT" target="column" target-port="IN" size="4096" token-size="4"/>
+		<fifo-connection source="retranspose" source-port="OUT" target="shift" target-port="IN" size="4096" token-size="4"/>
+		<fifo-connection source="shift" source-port="OUT" target="clip" target-port="I" size="4096" token-size="4"/>
+		<fifo-connection source="clip" source-port="O" target="sink" target-port="IN" size="4096" token-size="4"/>
+	</connections>
+</configuration>

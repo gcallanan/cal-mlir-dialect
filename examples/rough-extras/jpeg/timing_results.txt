@@ -1,0 +1,32 @@
+Timing Results - tor 11 jun 2026 02:35:03 CEST
+Actors: 29
+
+  MLIR pop=n push=n:
+
+  MLIR pop=n push=y:
+
+  MLIR pop=y push=n:
+
+  MLIR pop=y push=y:
+
+=== Timing Results (Actors: 29) ===
+  tycho.out: avg=556ms min=555ms max=560ms: Received 11000000 bytes, sum is 150174854
+  streamblocks 1core: avg=305ms min=300ms max=320ms: Received 11000000 bytes, sum is 150174854
+  streamblocks 2core: avg=250ms min=245ms max=263ms: Received 11000000 bytes, sum is 150174854
+  streamblocks 4core: avg=195ms min=194ms max=200ms: Received 11000000 bytes, sum is 150174854
+  MLIR pop=n push=n:
+    NUM_CORES=1: avg=2464ms min=2462ms max=2468ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=2: avg=1015ms min=1010ms max=1060ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=454ms min=299ms max=511ms: Received 6000000 bytes, sum is 122156241
+  MLIR pop=n push=y:
+    NUM_CORES=1: avg=2425ms min=2420ms max=2434ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=2: avg=970ms min=956ms max=1010ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=439ms min=180ms max=511ms: Received 7000000 bytes, sum is 120179422
+  MLIR pop=y push=n:
+    NUM_CORES=1: avg=2320ms min=2314ms max=2327ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=2: avg=865ms min=859ms max=911ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=509ms min=509ms max=511ms: Received 9000000 bytes, sum is 112695901
+  MLIR pop=y push=y:
+    NUM_CORES=1: avg=2290ms min=2283ms max=2299ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=2: avg=811ms min=811ms max=811ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=510ms min=509ms max=511ms: Received 11000000 bytes, sum is 150174854

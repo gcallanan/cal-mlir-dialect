@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+NUM_TESTS=1
+SLEEP_SECS=0
+
 # rm -fr myproject
 # mkdir myproject
 # cd ../..
@@ -63,26 +66,26 @@ FNR == NR {
 }
 { print }' IDCT_Flattened.mlir IDCT_Flattened.mlir > IDCT_Flattened.tmp && mv IDCT_Flattened.tmp IDCT_Flattened.mlir
 
-        cal-opt IDCT_Flattened.mlir --lower-cal-to-llvm="multithread-cal-actors" > lowered.mlir
+        cal-opt IDCT_Flattened.mlir --lower-cal-to-llvm="multithread-cal-actors fifo-extract-pop-view fifo-extract-push-view" > lowered.mlir
         cal-translate --mlir-to-llvmir lowered.mlir -o lowered.ll
         clang -O3 lowered.ll -o multithreaded.out -L"$LLVM_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm
 
-        sleep 10
+        sleep $SLEEP_SECS
 
         TOTAL_TIME=0
         MIN_TIME=-1
         MAX_TIME=0
-        for RUN in $(seq 1 10); do
+        for RUN in $(seq 1 $NUM_TESTS); do
             START=$(date +%s%N)
             taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out 2>&1 | tail -1 || true
             END=$(date +%s%N)
-            sleep 10
+            sleep $SLEEP_SECS
             RUN_TIME=$(( (END - START) / 1000000 ))
             TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
             if [ $MIN_TIME -eq -1 ] || [ $RUN_TIME -lt $MIN_TIME ]; then MIN_TIME=$RUN_TIME; fi
             if [ $RUN_TIME -gt $MAX_TIME ]; then MAX_TIME=$RUN_TIME; fi
         done
-        TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / 10 ))ms
+        TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / $NUM_TESTS))ms
         MIN_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
         MAX_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
 
@@ -95,33 +98,33 @@ done
 TOTAL_TIME=0
 SB_MIN=-1
 SB_MAX=0
-for RUN in $(seq 1 10); do
+for RUN in $(seq 1 $NUM_TESTS); do
     START=$(date +%s%N)
-    taskset -c 0 ./streamblocks.out 2>&1 | tail -1
+    taskset -c 0 ./streamblocks.out --d=131072 2>&1 | tail -1
     END=$(date +%s%N)
-    sleep 10
+    sleep $SLEEP_SECS
     RUN_TIME=$(( (END - START) / 1000000 ))
     TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
     if [ $SB_MIN -eq -1 ] || [ $RUN_TIME -lt $SB_MIN ]; then SB_MIN=$RUN_TIME; fi
     if [ $RUN_TIME -gt $SB_MAX ]; then SB_MAX=$RUN_TIME; fi
 done
-STREAMBLOCKS_TIME="avg=$(( TOTAL_TIME / 10 ))ms min=${SB_MIN}ms max=${SB_MAX}ms"
+STREAMBLOCKS_TIME="avg=$(( TOTAL_TIME / $NUM_TESTS))ms min=${SB_MIN}ms max=${SB_MAX}ms"
 echo "Streamblocks execution time: $STREAMBLOCKS_TIME"
 
 TOTAL_TIME=0
 TYCHO_MIN=-1
 TYCHO_MAX=0
-for RUN in $(seq 1 10); do
+for RUN in $(seq 1 $NUM_TESTS); do
     START=$(date +%s%N)
     taskset -c 0 ./tycho.out 2>&1 | tail -1
     END=$(date +%s%N)
-    sleep 10
+    sleep $SLEEP_SECS
     RUN_TIME=$(( (END - START) / 1000000 ))
     TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
     if [ $TYCHO_MIN -eq -1 ] || [ $RUN_TIME -lt $TYCHO_MIN ]; then TYCHO_MIN=$RUN_TIME; fi
     if [ $RUN_TIME -gt $TYCHO_MAX ]; then TYCHO_MAX=$RUN_TIME; fi
 done
-TYCHO_TIME="avg=$(( TOTAL_TIME / 10 ))ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
+TYCHO_TIME="avg=$(( TOTAL_TIME / $NUM_TESTS))ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
 echo "Tycho execution time: $TYCHO_TIME"
 
 echo ""

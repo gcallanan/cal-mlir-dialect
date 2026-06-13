@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<partitioning>
+		<partition id="0" scheduling="ROUND_ROBIN">
+			<instance id="huffman"/>
+		</partition>
+		<partition id="1" scheduling="ROUND_ROBIN">
+			<instance id="source"/>
+			<instance id="display"/>
+			<instance id="splitter420"/>
+			<instance id="iq_Y"/>
+			<instance id="iq_Cb"/>
+			<instance id="iq_Cr"/>
+			<instance id="merger"/>
+			<instance id="parse"/>
+			<instance id="splitQT"/>
+			<instance id="scale"/>
+			<instance id="row"/>
+			<instance id="transpose"/>
+			<instance id="column"/>
+			<instance id="retranspose"/>
+			<instance id="shift"/>
+			<instance id="scale_0"/>
+			<instance id="row_0"/>
+			<instance id="transpose_0"/>
+			<instance id="column_0"/>
+			<instance id="retranspose_0"/>
+			<instance id="shift_0"/>
+			<instance id="scale_1"/>
+			<instance id="row_1"/>
+			<instance id="transpose_1"/>
+			<instance id="column_1"/>
+			<instance id="retranspose_1"/>
+			<instance id="shift_1"/>
+		</partition>
+	</partitioning>
+	<connections>
+		<fifo-connection source="source" source-port="Out" target="parse" target-port="Byte" size="65536" token-size="1"/>
+		<fifo-connection source="huffman" source-port="Block" target="splitter420" target-port="YCbCr" size="65536" token-size="4"/>
+		<fifo-connection source="splitter420" source-port="Y" target="iq_Y" target-port="Block" size="65536" token-size="4"/>
+		<fifo-connection source="splitter420" source-port="Cb" target="iq_Cb" target-port="Block" size="65536" token-size="4"/>
+		<fifo-connection source="splitter420" source-port="Cr" target="iq_Cr" target-port="Block" size="65536" token-size="4"/>
+		<fifo-connection source="iq_Y" source-port="Out" target="scale" target-port="IN" size="65536" token-size="2"/>
+		<fifo-connection source="iq_Cb" source-port="Out" target="scale_0" target-port="IN" size="65536" token-size="2"/>
+		<fifo-connection source="iq_Cr" source-port="Out" target="scale_1" target-port="IN" size="65536" token-size="2"/>
+		<fifo-connection source="merger" source-port="YCbCr" target="display" target-port="In" size="65536" token-size="1"/>
+		<fifo-connection source="parse" source-port="Data" target="huffman" target-port="Bit" size="65536" token-size="1"/>
+		<fifo-connection source="parse" source-port="QT" target="splitQT" target-port="QT" size="65536" token-size="1"/>
+		<fifo-connection source="parse" source-port="HT" target="huffman" target-port="HT" size="65536" token-size="1"/>
+		<fifo-connection source="parse" source-port="SOI" target="display" target-port="SOI" size="65536" token-size="2"/>
+		<fifo-connection source="parse" source-port="SOI" target="huffman" target-port="SOI" size="65536" token-size="2"/>
+		<fifo-connection source="parse" source-port="SOI" target="iq_Y" target-port="SOI" size="65536" token-size="2"/>
+		<fifo-connection source="parse" source-port="SOI" target="iq_Cb" target-port="SOI" size="65536" token-size="2"/>
+		<fifo-connection source="parse" source-port="SOI" target="iq_Cr" target-port="SOI" size="65536" token-size="2"/>
+		<fifo-connection source="splitQT" source-port="QT_Y" target="iq_Y" target-port="QT" size="65536" token-size="1"/>
+		<fifo-connection source="splitQT" source-port="QT_UV_1" target="iq_Cb" target-port="QT" size="65536" token-size="1"/>
+		<fifo-connection source="splitQT" source-port="QT_UV_2" target="iq_Cr" target-port="QT" size="65536" token-size="1"/>
+		<fifo-connection source="scale" source-port="OUT" target="row" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="row" source-port="OUT" target="transpose" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="transpose" source-port="OUT" target="column" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="column" source-port="OUT" target="retranspose" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="retranspose" source-port="OUT" target="shift" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="shift" source-port="OUT" target="merger" target-port="Y" size="65536" token-size="1"/>
+		<fifo-connection source="scale_0" source-port="OUT" target="row_0" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="row_0" source-port="OUT" target="transpose_0" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="transpose_0" source-port="OUT" target="column_0" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="column_0" source-port="OUT" target="retranspose_0" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="retranspose_0" source-port="OUT" target="shift_0" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="shift_0" source-port="OUT" target="merger" target-port="Cb" size="65536" token-size="1"/>
+		<fifo-connection source="scale_1" source-port="OUT" target="row_1" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="row_1" source-port="OUT" target="transpose_1" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="transpose_1" source-port="OUT" target="column_1" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="column_1" source-port="OUT" target="retranspose_1" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="retranspose_1" source-port="OUT" target="shift_1" target-port="IN" size="65536" token-size="4"/>
+		<fifo-connection source="shift_1" source-port="OUT" target="merger" target-port="Cr" size="65536" token-size="1"/>
+	</connections>
+</configuration>
