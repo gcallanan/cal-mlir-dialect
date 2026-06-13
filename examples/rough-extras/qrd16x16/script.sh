@@ -3,8 +3,8 @@
 set -e
 
 LLVM_DIR="/mnt/kingston/gareth/software-repos/mlir-cal/cal-mlir-dialect"
-NUM_TESTS=1
-SLEEP_SECS=0
+NUM_TESTS=10
+SLEEP_SECS=5
 
 # Build streamblocks.out
 # rm -fr myproject
