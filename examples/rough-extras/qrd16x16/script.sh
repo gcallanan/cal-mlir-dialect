@@ -3,8 +3,8 @@
 set -e
 
 LLVM_DIR="/mnt/kingston/gareth/software-repos/mlir-cal/cal-mlir-dialect"
-NUM_TESTS=10
-SLEEP_SECS=5
+NUM_TESTS=1
+SLEEP_SECS=0
 
 # Build streamblocks.out
 # rm -fr myproject
@@ -96,22 +96,44 @@ FNR == NR {
     done
 done
 
-TOTAL_TIME=0
-SB_MIN=-1
-SB_MAX=0
-for RUN in $(seq 1 $NUM_TESTS); do
-    START=$(date +%s%N)
-    SB_OUTPUT=$(taskset -c 0 ./streamblocks.out 2>&1 | tail -1 || true)
-    END=$(date +%s%N)
-    echo "    run $RUN: $SB_OUTPUT"
-    sleep $SLEEP_SECS
-    RUN_TIME=$(( (END - START) / 1000000 ))
-    TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
-    if [ $SB_MIN -eq -1 ] || [ $RUN_TIME -lt $SB_MIN ]; then SB_MIN=$RUN_TIME; fi
-    if [ $RUN_TIME -gt $SB_MAX ]; then SB_MAX=$RUN_TIME; fi
+declare -A SB_TIMES SB_MIN_TIMES SB_MAX_TIMES SB_LAST
+
+for ASSIGNMENT_MODE in "round-robin" "block"; do
+    echo ""
+    echo "  --- Streamblocks: $ASSIGNMENT_MODE ---"
+    echo "" >> "$RESULTS_FILE"
+    echo "  streamblocks $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
+
+    for NUM_CORES in 1 2 4; do
+        echo "    NUM_CORES=$NUM_CORES"
+        python3 generate_partition.py streamblocks_partition.xml streamblocks_partition_temp.xml "$NUM_CORES" "$ASSIGNMENT_MODE"
+
+        sleep $SLEEP_SECS
+
+        TOTAL_TIME=0
+        MIN_TIME=-1
+        MAX_TIME=0
+        for RUN in $(seq 1 $NUM_TESTS); do
+            START=$(date +%s%N)
+            SB_OUTPUT=$(taskset -c 0-$((NUM_CORES-1)) ./streamblocks.out --d=131072 --cfile=streamblocks_partition_temp.xml 2>&1 | tail -1 || true)
+            END=$(date +%s%N)
+            echo "      run $RUN: $SB_OUTPUT"
+            sleep $SLEEP_SECS
+            RUN_TIME=$(( (END - START) / 1000000 ))
+            TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
+            if [ $MIN_TIME -eq -1 ] || [ $RUN_TIME -lt $MIN_TIME ]; then MIN_TIME=$RUN_TIME; fi
+            if [ $RUN_TIME -gt $MAX_TIME ]; then MAX_TIME=$RUN_TIME; fi
+        done
+        SB_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / NUM_TESTS ))ms
+        SB_MIN_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
+        SB_MAX_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
+        SB_LAST["$ASSIGNMENT_MODE-$NUM_CORES"]=$SB_OUTPUT
+
+        LINE="    NUM_CORES=$NUM_CORES: avg=${SB_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${SB_MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${SB_MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: $SB_OUTPUT"
+        echo "$LINE"
+        echo "$LINE" >> "$RESULTS_FILE"
+    done
 done
-STREAMBLOCKS_TIME="avg=$(( TOTAL_TIME / NUM_TESTS ))ms min=${SB_MIN}ms max=${SB_MAX}ms"
-echo "Streamblocks execution time: $STREAMBLOCKS_TIME"
 
 TOTAL_TIME=0
 TYCHO_MIN=-1
@@ -134,17 +156,23 @@ echo ""
 echo "=== Timing Results (Actors: $NUM_ACTORS) ==="
 echo "" >> "$RESULTS_FILE"
 echo "=== Timing Results (Actors: $NUM_ACTORS) ===" >> "$RESULTS_FILE"
-LINE="  tycho.out: ${TYCHO_TIME}"
-echo "$LINE"
-echo "$LINE" >> "$RESULTS_FILE"
-LINE="  streamblocks.out: ${STREAMBLOCKS_TIME}"
+LINE="  tycho.out: ${TYCHO_TIME}: ${TYCHO_OUTPUT}"
 echo "$LINE"
 echo "$LINE" >> "$RESULTS_FILE"
 for ASSIGNMENT_MODE in "round-robin" "block"; do
-    echo "  $ASSIGNMENT_MODE:"
-    echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
+    echo "  streamblocks $ASSIGNMENT_MODE:"
+    echo "  streamblocks $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
     for NUM_CORES in 1 2 4; do
-        LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}"
+        LINE="    NUM_CORES=$NUM_CORES: avg=${SB_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${SB_MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${SB_MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: ${SB_LAST[$ASSIGNMENT_MODE-$NUM_CORES]}"
+        echo "$LINE"
+        echo "$LINE" >> "$RESULTS_FILE"
+    done
+done
+for ASSIGNMENT_MODE in "round-robin" "block"; do
+    echo "  MLIR $ASSIGNMENT_MODE:"
+    echo "  MLIR $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
+    for NUM_CORES in 1 2 4; do
+        LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: ${LAST_OUTPUTS[$ASSIGNMENT_MODE-$NUM_CORES]}"
         echo "$LINE"
         echo "$LINE" >> "$RESULTS_FILE"
     done
@@ -152,4 +180,4 @@ done
 echo ""
 echo "Results written to $RESULTS_FILE"
 
-rm -f qrd_current.mlir qrd_current.tmp lowered.mlir lowered.ll
+rm -f qrd_current.mlir qrd_current.tmp lowered.mlir lowered.ll streamblocks_partition_temp.xml

@@ -41,59 +41,59 @@ NUM_ACTORS=$(grep -c 'cal\.create_instance' IDCT_Flattened.mlir)
 echo "Actors: $NUM_ACTORS"
 echo "Actors: $NUM_ACTORS" >> "$RESULTS_FILE"
 
-# cp IDCT_Flattened.mlir IDCT_Flattened_clean.mlir
+cp IDCT_Flattened.mlir IDCT_Flattened_clean.mlir
 
-# for ASSIGNMENT_MODE in "round-robin" "block"; do
-#     echo ""
-#     echo "  --- Mode: $ASSIGNMENT_MODE ---"
-#     echo "" >> "$RESULTS_FILE"
-#     echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
+for ASSIGNMENT_MODE in "round-robin" "block"; do
+    echo ""
+    echo "  --- Mode: $ASSIGNMENT_MODE ---"
+    echo "" >> "$RESULTS_FILE"
+    echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
 
-#     for NUM_CORES in 1 2 4; do
-#         echo "    NUM_CORES=$NUM_CORES"
+    for NUM_CORES in 1 2 4; do
+        echo "    NUM_CORES=$NUM_CORES"
 
-#         cp IDCT_Flattened_clean.mlir IDCT_Flattened.mlir
+        cp IDCT_Flattened_clean.mlir IDCT_Flattened.mlir
 
-#         awk -v num_cores="$NUM_CORES" -v mode="$ASSIGNMENT_MODE" '
-# FNR == NR {
-#     if (/cal\.create_instance[^"]*"[^"]*" \(/) total++
-#     next
-# }
-# /cal\.create_instance[^"]*"[^"]*" \(/ {
-#     core = (mode == "block") ? int(n * num_cores / total) : (n % num_cores)
-#     sub(/ \(/, " device_affinity=\"cpu" core "\" (")
-#     n++
-# }
-# { print }' IDCT_Flattened.mlir IDCT_Flattened.mlir > IDCT_Flattened.tmp && mv IDCT_Flattened.tmp IDCT_Flattened.mlir
+        awk -v num_cores="$NUM_CORES" -v mode="$ASSIGNMENT_MODE" '
+FNR == NR {
+    if (/cal\.create_instance[^"]*"[^"]*" \(/) total++
+    next
+}
+/cal\.create_instance[^"]*"[^"]*" \(/ {
+    core = (mode == "block") ? int(n * num_cores / total) : (n % num_cores)
+    sub(/ \(/, " device_affinity=\"cpu" core "\" (")
+    n++
+}
+{ print }' IDCT_Flattened.mlir IDCT_Flattened.mlir > IDCT_Flattened.tmp && mv IDCT_Flattened.tmp IDCT_Flattened.mlir
 
-#         cal-opt IDCT_Flattened.mlir --lower-cal-to-llvm="multithread-cal-actors fifo-extract-pop-view fifo-extract-push-view" > lowered.mlir
-#         cal-translate --mlir-to-llvmir lowered.mlir -o lowered.ll
-#         clang -O3 lowered.ll -o multithreaded.out -L"$LLVM_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm
+        cal-opt IDCT_Flattened.mlir --lower-cal-to-llvm="multithread-cal-actors fifo-extract-pop-view fifo-extract-push-view" > lowered.mlir
+        cal-translate --mlir-to-llvmir lowered.mlir -o lowered.ll
+        clang -O3 lowered.ll -o multithreaded.out -L"$LLVM_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm
 
-#         sleep $SLEEP_SECS
+        sleep $SLEEP_SECS
 
-#         TOTAL_TIME=0
-#         MIN_TIME=-1
-#         MAX_TIME=0
-#         for RUN in $(seq 1 $NUM_TESTS); do
-#             START=$(date +%s%N)
-#             taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out 2>&1 | tail -1 || true
-#             END=$(date +%s%N)
-#             sleep $SLEEP_SECS
-#             RUN_TIME=$(( (END - START) / 1000000 ))
-#             TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
-#             if [ $MIN_TIME -eq -1 ] || [ $RUN_TIME -lt $MIN_TIME ]; then MIN_TIME=$RUN_TIME; fi
-#             if [ $RUN_TIME -gt $MAX_TIME ]; then MAX_TIME=$RUN_TIME; fi
-#         done
-#         TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / $NUM_TESTS))ms
-#         MIN_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
-#         MAX_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
+        TOTAL_TIME=0
+        MIN_TIME=-1
+        MAX_TIME=0
+        for RUN in $(seq 1 $NUM_TESTS); do
+            START=$(date +%s%N)
+            taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out 2>&1 | tail -1 || true
+            END=$(date +%s%N)
+            sleep $SLEEP_SECS
+            RUN_TIME=$(( (END - START) / 1000000 ))
+            TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
+            if [ $MIN_TIME -eq -1 ] || [ $RUN_TIME -lt $MIN_TIME ]; then MIN_TIME=$RUN_TIME; fi
+            if [ $RUN_TIME -gt $MAX_TIME ]; then MAX_TIME=$RUN_TIME; fi
+        done
+        TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / $NUM_TESTS))ms
+        MIN_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
+        MAX_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
 
-#         LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}"
-#         echo "$LINE"
-#         echo "$LINE" >> "$RESULTS_FILE"
-#     done
-# done
+        LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}"
+        echo "$LINE"
+        echo "$LINE" >> "$RESULTS_FILE"
+    done
+done
 
 declare -A SB_TIMES SB_MIN_TIMES SB_MAX_TIMES
 
