@@ -26,7 +26,7 @@ RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
 
 CSV_FILE="timing_results.csv"
-echo "application,backend,num_cores,assignment_mode,other_parameters,num_experiments,avg_ms,min_ms,max_ms,last_line" > "$CSV_FILE"
+echo "application,backend,num_actors,num_cores,assignment_mode,other_parameters,num_experiments,avg_ms,min_ms,max_ms,last_line" > "$CSV_FILE"
 
 #for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
 for FFT_SIZE in 256 512 1024; do
@@ -113,7 +113,7 @@ FNR == NR {
             LAST_OUTPUTS["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=$OUTPUT
 
             ESCAPED_OUTPUT="${OUTPUT//\"/\"\"}"
-            echo "fft,mlir,$NUM_CORES,$ASSIGNMENT_MODE,fft_size=$FFT_SIZE,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_OUTPUT\"" >> "$CSV_FILE"
+            echo "fft,mlir,${ACTOR_COUNTS[$FFT_SIZE]},$NUM_CORES,$ASSIGNMENT_MODE,fft_size=$FFT_SIZE,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_OUTPUT\"" >> "$CSV_FILE"
 
             LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}: $OUTPUT"
             echo "$LINE"

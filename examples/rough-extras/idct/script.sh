@@ -39,7 +39,7 @@ RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
 
 CSV_FILE="timing_results.csv"
-echo "application,backend,num_cores,assignment_mode,other_parameters,num_experiments,avg_ms,min_ms,max_ms,last_line" > "$CSV_FILE"
+echo "application,backend,num_actors,num_cores,assignment_mode,other_parameters,num_experiments,avg_ms,min_ms,max_ms,last_line" > "$CSV_FILE"
 
 NUM_ACTORS=$(grep -c 'cal\.create_instance' IDCT_Flattened.mlir)
 echo "Actors: $NUM_ACTORS"
@@ -96,7 +96,7 @@ FNR == NR {
         LAST_OUTPUTS["$ASSIGNMENT_MODE-$NUM_CORES"]=$OUTPUT
 
         ESCAPED_OUTPUT="${OUTPUT//\"/\"\"}"
-        echo "idct,mlir,$NUM_CORES,$ASSIGNMENT_MODE,,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_OUTPUT\"" >> "$CSV_FILE"
+        echo "idct,mlir,$NUM_ACTORS,$NUM_CORES,$ASSIGNMENT_MODE,,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_OUTPUT\"" >> "$CSV_FILE"
 
         LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: $OUTPUT"
         echo "$LINE"
@@ -138,7 +138,7 @@ for ASSIGNMENT_MODE in "round-robin" "block"; do
         SB_LAST["$ASSIGNMENT_MODE-$NUM_CORES"]=$SB_OUTPUT
 
         ESCAPED_SB_OUTPUT="${SB_OUTPUT//\"/\"\"}"
-        echo "idct,streamblocks,$NUM_CORES,$ASSIGNMENT_MODE,,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_SB_OUTPUT\"" >> "$CSV_FILE"
+        echo "idct,streamblocks,$NUM_ACTORS,$NUM_CORES,$ASSIGNMENT_MODE,,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_SB_OUTPUT\"" >> "$CSV_FILE"
 
         LINE="    NUM_CORES=$NUM_CORES: avg=${SB_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${SB_MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${SB_MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: $SB_OUTPUT"
         echo "$LINE"
@@ -165,7 +165,7 @@ TYCHO_TIME="avg=${TYCHO_AVG}ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
 echo "Tycho execution time: $TYCHO_TIME"
 
 ESCAPED_TYCHO="${TYCHO_OUTPUT//\"/\"\"}"
-echo "idct,tycho,NA,NA,,$NUM_TESTS,$TYCHO_AVG,$TYCHO_MIN,$TYCHO_MAX,\"$ESCAPED_TYCHO\"" >> "$CSV_FILE"
+echo "idct,tycho,$NUM_ACTORS,NA,NA,,$NUM_TESTS,$TYCHO_AVG,$TYCHO_MIN,$TYCHO_MAX,\"$ESCAPED_TYCHO\"" >> "$CSV_FILE"
 
 echo ""
 echo "=== Timing Results (Actors: $NUM_ACTORS) ==="

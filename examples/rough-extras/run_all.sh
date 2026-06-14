@@ -4,10 +4,11 @@ cd ..
 cd qrd16x16
 bash script.sh
 cd ..
-cd fft
-bash script.sh
-cd ..
 cd jpeg
 bash script.sh
 cd ..
+cd fft
+bash script.sh
+cd ..
 bash aggregate.sh
+bash generate_latex_table.sh
