@@ -10,3 +10,4 @@ cd ..
 cd jpeg
 bash script.sh
 cd ..
+bash aggregate.sh
