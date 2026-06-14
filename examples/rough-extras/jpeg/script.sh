@@ -5,7 +5,7 @@ set -e
 NAME=Top_JPEG_Decoder_Parallel
 LLVM_DIR="/mnt/kingston/gareth/software-repos/mlir-cal/cal-mlir-dialect"
 NUM_TESTS=10
-SLEEP_SECS=2
+SLEEP_SECS=5
 RESULTS_FILE="timing_results.txt"
 
 # Build Tycho
@@ -43,6 +43,9 @@ assign_affinities() {
 }
 
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
+
+CSV_FILE="timing_results.csv"
+echo "application,backend,num_cores,assignment_mode,other_parameters,num_experiments,avg_ms,min_ms,max_ms,last_line" > "$CSV_FILE"
 
 NUM_ACTORS=$(grep -c 'cal\.create_instance' JpegTestbed_Flattened_base.mlir)
 echo "Actors: $NUM_ACTORS"
@@ -99,6 +102,9 @@ for GROUPED_POP in n y; do
             MLIR_MIN["$KEY"]=${MIN_TIME}ms
             MLIR_MAX["$KEY"]=${MAX_TIME}ms
             MLIR_LAST["$KEY"]=$OUTPUT
+
+            ESCAPED_OUTPUT="${OUTPUT//\"/\"\"}"
+            echo "jpeg,mlir,$NUM_CORES,custom,\"pop=${GROUPED_POP} push=${GROUPED_PUSH}\",$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_OUTPUT\"" >> "$CSV_FILE"
         done
     done
 done
@@ -128,8 +134,16 @@ run_sb() {
 }
 
 run_sb "1core"
+ESCAPED_SB="${SB_LAST[1core]//\"/\"\"}"
+echo "jpeg,streamblocks,1,custom,,$NUM_TESTS,${SB_AVG[1core]%ms},${SB_MIN[1core]%ms},${SB_MAX[1core]%ms},\"$ESCAPED_SB\"" >> "$CSV_FILE"
+
 run_sb "2core" --cfile=schedule_2core.xml
+ESCAPED_SB="${SB_LAST[2core]//\"/\"\"}"
+echo "jpeg,streamblocks,2,custom,,$NUM_TESTS,${SB_AVG[2core]%ms},${SB_MIN[2core]%ms},${SB_MAX[2core]%ms},\"$ESCAPED_SB\"" >> "$CSV_FILE"
+
 run_sb "4core" --cfile=schedule_4core.xml
+ESCAPED_SB="${SB_LAST[4core]//\"/\"\"}"
+echo "jpeg,streamblocks,4,custom,,$NUM_TESTS,${SB_AVG[4core]%ms},${SB_MIN[4core]%ms},${SB_MAX[4core]%ms},\"$ESCAPED_SB\"" >> "$CSV_FILE"
 
 echo ""
 echo "  --- Tycho ---"
@@ -147,8 +161,12 @@ for RUN in $(seq 1 "$NUM_TESTS"); do
     if [ "$TYCHO_MIN" -eq -1 ] || [ "$RUN_TIME" -lt "$TYCHO_MIN" ]; then TYCHO_MIN=$RUN_TIME; fi
     if [ "$RUN_TIME" -gt "$TYCHO_MAX" ]; then TYCHO_MAX=$RUN_TIME; fi
 done
-TYCHO_TIME="avg=$(( TOTAL_TIME / NUM_TESTS ))ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
+TYCHO_AVG=$(( TOTAL_TIME / NUM_TESTS ))
+TYCHO_TIME="avg=${TYCHO_AVG}ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
 TYCHO_LAST=$OUTPUT
+
+ESCAPED_TYCHO="${TYCHO_LAST//\"/\"\"}"
+echo "jpeg,tycho,NA,NA,,$NUM_TESTS,$TYCHO_AVG,$TYCHO_MIN,$TYCHO_MAX,\"$ESCAPED_TYCHO\"" >> "$CSV_FILE"
 
 echo ""
 echo "=== Timing Results (Actors: $NUM_ACTORS) ==="
@@ -177,6 +195,6 @@ for GROUPED_POP in n y; do
 done
 
 echo ""
-echo "Results written to $RESULTS_FILE"
+echo "Results written to $RESULTS_FILE and $CSV_FILE"
 
 rm -f lowered.mlir lowered.ll JpegTestbed_Flattened.mlir

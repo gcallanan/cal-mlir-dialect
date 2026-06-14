@@ -38,6 +38,9 @@ declare -A LAST_OUTPUTS
 RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
 
+CSV_FILE="timing_results.csv"
+echo "application,backend,num_cores,assignment_mode,other_parameters,num_experiments,avg_ms,min_ms,max_ms,last_line" > "$CSV_FILE"
+
 NUM_ACTORS=$(grep -c 'cal\.create_instance' qrd_clean.mlir)
 echo "Actors: $NUM_ACTORS"
 echo "Actors: $NUM_ACTORS" >> "$RESULTS_FILE"
@@ -67,7 +70,7 @@ FNR == NR {
 
         cal-opt qrd_current.mlir --lower-cal-to-llvm="multithread-cal-actors" > lowered.mlir
         cal-translate --mlir-to-llvmir lowered.mlir -o lowered.ll
-        clang -O3 lowered.ll -o multithreaded.out -L"$LLVM_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm
+        clang -O3 lowered.ll -o multithreaded.out -L"$LLVM_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm -march=native
 
         sleep $SLEEP_SECS
 
@@ -89,6 +92,9 @@ FNR == NR {
         MIN_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
         MAX_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
         LAST_OUTPUTS["$ASSIGNMENT_MODE-$NUM_CORES"]=$OUTPUT
+
+        ESCAPED_OUTPUT="${OUTPUT//\"/\"\"}"
+        echo "qrd,mlir,$NUM_CORES,$ASSIGNMENT_MODE,,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_OUTPUT\"" >> "$CSV_FILE"
 
         LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: $OUTPUT"
         echo "$LINE"
@@ -129,6 +135,9 @@ for ASSIGNMENT_MODE in "round-robin" "block"; do
         SB_MAX_TIMES["$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
         SB_LAST["$ASSIGNMENT_MODE-$NUM_CORES"]=$SB_OUTPUT
 
+        ESCAPED_SB_OUTPUT="${SB_OUTPUT//\"/\"\"}"
+        echo "qrd,streamblocks,$NUM_CORES,$ASSIGNMENT_MODE,,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_SB_OUTPUT\"" >> "$CSV_FILE"
+
         LINE="    NUM_CORES=$NUM_CORES: avg=${SB_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} min=${SB_MIN_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]} max=${SB_MAX_TIMES[$ASSIGNMENT_MODE-$NUM_CORES]}: $SB_OUTPUT"
         echo "$LINE"
         echo "$LINE" >> "$RESULTS_FILE"
@@ -149,8 +158,12 @@ for RUN in $(seq 1 $NUM_TESTS); do
     if [ $TYCHO_MIN -eq -1 ] || [ $RUN_TIME -lt $TYCHO_MIN ]; then TYCHO_MIN=$RUN_TIME; fi
     if [ $RUN_TIME -gt $TYCHO_MAX ]; then TYCHO_MAX=$RUN_TIME; fi
 done
-TYCHO_TIME="avg=$(( TOTAL_TIME / NUM_TESTS ))ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
+TYCHO_AVG=$(( TOTAL_TIME / NUM_TESTS ))
+TYCHO_TIME="avg=${TYCHO_AVG}ms min=${TYCHO_MIN}ms max=${TYCHO_MAX}ms"
 echo "Tycho execution time: $TYCHO_TIME"
+
+ESCAPED_TYCHO_OUTPUT="${TYCHO_OUTPUT//\"/\"\"}"
+echo "qrd,tycho,NA,NA,,$NUM_TESTS,$TYCHO_AVG,$TYCHO_MIN,$TYCHO_MAX,\"$ESCAPED_TYCHO_OUTPUT\"" >> "$CSV_FILE"
 
 echo ""
 echo "=== Timing Results (Actors: $NUM_ACTORS) ==="
@@ -178,6 +191,6 @@ for ASSIGNMENT_MODE in "round-robin" "block"; do
     done
 done
 echo ""
-echo "Results written to $RESULTS_FILE"
+echo "Results written to $RESULTS_FILE and $CSV_FILE"
 
 rm -f qrd_current.mlir qrd_current.tmp lowered.mlir lowered.ll streamblocks_partition_temp.xml

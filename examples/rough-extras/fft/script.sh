@@ -9,6 +9,8 @@ set -e
 # printed to stdout and written to timing_results.txt.
 
 TOP_DIR="../../.."
+NUM_TESTS=10
+SLEEP_SECS=5
 
 # cd ../..
 # node bin/cli.js generate examples/fft/Top.cal
@@ -19,8 +21,12 @@ declare -A TIMES
 declare -A MIN_TIMES
 declare -A MAX_TIMES
 declare -A ACTOR_COUNTS
+declare -A LAST_OUTPUTS
 RESULTS_FILE="timing_results.txt"
 echo "Timing Results - $(date)" > "$RESULTS_FILE"
+
+CSV_FILE="timing_results.csv"
+echo "application,backend,num_cores,assignment_mode,other_parameters,num_experiments,avg_ms,min_ms,max_ms,last_line" > "$CSV_FILE"
 
 #for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
 for FFT_SIZE in 256 512 1024; do
@@ -83,28 +89,33 @@ FNR == NR {
 
             cal-opt FFT_Flattened.mlir --lower-cal-to-llvm="multithread-cal-actors" > lowered.mlir
             cal-translate --mlir-to-llvmir lowered.mlir -o lowered.ll
-            clang -O3 lowered.ll -o multithreaded.out -L"$TOP_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm
+            clang -O3 lowered.ll -o multithreaded.out -L"$TOP_DIR/llvm-project/build/lib" -lmlir_async_runtime -lmlir_runner_utils -lmlir_c_runner_utils -lpthread -lm -march=native
 
-            sleep 10
+            sleep $SLEEP_SECS
 
             TOTAL_TIME=0
             MIN_TIME=-1
             MAX_TIME=0
-            for RUN in $(seq 1 10); do
+            for RUN in $(seq 1 $NUM_TESTS); do
                 START=$(date +%s%N)
-                taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out || true
+                OUTPUT=$(taskset -c 0-$((NUM_CORES-1)) ./multithreaded.out 2>&1 | tail -1 || true)
                 END=$(date +%s%N)
-		sleep 10
+                echo "      run $RUN: $OUTPUT"
+                sleep $SLEEP_SECS
                 RUN_TIME=$(( (END - START) / 1000000 ))
                 TOTAL_TIME=$(( TOTAL_TIME + RUN_TIME ))
                 if [ $MIN_TIME -eq -1 ] || [ $RUN_TIME -lt $MIN_TIME ]; then MIN_TIME=$RUN_TIME; fi
                 if [ $RUN_TIME -gt $MAX_TIME ]; then MAX_TIME=$RUN_TIME; fi
             done
-            TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / 10 ))ms
+            TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=$(( TOTAL_TIME / NUM_TESTS ))ms
             MIN_TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=${MIN_TIME}ms
             MAX_TIMES["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=${MAX_TIME}ms
+            LAST_OUTPUTS["$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES"]=$OUTPUT
 
-            LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
+            ESCAPED_OUTPUT="${OUTPUT//\"/\"\"}"
+            echo "fft,mlir,$NUM_CORES,$ASSIGNMENT_MODE,fft_size=$FFT_SIZE,$NUM_TESTS,$(( TOTAL_TIME / NUM_TESTS )),$MIN_TIME,$MAX_TIME,\"$ESCAPED_OUTPUT\"" >> "$CSV_FILE"
+
+            LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}: $OUTPUT"
             echo "$LINE"
             echo "$LINE" >> "$RESULTS_FILE"
         done
@@ -113,7 +124,8 @@ done
 
 echo ""
 echo "=== Timing Results ==="
-for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
+#for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
+for FFT_SIZE in 256 512 1024; do
     echo ""
     echo "FFT Size: $FFT_SIZE (Actors: ${ACTOR_COUNTS[$FFT_SIZE]})"
     echo "" >> "$RESULTS_FILE"
@@ -122,13 +134,13 @@ for FFT_SIZE in 256 512 1024 2048 4096 8192 16384 32768 65536; do
         echo "  $ASSIGNMENT_MODE:"
         echo "  $ASSIGNMENT_MODE:" >> "$RESULTS_FILE"
         for NUM_CORES in 1 2 4; do
-            LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
+            LINE="    NUM_CORES=$NUM_CORES: avg=${TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} min=${MIN_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]} max=${MAX_TIMES[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}: ${LAST_OUTPUTS[$FFT_SIZE-$ASSIGNMENT_MODE-$NUM_CORES]}"
             echo "$LINE"
             echo "$LINE" >> "$RESULTS_FILE"
         done
     done
 done
 echo ""
-echo "Results written to $RESULTS_FILE"
+echo "Results written to $RESULTS_FILE and $CSV_FILE"
 
 rm FFT_Top_current.mlir FFT_Flattened.mlir FFT_Flattened_clean.mlir lowered.mlir lowered.ll multithreaded.out
