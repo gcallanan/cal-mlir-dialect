@@ -1,28 +1,41 @@
-Timing Results - lör 30 maj 2026 15:42:53 CEST
+Timing Results - sön 14 jun 2026 19:55:26 CEST
 Actors: 505
 
   round-robin:
-    NUM_CORES=1: avg=5823ms min=5810ms max=5865ms
-    NUM_CORES=2: avg=3777ms min=3712ms max=3813ms
-    NUM_CORES=3: avg=2811ms min=2761ms max=2863ms
-    NUM_CORES=4: avg=2381ms min=2309ms max=2562ms
+    NUM_CORES=1: avg=5821ms min=5815ms max=5867ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=3789ms min=3714ms max=3865ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=2407ms min=2311ms max=2463ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
 
   block:
-    NUM_CORES=1: avg=5809ms min=5765ms max=5816ms
-    NUM_CORES=2: avg=3512ms min=3511ms max=3513ms
-    NUM_CORES=3: avg=2550ms min=2507ms max=2563ms
-    NUM_CORES=4: avg=1971ms min=1960ms max=2011ms
+    NUM_CORES=1: avg=5836ms min=5816ms max=5867ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=3524ms min=3513ms max=3565ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=1962ms min=1961ms max=1963ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+
+  streamblocks round-robin:
+    NUM_CORES=1: avg=15203ms min=15063ms max=15455ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=8621ms min=8016ms max=8839ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=4153ms min=3872ms max=4962ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+
+  streamblocks block:
+    NUM_CORES=1: avg=15177ms min=15020ms max=15329ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=11003ms min=10890ms max=11093ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=5414ms min=5330ms max=5478ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
 
 === Timing Results (Actors: 505) ===
-  tycho.out: avg=6167ms min=6159ms max=6174ms
-  streamblocks.out: avg=54013ms min=53868ms max=54335ms
-  round-robin:
-    NUM_CORES=1: avg=5823ms min=5810ms max=5865ms
-    NUM_CORES=2: avg=3777ms min=3712ms max=3813ms
-    NUM_CORES=3: avg=2811ms min=2761ms max=2863ms
-    NUM_CORES=4: avg=2381ms min=2309ms max=2562ms
-  block:
-    NUM_CORES=1: avg=5809ms min=5765ms max=5816ms
-    NUM_CORES=2: avg=3512ms min=3511ms max=3513ms
-    NUM_CORES=3: avg=2550ms min=2507ms max=2563ms
-    NUM_CORES=4: avg=1971ms min=1960ms max=2011ms
+  tycho.out: avg=6181ms min=6150ms max=6225ms: Q9990: row 15: -2 35 55 -110 -62 -52 -140 135 80 41 -16 -46 38 24 51 16 
+  streamblocks round-robin:
+    NUM_CORES=1: avg=15203ms min=15063ms max=15455ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=8621ms min=8016ms max=8839ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=4153ms min=3872ms max=4962ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+  streamblocks block:
+    NUM_CORES=1: avg=15177ms min=15020ms max=15329ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=11003ms min=10890ms max=11093ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=5414ms min=5330ms max=5478ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+  MLIR round-robin:
+    NUM_CORES=1: avg=5821ms min=5815ms max=5867ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=3789ms min=3714ms max=3865ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=2407ms min=2311ms max=2463ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+  MLIR block:
+    NUM_CORES=1: avg=5836ms min=5816ms max=5867ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=2: avg=3524ms min=3513ms max=3565ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 
+    NUM_CORES=4: avg=1962ms min=1961ms max=1963ms: Q9990: row 15: 113731 -107453 142149 -121691 -156936 -436748 -4 -8 5 -1 -8 -1 4 3 -4 -10 

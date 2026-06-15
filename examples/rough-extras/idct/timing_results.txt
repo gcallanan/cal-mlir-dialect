@@ -1,28 +1,41 @@
-Timing Results - lör 30 maj 2026 14:36:44 CEST
+Timing Results - sön 14 jun 2026 19:25:47 CEST
 Actors: 9
 
   round-robin:
-    NUM_CORES=1: avg=30735ms min=30690ms max=30791ms
-    NUM_CORES=2: avg=22752ms min=21831ms max=24635ms
-    NUM_CORES=3: avg=18303ms min=15475ms max=20130ms
-    NUM_CORES=4: avg=18445ms min=16577ms max=19543ms
+    NUM_CORES=1: avg=15389ms min=15374ms max=15470ms: 63 : 194
+    NUM_CORES=2: avg=12022ms min=11572ms max=12823ms: 63 : 194
+    NUM_CORES=4: avg=7586ms min=7267ms max=7918ms: 63 : 194
 
   block:
-    NUM_CORES=1: avg=30730ms min=30540ms max=30841ms
-    NUM_CORES=2: avg=20629ms min=20380ms max=21031ms
-    NUM_CORES=3: avg=15800ms min=15375ms max=16126ms
-    NUM_CORES=4: avg=16827ms min=14823ms max=18493ms
+    NUM_CORES=1: avg=15374ms min=15370ms max=15376ms: 63 : 194
+    NUM_CORES=2: avg=10559ms min=10114ms max=10871ms: 63 : 194
+    NUM_CORES=4: avg=6240ms min=5866ms max=6517ms: 63 : 194
+
+  streamblocks round-robin:
+    NUM_CORES=1: avg=4923ms min=4877ms max=4979ms: 63 : 194
+    NUM_CORES=2: avg=3296ms min=3222ms max=3446ms: 63 : 194
+    NUM_CORES=4: avg=2856ms min=2828ms max=2886ms: 63 : 194
+
+  streamblocks block:
+    NUM_CORES=1: avg=4912ms min=4868ms max=5013ms: 63 : 194
+    NUM_CORES=2: avg=4306ms min=4242ms max=4340ms: 63 : 194
+    NUM_CORES=4: avg=4376ms min=4359ms max=4420ms: 63 : 194
 
 === Timing Results (Actors: 9) ===
-  tycho.out: avg=13930ms min=13842ms max=14264ms
-  streamblocks.out: avg=38544ms min=38510ms max=38627ms
-  round-robin:
-    NUM_CORES=1: avg=30735ms min=30690ms max=30791ms
-    NUM_CORES=2: avg=22752ms min=21831ms max=24635ms
-    NUM_CORES=3: avg=18303ms min=15475ms max=20130ms
-    NUM_CORES=4: avg=18445ms min=16577ms max=19543ms
-  block:
-    NUM_CORES=1: avg=30730ms min=30540ms max=30841ms
-    NUM_CORES=2: avg=20629ms min=20380ms max=21031ms
-    NUM_CORES=3: avg=15800ms min=15375ms max=16126ms
-    NUM_CORES=4: avg=16827ms min=14823ms max=18493ms
+  tycho.out: avg=13955ms min=13832ms max=14405ms: 63 : 194
+  streamblocks round-robin:
+    NUM_CORES=1: avg=4923ms min=4877ms max=4979ms: 63 : 194
+    NUM_CORES=2: avg=3296ms min=3222ms max=3446ms: 63 : 194
+    NUM_CORES=4: avg=2856ms min=2828ms max=2886ms: 63 : 194
+  streamblocks block:
+    NUM_CORES=1: avg=4912ms min=4868ms max=5013ms: 63 : 194
+    NUM_CORES=2: avg=4306ms min=4242ms max=4340ms: 63 : 194
+    NUM_CORES=4: avg=4376ms min=4359ms max=4420ms: 63 : 194
+  MLIR round-robin:
+    NUM_CORES=1: avg=15389ms min=15374ms max=15470ms: 63 : 194
+    NUM_CORES=2: avg=12022ms min=11572ms max=12823ms: 63 : 194
+    NUM_CORES=4: avg=7586ms min=7267ms max=7918ms: 63 : 194
+  MLIR block:
+    NUM_CORES=1: avg=15374ms min=15370ms max=15376ms: 63 : 194
+    NUM_CORES=2: avg=10559ms min=10114ms max=10871ms: 63 : 194
+    NUM_CORES=4: avg=6240ms min=5866ms max=6517ms: 63 : 194
