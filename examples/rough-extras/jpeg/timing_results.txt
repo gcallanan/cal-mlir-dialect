@@ -1,4 +1,4 @@
-Timing Results - sön 14 jun 2026 20:27:09 CEST
+Timing Results - mån 15 jun 2026 19:23:09 CEST
 Actors: 29
 
   MLIR pop=n push=n:
@@ -10,23 +10,23 @@ Actors: 29
   MLIR pop=y push=y:
 
 === Timing Results (Actors: 29) ===
-  tycho.out: avg=555ms min=553ms max=558ms: Received 11000000 bytes, sum is 150174854
-  streamblocks 1core: avg=306ms min=300ms max=335ms: Received 11000000 bytes, sum is 150174854
-  streamblocks 2core: avg=248ms min=244ms max=251ms: Received 11000000 bytes, sum is 150174854
-  streamblocks 4core: avg=196ms min=193ms max=200ms: Received 11000000 bytes, sum is 150174854
+  tycho.out: avg=559ms min=554ms max=584ms: Received 11000000 bytes, sum is 150174854
+  streamblocks 1core: avg=301ms min=299ms max=310ms: Received 11000000 bytes, sum is 150174854
+  streamblocks 2core: avg=246ms min=243ms max=259ms: Received 11000000 bytes, sum is 150174854
+  streamblocks 4core: avg=195ms min=193ms max=198ms: Received 11000000 bytes, sum is 150174854
   MLIR pop=n push=n:
-    NUM_CORES=1: avg=2614ms min=2608ms max=2621ms: Received 11000000 bytes, sum is 150174854
-    NUM_CORES=2: avg=1060ms min=1060ms max=1061ms: Received 11000000 bytes, sum is 150174854
-    NUM_CORES=4: avg=805ms min=761ms max=811ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=1: avg=2606ms min=2601ms max=2618ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=2: avg=1054ms min=1011ms max=1061ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=557ms min=334ms max=611ms: 
   MLIR pop=n push=y:
-    NUM_CORES=1: avg=2578ms min=2575ms max=2587ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=1: avg=2577ms min=2572ms max=2592ms: Received 11000000 bytes, sum is 150174854
     NUM_CORES=2: avg=1005ms min=961ms max=1011ms: Received 11000000 bytes, sum is 150174854
-    NUM_CORES=4: avg=804ms min=761ms max=811ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=604ms min=561ms max=611ms: Received 11000000 bytes, sum is 150174854
   MLIR pop=y push=n:
-    NUM_CORES=1: avg=2478ms min=2474ms max=2485ms: Received 11000000 bytes, sum is 150174854
-    NUM_CORES=2: avg=874ms min=859ms max=910ms: Received 11000000 bytes, sum is 150174854
-    NUM_CORES=4: avg=804ms min=761ms max=811ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=1: avg=2493ms min=2483ms max=2510ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=2: avg=860ms min=860ms max=861ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=579ms min=555ms max=611ms: Received 11000000 bytes, sum is 150174854
   MLIR pop=y push=y:
-    NUM_CORES=1: avg=2441ms min=2437ms max=2445ms: Received 11000000 bytes, sum is 150174854
-    NUM_CORES=2: avg=809ms min=809ms max=811ms: Received 11000000 bytes, sum is 150174854
-    NUM_CORES=4: avg=810ms min=809ms max=811ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=1: avg=2438ms min=2429ms max=2447ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=2: avg=810ms min=810ms max=811ms: Received 11000000 bytes, sum is 150174854
+    NUM_CORES=4: avg=579ms min=559ms max=611ms: Received 11000000 bytes, sum is 150174854

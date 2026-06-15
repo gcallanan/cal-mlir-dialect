@@ -1,7 +1,7 @@
 instance,actor,channel,out_type,cpu
 source,Source,feed,i8,2
 parse,ParseJPEG,feed,i8+i16,2
-splitQT,SplitQT,feed,i8x3,1
+splitQT,SplitQT,feed,i8x3,2
 huffman,Huffman420,feed,i24,1
 fanout,Fanout_i16x5,feed,i16x5,0
 splitter420,Splitter420,feed,i24x3,3

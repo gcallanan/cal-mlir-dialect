@@ -12,10 +12,10 @@
         <partition id="1" scheduling="ROUND_ROBIN">
             <instance id="source"/>
             <instance id="parse"/>
+			<instance id="splitQT"/>
 		</partition>
         <partition id="2" scheduling="ROUND_ROBIN">
 			<instance id="huffman"/>
-            <instance id="splitQT"/>
 		</partition>
 		<partition id="3" scheduling="ROUND_ROBIN">
 			<instance id="scale"/>

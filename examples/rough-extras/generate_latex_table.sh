@@ -38,10 +38,10 @@ def c(val, baseline):
 
 # (display, app, actors_other, has_tycho, sb_mode, sb_other, mlir_mode, mlir_other)
 configs = [
-    ('IDCT',             'idct', '',              True,  'round-robin', '',              'round-robin', ''            ),
-    ('QRD',              'qrd',  '',              True,  'block',       '',              'block',       ''            ),
+    ('Inverse DCT',      'idct', '',              True,  'round-robin', '',              'round-robin', ''            ),
+    ('Motion JPEG Decoder', 'jpeg', '',              True,  'custom',      '',              'custom',      'pop=y push=y'),
+    ('16x16 QR Decomposition', 'qrd',  '',              True,  'block',       '',              'block',       ''            ),
     ('FFT ($N{=}1024$)', 'fft',  'fft_size=1024', False, None,          'fft_size=1024', 'block',       'fft_size=1024'),
-    ('JPEG',             'jpeg', '',              True,  'custom',      '',              'custom',      'pop=y push=y'),
 ]
 
 out = []
@@ -80,3 +80,25 @@ print('\n'.join(out))
 PYEOF
 
 echo "LaTeX table written to $OUTPUT"
+
+# Wrap the table in a minimal standalone document and compile to PDF
+DOC="timing_table_standalone.tex"
+cat > "$DOC" << 'EOF'
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage[margin=1in]{geometry}
+\pagestyle{empty}
+\begin{document}
+EOF
+cat "$OUTPUT" >> "$DOC"
+echo '\end{document}' >> "$DOC"
+
+if command -v pdflatex &>/dev/null; then
+    pdflatex -interaction=nonstopmode "$DOC" > /dev/null 2>&1 \
+        && echo "PDF written to ${DOC%.tex}.pdf" \
+        || echo "pdflatex failed — check ${DOC%.tex}.log for details"
+else
+    echo "pdflatex not found — skipping PDF generation"
+fi
+
+rm timing_table_standalone.aux timing_table_standalone.log timing_table_standalone.tex
